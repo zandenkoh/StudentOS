@@ -5,7 +5,7 @@ import {
 } from "@/lib/sponsor-tech/studentos-agent";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 35;
 
 export async function POST(req: Request) {
   let requestBody: unknown;

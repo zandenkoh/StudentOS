@@ -36,8 +36,9 @@ type AgentLog = {
   };
 };
 
-const REDIRECT_MIN_AT = 9800;
-const REDIRECT_MAX_AT = 52000;
+const REDIRECT_MIN_AT = 7200;
+const REDIRECT_MAX_AT = 30000;
+const ANALYSIS_TIMEOUT_MS = 30000;
 
 type SponsorTraceItem = {
   provider: string;
@@ -109,6 +110,43 @@ const logs: AgentLog[] = [
     title: "Calling planning agent",
     body: "Vercel AI Gateway is returning structured commitments, questions, conflicts, roadmap steps, and a daily plan.",
     detail: "StudentOS will open the review screen once the live footprint is ready."
+  },
+  {
+    id: "validate",
+    at: 12200,
+    kind: "analysis",
+    title: "Validating structured output",
+    body: "Checking that commitments, clarification questions, roadmap steps, and plan tasks match the app schema before moving screens.",
+    detail: "This is observable validation work, not hidden reasoning."
+  },
+  {
+    id: "research-merge",
+    at: 16200,
+    kind: "tool",
+    title: "Merging Exa context",
+    body: "Attaching the compact goal research packet: event identity, criteria, application process, open questions, and citations.",
+    tool: {
+      name: "Exa fast research",
+      icon: FileSearch,
+      color: "text-violet-700",
+      result: "3 targeted searches max"
+    }
+  },
+  {
+    id: "review-prep",
+    at: 21800,
+    kind: "decision",
+    title: "Preparing review screen",
+    body: "Saving the live footprint locally so the next page can render commitments, conflicts, roadmap, and citations immediately.",
+    detail: "If the live call exceeds 30 seconds, StudentOS falls back instead of blocking the transition."
+  },
+  {
+    id: "timeout-guard",
+    at: 28000,
+    kind: "footprint",
+    title: "Applying time budget",
+    body: "The agent is keeping the transition under the demo budget. Any late provider response will be replaced by the fallback footprint.",
+    detail: "Target: under 30 seconds."
   }
 ];
 
@@ -241,6 +279,7 @@ export default function AgentsThinkingPage() {
     analysisStartedRef.current = true;
 
     const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
 
     async function runAnalysis() {
       let capturedSources: CapturedSourceForAI[] = [];
@@ -273,6 +312,7 @@ export default function AgentsThinkingPage() {
         const result = (await response.json()) as StudentOSAgentFootprint;
         if (!response.ok) throw new Error("StudentOS analysis route returned an error.");
 
+        window.clearTimeout(timeout);
         setAiFootprint(result);
         setSponsorTrace(result.sponsorTrace);
         window.localStorage.setItem("studentos_footprint", "completed");
@@ -281,8 +321,6 @@ export default function AgentsThinkingPage() {
         window.localStorage.setItem("studentos_commitment_footprint", JSON.stringify(result));
         window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(result.sponsorTrace.slice(0, 8)));
       } catch (error) {
-        if (controller.signal.aborted) return;
-
         setAnalysisFailed(true);
         let existingTrace: SponsorTraceItem[] = [];
 
@@ -301,7 +339,11 @@ export default function AgentsThinkingPage() {
             provider: "Vercel AI Gateway",
             action: "Generated live StudentOS analysis",
             status: "fallback" as const,
-            detail: error instanceof Error ? error.message : "StudentOS analysis failed.",
+            detail: controller.signal.aborted
+              ? "StudentOS hit the 30 second demo budget and moved forward with fallback data."
+              : error instanceof Error
+                ? error.message
+                : "StudentOS analysis failed.",
           },
           ...existingTrace,
         ].slice(0, 8);
@@ -314,6 +356,7 @@ export default function AgentsThinkingPage() {
     void runAnalysis();
 
     return () => {
+      window.clearTimeout(timeout);
       controller.abort();
       analysisStartedRef.current = false;
     };
@@ -470,7 +513,7 @@ export default function AgentsThinkingPage() {
             <div className="flex min-w-0 items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
-                  Thought process and tool calls
+                  Agent activity and tool calls
                 </p>
               </div>
               <div className="flex shrink-0 gap-1.5">

@@ -609,8 +609,8 @@ async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<Stud
 
   return withTimeout(
     deepResearchGoal(broadGoal.slice(0, 1200)),
-    90000,
-    "Vercel AI Gateway + Exa deep research",
+    8000,
+    "Exa fast goal research",
   );
 }
 
@@ -857,12 +857,11 @@ export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Pr
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
-  const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
 
   try {
     const result = await withTimeout(
       generateFootprintCore(primaryModel, normalizedInput, goalResearch),
-      26000,
+      18000,
       `Vercel AI Gateway ${primaryModel}`,
     );
     const trace = [
@@ -883,53 +882,11 @@ export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Pr
       sponsorTrace: trace,
     });
   } catch (primaryError) {
-    if (fallbackModel && fallbackModel !== primaryModel) {
-      try {
-        const result = await withTimeout(
-          generateFootprintCore(fallbackModel, normalizedInput, goalResearch),
-          18000,
-          `Vercel AI Gateway ${fallbackModel}`,
-        );
-        const trace = [
-          ...sponsorTrace,
-          {
-            provider: "Vercel AI Gateway",
-            action: "Generated live StudentOS analysis",
-            status: "success" as const,
-            detail: `${fallbackModel} returned structured JSON after ${primaryModel} failed.`,
-          },
-        ];
-
-        return buildFootprintFromCore({
-          core: result,
-          input: normalizedInput,
-          goalResearch,
-          model: fallbackModel,
-          sponsorTrace: trace,
-        });
-      } catch (fallbackError) {
-        const fallback = fallbackFootprint(
-          normalizedInput,
-          `Gateway failed: ${
-            fallbackError instanceof Error
-              ? fallbackError.message
-              : primaryError instanceof Error
-                ? primaryError.message
-                : "Unknown Gateway error"
-          }`,
-          goalResearch,
-        );
-
-        return {
-          ...fallback,
-          sponsorTrace: [...sponsorTrace, ...fallback.sponsorTrace],
-        };
-      }
-    }
-
     const fallback = fallbackFootprint(
       normalizedInput,
-      primaryError instanceof Error ? primaryError.message : "Unknown Gateway error",
+      primaryError instanceof Error
+        ? `${primaryError.message}. Skipped model retry to preserve the 30 second transition budget.`
+        : "Unknown Gateway error. Skipped model retry to preserve the 30 second transition budget.",
       goalResearch,
     );
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 35;
 
 const RequestSchema = z.object({
   goal: z.string().min(1),
@@ -51,7 +51,7 @@ export async function POST(req: Request) {
       citations: result.citations,
       trace: [
         {
-          provider: result.model ? "Vercel AI Gateway + Exa" : "Exa",
+          provider: "Exa",
           action: "Deep researched goal context",
           status: "success",
           detail: `${result.searchQueries.length} Exa searches, ${result.citations.length} citations.`,
