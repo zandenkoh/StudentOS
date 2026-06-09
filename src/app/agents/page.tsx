@@ -125,6 +125,13 @@ function mergeSponsorTraces(...groups: AISponsorTraceItem[][]) {
     .slice(0, 8);
 }
 
+function isAbortError(error: unknown) {
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
+}
+
 function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
   const Icon = kindIcon[kind];
 
@@ -229,7 +236,11 @@ export default function AgentsThinkingPage() {
     analysisStartedRef.current = true;
 
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort("analysis-timeout");
+    }, ANALYSIS_TIMEOUT_MS);
     const requestStartedAt = Date.now();
     let cancelled = false;
 
@@ -305,8 +316,9 @@ export default function AgentsThinkingPage() {
           let message = "StudentOS analysis route returned an error.";
 
           try {
-            const payload = (await response.json()) as { error?: string };
-            if (payload.error) message = payload.error;
+            const payload = (await response.json()) as { detail?: string; error?: string };
+            if (payload.detail) message = payload.detail;
+            else if (payload.error) message = payload.error;
           } catch {
             // Keep the route-level message when the error body is not JSON.
           }
@@ -368,10 +380,10 @@ export default function AgentsThinkingPage() {
           throw new Error(streamErrorMessage || "StudentOS analysis stream ended before the final footprint.");
         }
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || (isAbortError(error) && !timedOut)) return;
 
         setAnalysisFailed(true);
-        const message = controller.signal.aborted
+        const message = timedOut
           ? "StudentOS analysis stream timed out after 30 seconds."
           : error instanceof Error
             ? error.message
@@ -419,7 +431,9 @@ export default function AgentsThinkingPage() {
     return () => {
       cancelled = true;
       window.clearTimeout(timeout);
-      controller.abort();
+      if (!controller.signal.aborted) {
+        controller.abort("agents-page-cleanup");
+      }
       analysisStartedRef.current = false;
     };
   }, []);

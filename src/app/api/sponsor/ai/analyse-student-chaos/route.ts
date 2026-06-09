@@ -53,6 +53,10 @@ function localAwsTrace() {
   return awsLambdaFallbackTrace("AWS_AGENT_ENDPOINT is not set; Vercel used the local agent fallback for demo stability.");
 }
 
+function missingAwsEndpointError() {
+  return new Error("AWS_AGENT_ENDPOINT is not set, so the Next.js route has no AWS Lambda agent URL to call.");
+}
+
 async function callAwsAgent(
   endpoint: string,
   input: AnalyseStudentChaosRequest,
@@ -127,7 +131,11 @@ function awsAgentErrorResponse(error: unknown) {
   );
 }
 
-function streamAwsAgentResult(result: StudentOSAgentFootprint, endpoint: string, sources: AnalyseStudentChaosRequest["sources"]) {
+function streamAwsAgentResult(
+  result: StudentOSAgentFootprint,
+  endpoint: string,
+  sources: AnalyseStudentChaosRequest["sources"],
+) {
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
@@ -149,6 +157,67 @@ function streamAwsAgentResult(result: StudentOSAgentFootprint, endpoint: string,
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-StudentOS-Agent-Compute": "aws-lambda",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+function streamAwsFallbackResult(
+  input: AnalyseStudentChaosRequest,
+  endpoint: string,
+  error: unknown,
+) {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: AnalyseStudentChaosStreamEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+
+      try {
+        const trace = awsFallbackTrace(endpoint, error);
+        const sourceTrace = bedrockTextractTrace(input.sources);
+
+        send({ type: "log", log: awsForwardLog(endpoint) });
+        send({ type: "trace", trace });
+        send({ type: "trace", trace: sourceTrace });
+        send({
+          type: "log",
+          log: {
+            id: "aws-agent-local-fallback",
+            at: 250,
+            kind: "decision",
+            title: "AWS agent fallback selected",
+            body: "The AWS endpoint did not complete, so StudentOS kept the demo flow moving locally.",
+            detail: trace.detail,
+          },
+        });
+
+        const fallback = await analyseStudentChaos(input, {
+          onEvent: send,
+        });
+
+        send({
+          type: "footprint",
+          footprint: prependSponsorTraces(fallback, [trace, sourceTrace]),
+        });
+      } catch (fallbackError) {
+        send({
+          type: "error",
+          error: fallbackError instanceof Error ? fallbackError.message : "StudentOS analysis stream failed.",
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-StudentOS-Agent-Compute": "local-fallback",
       "X-Accel-Buffering": "no",
     },
   });
@@ -202,6 +271,10 @@ export async function POST(req: Request) {
       }
     }
 
+    if (!allowLocalAgentFallback()) {
+      return awsAgentErrorResponse(missingAwsEndpointError());
+    }
+
     const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
       localAwsTrace(),
       bedrockTextractTrace(parsed.data.sources),
@@ -212,14 +285,23 @@ export async function POST(req: Request) {
     });
   }
 
-  if (awsAgentEndpoint && !allowLocalAgentFallback()) {
+  if (awsAgentEndpoint) {
     try {
       const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
 
       return streamAwsAgentResult(result, awsAgentEndpoint, parsed.data.sources);
     } catch (error) {
-      return awsAgentErrorResponse(error);
+      if (!allowLocalAgentFallback()) {
+        return awsAgentErrorResponse(error);
+      }
+
+      console.error("StudentOS AWS agent endpoint failed; streaming local fallback.", error);
+      return streamAwsFallbackResult(parsed.data, awsAgentEndpoint, error);
     }
+  }
+
+  if (!allowLocalAgentFallback()) {
+    return awsAgentErrorResponse(missingAwsEndpointError());
   }
 
   const encoder = new TextEncoder();
@@ -231,49 +313,6 @@ export async function POST(req: Request) {
       };
 
       try {
-        if (awsAgentEndpoint) {
-          const forwardLog = awsForwardLog(awsAgentEndpoint);
-
-          send({ type: "log", log: forwardLog });
-
-          try {
-            const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
-
-            send({ type: "trace", trace: awsComputeTrace(awsAgentEndpoint) });
-            send({ type: "trace", trace: bedrockTextractTrace(parsed.data.sources) });
-            send({ type: "footprint", footprint: result });
-            return;
-          } catch (error) {
-            console.error("StudentOS AWS agent endpoint failed; streaming local fallback.", error);
-            const trace = awsFallbackTrace(awsAgentEndpoint, error);
-            const sourceTrace = bedrockTextractTrace(parsed.data.sources);
-
-            send({ type: "trace", trace });
-            send({ type: "trace", trace: sourceTrace });
-            send({
-              type: "log",
-              log: {
-                id: "aws-agent-local-fallback",
-                at: 250,
-                kind: "decision",
-                title: "AWS agent fallback selected",
-                body: "The AWS endpoint did not complete, so StudentOS kept the demo flow moving locally.",
-                detail: trace.detail,
-              },
-            });
-
-            const fallback = await analyseStudentChaos(parsed.data, {
-              onEvent: send,
-            });
-
-            send({
-              type: "footprint",
-              footprint: prependSponsorTraces(fallback, [trace, sourceTrace]),
-            });
-            return;
-          }
-        }
-
         const localTrace = localAwsTrace();
         const sourceTrace = bedrockTextractTrace(parsed.data.sources);
 
