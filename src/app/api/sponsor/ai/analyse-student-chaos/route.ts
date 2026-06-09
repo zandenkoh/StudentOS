@@ -5,6 +5,12 @@ import {
   type AnalyseStudentChaosRequest,
 } from "@/lib/sponsor-tech/studentos-agent";
 import { sponsorEnv } from "@/lib/sponsor-tech/env";
+import {
+  awsLambdaFallbackTrace,
+  awsLambdaSuccessTrace,
+  bedrockTextractTrace,
+  prependSponsorTraces,
+} from "@/lib/sponsor-tech/sponsor-proof";
 import type {
   AIAgentLog,
   AISponsorTraceItem,
@@ -28,39 +34,19 @@ function awsAgentHost(endpoint: string) {
 }
 
 function awsComputeTrace(endpoint: string): AISponsorTraceItem {
-  return {
-    provider: "AWS Lambda",
-    action: "Ran StudentOS agent orchestrator",
-    status: "success",
-    detail: `Vercel route forwarded analysis to AWS compute at ${awsAgentHost(endpoint)}.`,
-  };
+  return awsLambdaSuccessTrace(`Vercel route forwarded analysis to AWS compute at ${awsAgentHost(endpoint)}.`);
 }
 
 function awsFallbackTrace(endpoint: string, error: unknown): AISponsorTraceItem {
-  return {
-    provider: "AWS Lambda",
-    action: "Ran StudentOS agent orchestrator",
-    status: "fallback",
-    detail:
-      error instanceof Error
-        ? `AWS endpoint ${awsAgentHost(endpoint)} failed: ${error.message}`
-        : `AWS endpoint ${awsAgentHost(endpoint)} failed; local fallback handled the request.`,
-  };
+  return awsLambdaFallbackTrace(
+    error instanceof Error
+      ? `AWS endpoint ${awsAgentHost(endpoint)} failed: ${error.message}`
+      : `AWS endpoint ${awsAgentHost(endpoint)} failed; local fallback handled the request.`,
+  );
 }
 
-function withPrependedTrace(
-  footprint: StudentOSAgentFootprint,
-  trace: AISponsorTraceItem,
-): StudentOSAgentFootprint {
-  return {
-    ...footprint,
-    sponsorTrace: [
-      trace,
-      ...footprint.sponsorTrace.filter(
-        (item) => !(item.provider === trace.provider && item.action === trace.action),
-      ),
-    ],
-  };
+function localAwsTrace() {
+  return awsLambdaFallbackTrace("AWS_AGENT_ENDPOINT is not set; Vercel used the local agent fallback for demo stability.");
 }
 
 async function callAwsAgent(
@@ -91,7 +77,10 @@ async function callAwsAgent(
     throw new Error(message);
   }
 
-  return withPrependedTrace(payload as StudentOSAgentFootprint, awsComputeTrace(endpoint));
+  return prependSponsorTraces(payload as StudentOSAgentFootprint, [
+    awsComputeTrace(endpoint),
+    bedrockTextractTrace(input.sources),
+  ]);
 }
 
 function awsForwardLog(endpoint: string): AIAgentLog {
@@ -115,7 +104,10 @@ async function analyseWithLocalFallback(
 ): Promise<StudentOSAgentFootprint> {
   const fallback = await analyseStudentChaos(input);
 
-  return withPrependedTrace(fallback, awsFallbackTrace(endpoint, error));
+  return prependSponsorTraces(fallback, [
+    awsFallbackTrace(endpoint, error),
+    bedrockTextractTrace(input.sources),
+  ]);
 }
 
 export async function POST(req: Request) {
@@ -162,7 +154,10 @@ export async function POST(req: Request) {
       }
     }
 
-    const result = await analyseStudentChaos(parsed.data);
+    const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
+      localAwsTrace(),
+      bedrockTextractTrace(parsed.data.sources),
+    ]);
 
     return NextResponse.json(result, {
       headers: { "X-StudentOS-Agent-Compute": "local" },
@@ -187,13 +182,16 @@ export async function POST(req: Request) {
             const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
 
             send({ type: "trace", trace: awsComputeTrace(awsAgentEndpoint) });
+            send({ type: "trace", trace: bedrockTextractTrace(parsed.data.sources) });
             send({ type: "footprint", footprint: result });
             return;
           } catch (error) {
             console.error("StudentOS AWS agent endpoint failed; streaming local fallback.", error);
             const trace = awsFallbackTrace(awsAgentEndpoint, error);
+            const sourceTrace = bedrockTextractTrace(parsed.data.sources);
 
             send({ type: "trace", trace });
+            send({ type: "trace", trace: sourceTrace });
             send({
               type: "log",
               log: {
@@ -210,16 +208,28 @@ export async function POST(req: Request) {
               onEvent: send,
             });
 
-            send({ type: "footprint", footprint: withPrependedTrace(fallback, trace) });
+            send({
+              type: "footprint",
+              footprint: prependSponsorTraces(fallback, [trace, sourceTrace]),
+            });
             return;
           }
         }
+
+        const localTrace = localAwsTrace();
+        const sourceTrace = bedrockTextractTrace(parsed.data.sources);
+
+        send({ type: "trace", trace: localTrace });
+        send({ type: "trace", trace: sourceTrace });
 
         const result = await analyseStudentChaos(parsed.data, {
           onEvent: send,
         });
 
-        send({ type: "footprint", footprint: result });
+        send({
+          type: "footprint",
+          footprint: prependSponsorTraces(result, [localTrace, sourceTrace]),
+        });
       } catch (error) {
         send({
           type: "error",

@@ -153,6 +153,20 @@ type SponsorTraceItem = {
   detail: string;
 };
 
+function mergeSponsorTraces(...groups: SponsorTraceItem[][]) {
+  const seen = new Set<string>();
+
+  return groups
+    .flat()
+    .filter((item) => {
+      const key = `${item.provider}:${item.action}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
+}
+
 type ProcessTextSourceResponse = {
   provider: string;
   warning?: string;
@@ -1215,10 +1229,14 @@ export default function CommitmentsPage() {
 
   useEffect(() => {
     try {
+      let persistedTrace: SponsorTraceItem[] = [];
       const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
       if (rawTrace) {
         const parsedTrace = JSON.parse(rawTrace) as SponsorTraceItem[];
-        if (Array.isArray(parsedTrace)) setSponsorTrace(parsedTrace.slice(0, 8));
+        if (Array.isArray(parsedTrace)) {
+          persistedTrace = parsedTrace.slice(0, 8);
+          setSponsorTrace(persistedTrace);
+        }
       }
 
       const rawFootprint =
@@ -1239,7 +1257,7 @@ export default function CommitmentsPage() {
           setBaseTimeline(parsedFootprint.timelineEvents);
           setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
           setConflictAnalysis(parsedFootprint.conflict);
-          setSponsorTrace(parsedFootprint.sponsorTrace.slice(0, 8));
+          setSponsorTrace(mergeSponsorTraces(parsedFootprint.sponsorTrace, persistedTrace));
           setAiPlan({
             provider: parsedFootprint.provider,
             status: parsedFootprint.status,
@@ -1352,10 +1370,7 @@ export default function CommitmentsPage() {
       }
     }
 
-    const nextTrace = [
-      item,
-      ...trace.filter((traceItem) => !(traceItem.provider === item.provider && traceItem.action === item.action)),
-    ].slice(0, 8);
+    const nextTrace = mergeSponsorTraces([item], trace);
 
     window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(nextTrace));
     setSponsorTrace(nextTrace);
@@ -2182,6 +2197,7 @@ export default function CommitmentsPage() {
       stepLabel={labels[step]}
       progress={progressMap[step]}
       hideHeader={false}
+      sidePanel={<SponsorProofStrip trace={sponsorTrace} />}
     >
       <div className="safe-bottom-padding px-5 pt-2">
         <>
@@ -2197,7 +2213,9 @@ export default function CommitmentsPage() {
                 title="Review extracted items"
                 subtitle="StudentOS separated obligations from longer-term goals."
               />
-              <SponsorProofStrip trace={sponsorTrace} />
+              <div className="lg:hidden">
+                <SponsorProofStrip trace={sponsorTrace} />
+              </div>
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <div className="space-y-6 pb-8">
                 <section className="space-y-3">
@@ -2281,7 +2299,9 @@ export default function CommitmentsPage() {
                     : conflictAnalysis?.unresolvedSummary ?? "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
                 }
               />
-              <SponsorProofStrip trace={sponsorTrace} />
+              <div className="lg:hidden">
+                <SponsorProofStrip trace={sponsorTrace} />
+              </div>
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <ConflictSummaryCard
                 resolved={conflictResolved}
@@ -2324,7 +2344,9 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
-              <SponsorProofStrip trace={sponsorTrace} />
+              <div className="lg:hidden">
+                <SponsorProofStrip trace={sponsorTrace} />
+              </div>
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <FocusActionCard
                 conflictResolved={hasConfirmedConflict && conflictResolved}

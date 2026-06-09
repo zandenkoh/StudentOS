@@ -2,6 +2,11 @@ import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
 } from "../lib/sponsor-tech/studentos-agent";
+import {
+  awsLambdaSuccessTrace,
+  bedrockTextractTrace,
+  prependSponsorTraces,
+} from "../lib/sponsor-tech/sponsor-proof";
 
 type ApiGatewayHttpEvent = {
   body?: string | null;
@@ -60,7 +65,10 @@ export async function handler(event: ApiGatewayHttpEvent) {
   }
 
   try {
-    const result = await analyseStudentChaos(parsed.data);
+    const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
+      awsLambdaSuccessTrace("AWS API Gateway invoked the StudentOS Lambda agent endpoint directly."),
+      bedrockTextractTrace(parsed.data.sources),
+    ]);
 
     return jsonResponse(200, result);
   } catch (error) {

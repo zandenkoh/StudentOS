@@ -111,6 +111,20 @@ function mergeSponsorTrace(rows: AISponsorTraceItem[], next: AISponsorTraceItem)
   ].slice(0, 8);
 }
 
+function mergeSponsorTraces(...groups: AISponsorTraceItem[][]) {
+  const seen = new Set<string>();
+
+  return groups
+    .flat()
+    .filter((item) => {
+      const key = `${item.provider}:${item.action}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 8);
+}
+
 function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
   const Icon = kindIcon[kind];
 
@@ -219,9 +233,20 @@ export default function AgentsThinkingPage() {
     const requestStartedAt = Date.now();
     let cancelled = false;
 
+    function storedSponsorTrace() {
+      try {
+        const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
+        if (!rawTrace) return [];
+        const parsedTrace = JSON.parse(rawTrace) as AISponsorTraceItem[];
+        return Array.isArray(parsedTrace) ? parsedTrace : [];
+      } catch {
+        return [];
+      }
+    }
+
     function storeFootprint(result: StudentOSAgentFootprint) {
       if (cancelled) return;
-      const nextTrace = result.sponsorTrace.slice(0, 8);
+      const nextTrace = mergeSponsorTraces(result.sponsorTrace, storedSponsorTrace());
 
       window.clearTimeout(timeout);
       setAiFootprint(result);
@@ -247,11 +272,7 @@ export default function AgentsThinkingPage() {
       let capturedSources: CapturedSourceForAI[] = [];
 
       try {
-        const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
-        if (rawTrace) {
-          const parsedTrace = JSON.parse(rawTrace) as AISponsorTraceItem[];
-          if (Array.isArray(parsedTrace)) setSponsorTrace(parsedTrace.slice(0, 8));
-        }
+        setSponsorTrace(storedSponsorTrace().slice(0, 8));
 
         const rawSources = window.localStorage.getItem("studentos_captured_sources");
         if (rawSources) {
@@ -461,7 +482,11 @@ export default function AgentsThinkingPage() {
   }, [readyToRedirect, router]);
 
   return (
-    <AppShell stepLabel="Agent Log" hideHeader={false}>
+    <AppShell
+      stepLabel="Agent Log"
+      hideHeader={false}
+      sidePanel={<SponsorProofStrip trace={sponsorTrace} />}
+    >
       <div className="flex h-[calc(100dvh-104px)] min-h-0 flex-col overflow-hidden px-5 pb-4 pt-1">
         <section className="sticky top-0 z-20 rounded-[8px] border border-neutral-200 bg-white/95 p-3 shadow-[0_12px_30px_rgba(0,0,0,0.05)] backdrop-blur-xl">
           <div className="mb-3 h-2 overflow-hidden rounded-full bg-neutral-100">
@@ -504,7 +529,7 @@ export default function AgentsThinkingPage() {
               </span>
             </div>
           </div>
-          <div className="mt-3">
+          <div className="mt-3 lg:hidden">
             <SponsorProofStrip trace={sponsorTrace} />
           </div>
         </section>

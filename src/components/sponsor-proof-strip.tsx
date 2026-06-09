@@ -69,9 +69,18 @@ function statusClasses(item?: AISponsorTraceItem) {
   return "border-red-200 bg-red-50 text-red-700";
 }
 
-export function SponsorProofStrip({ trace }: { trace: AISponsorTraceItem[] }) {
+export function SponsorProofStrip({
+  trace,
+  className,
+}: {
+  trace: AISponsorTraceItem[];
+  className?: string;
+}) {
   return (
-    <section className="rounded-[8px] border border-neutral-200 bg-white p-3 shadow-[0_12px_30px_rgba(0,0,0,0.04)]">
+    <section className={cn(
+      "rounded-[8px] border border-neutral-200 bg-white p-3 shadow-[0_12px_30px_rgba(0,0,0,0.04)]",
+      className,
+    )}>
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="size-4 shrink-0 text-ink" />

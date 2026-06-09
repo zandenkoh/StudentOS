@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 export function AppShell({
   children,
   onReset,
+  sidePanel,
   stepLabel,
   progress,
   hideHeader = false
@@ -18,6 +19,7 @@ export function AppShell({
   children: ReactNode;
   onAgentClick?: () => void;
   onReset?: () => void;
+  sidePanel?: ReactNode;
   stepLabel?: string;
   progress?: number;
   route?: "main" | "goal";
@@ -36,6 +38,11 @@ export function AppShell({
 
   return (
     <main className="min-h-dvh bg-paper text-ink">
+      {sidePanel ? (
+        <aside className="fixed left-[max(24px,calc(50%_-_499px))] top-24 z-20 hidden w-[260px] lg:block">
+          {sidePanel}
+        </aside>
+      ) : null}
       <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.03)]">
         {!hideHeader && (
           <>
