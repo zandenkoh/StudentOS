@@ -1,11 +1,12 @@
 import {
   Bot,
-  CheckCircle2,
+  Check,
   CircleAlert,
   Cloud,
   FileSearch,
   Search,
   Server,
+  TriangleAlert,
 } from "lucide-react";
 import type { AISponsorTraceItem } from "@/lib/studentos-ai-types";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,7 @@ const providers: ProofProvider[] = [
   },
   {
     id: "aws-source",
-    label: "Bedrock/Textract",
+    label: "Textract",
     role: "optional",
     icon: FileSearch,
     match: (item) =>
@@ -38,7 +39,7 @@ const providers: ProofProvider[] = [
   },
   {
     id: "vercel",
-    label: "Vercel Gateway",
+    label: "Gateway",
     role: "critical",
     icon: Cloud,
     match: (item) => item.provider.includes("Vercel AI Gateway"),
@@ -62,17 +63,36 @@ function bestTraceItem(items: AISponsorTraceItem[]) {
 }
 
 function statusLabel(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
-  if (!item) return role === "critical" ? "needs proof" : "optional";
-  if (item.status === "success") return "verified";
-  if (item.status === "fallback") return role === "critical" ? "needs proof" : "fallback";
+  if (!item) return role === "critical" ? "not verified" : "optional";
+  if (item.status === "success") return "ok";
+  if (item.status === "fallback") return role === "critical" ? "fallback" : "optional fallback";
   return "error";
 }
 
-function statusClasses(item?: AISponsorTraceItem) {
+function statusClasses(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
   if (!item) return "border-neutral-200 bg-white text-neutral-400";
-  if (item.status === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (item.status === "fallback") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-red-200 bg-red-50 text-red-700";
+  if (item.status === "error") return "border-red-200 bg-red-50 text-red-700";
+  if (item.status === "fallback" && role === "critical") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+  return "border-neutral-200 bg-neutral-50 text-neutral-600";
+}
+
+function StatusIcon({
+  item,
+  provider,
+}: {
+  item?: AISponsorTraceItem;
+  provider: ProofProvider;
+}) {
+  if (item?.status === "success") return <Check className="size-3 shrink-0" />;
+  if (item?.status === "error") return <CircleAlert className="size-3 shrink-0" />;
+  if (item?.status === "fallback" && provider.role === "critical") {
+    return <TriangleAlert className="size-3 shrink-0" />;
+  }
+
+  const Icon = provider.icon;
+  return <Icon className="size-3 shrink-0" />;
 }
 
 export function SponsorProofStrip({
@@ -83,55 +103,41 @@ export function SponsorProofStrip({
   className?: string;
 }) {
   return (
-    <section className={cn(
-      "rounded-[8px] border border-neutral-200 bg-white p-3 shadow-[0_12px_30px_rgba(0,0,0,0.04)]",
-      className,
-    )}>
+    <section
+      className={cn(
+        "rounded-[8px] border border-neutral-200 bg-white p-3 shadow-[0_12px_30px_rgba(0,0,0,0.035)]",
+        className,
+      )}
+    >
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="size-4 shrink-0 text-ink" />
-          <p className="truncate text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
-            Sponsor proof
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-500">
+            Tool proof
           </p>
         </div>
-        <p className="shrink-0 text-[11px] font-semibold text-neutral-400">
+        <p className="shrink-0 text-[11px] font-medium text-neutral-400">
           {trace.length} traces
         </p>
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="flex flex-wrap gap-1.5">
         {providers.map((provider) => {
           const matchingItems = trace.filter(provider.match);
           const item = bestTraceItem(matchingItems);
-          const Icon = provider.icon;
 
           return (
-            <div
+            <span
               key={provider.id}
-              title={item?.detail}
               className={cn(
-                "min-w-0 rounded-[8px] border px-2.5 py-2",
-                statusClasses(item),
+                "inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-[7px] border px-2 py-1 text-[11px] font-semibold",
+                statusClasses(item, provider.role),
               )}
             >
-              <div className="flex min-w-0 items-center gap-1.5">
-                {item?.status === "success" ? (
-                  <CheckCircle2 className="size-3.5 shrink-0" />
-                ) : item ? (
-                  <CircleAlert className="size-3.5 shrink-0" />
-                ) : (
-                  <Icon className="size-3.5 shrink-0" />
-                )}
-                <span className="min-w-0 truncate text-[12px] font-bold">
-                  {provider.label}
-                </span>
-              </div>
-              <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.12em] opacity-70">
-                {statusLabel(item, provider.role)}
-              </p>
-              <p className="mt-0.5 truncate text-[10px] font-semibold opacity-60">
-                {provider.role === "critical" ? "Required" : "Optional"}
-              </p>
-            </div>
+              <StatusIcon item={item} provider={provider} />
+              <span className="truncate">{provider.label}</span>
+              <span className="text-neutral-300">/</span>
+              <span className="truncate text-[10px] font-medium">{statusLabel(item, provider.role)}</span>
+            </span>
           );
         })}
       </div>
