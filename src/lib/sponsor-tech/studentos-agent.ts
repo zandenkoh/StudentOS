@@ -351,6 +351,40 @@ function coerceActionArray(value: unknown, fallbacks: string[]) {
   return actions.slice(0, 6);
 }
 
+function looksLikeAssignmentDetailsQuestion(question: string) {
+  return /assignment|worksheet|homework|page|question|prompt|due/i.test(question);
+}
+
+function looksLikeFieldPickerOptions(options: Array<{ label: string; recommended: boolean }>) {
+  const labels = options.map((option) => option.label.toLowerCase()).join(" | ");
+
+  return (
+    /\b(prompt text|question range|page numbers|question numbers|both)\b/.test(labels) ||
+    (/\bunsure\b/.test(labels) && /\b(page|question|prompt|range)\b/.test(labels))
+  );
+}
+
+function assignmentDetailOptions(question: string) {
+  const lowerQuestion = question.toLowerCase();
+  const asksForWorksheetScope = /worksheet|page|question number|question range/.test(lowerQuestion);
+
+  if (asksForWorksheetScope) {
+    return [
+      { label: "Whole worksheet", recommended: true },
+      { label: "Selected questions", recommended: false },
+      { label: "Need to check", recommended: false },
+      { label: "Ask teacher first", recommended: false },
+    ];
+  }
+
+  return [
+    { label: "Use full prompt", recommended: true },
+    { label: "Selected questions", recommended: false },
+    { label: "Need to check", recommended: false },
+    { label: "Ask teacher first", recommended: false },
+  ];
+}
+
 function coerceGeneratedPlanTask(
   value: unknown,
   fallbackTitle: string,
@@ -421,9 +455,15 @@ function coerceGeneratedCore(raw: unknown) {
         });
       }
 
+      const questionText = textValue(question.question, "");
+      const safeOptions =
+        looksLikeAssignmentDetailsQuestion(questionText) && looksLikeFieldPickerOptions(options)
+          ? assignmentDetailOptions(questionText)
+          : options;
+
       return {
         ...question,
-        options: options.slice(0, 4),
+        options: safeOptions.slice(0, 4),
         resolvedCommitment: {
           title: textValue(resolved.title, textValue(resolvedText, title)),
           state: enumValue(resolved.state, ["confirmed", "needs_clarification", "unsure", "resolved"] as const, "confirmed"),
@@ -1087,6 +1127,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "When Exa goal research includes clarificationQuestions, convert the most important unanswered items into goal clarification questions before finalizing the roadmap.",
           "When Exa goal research includes sections, reflect eligibility, criteria, scope, application steps, deadlines, or deliverables in roadmap tasks instead of only summarizing the topic.",
           "For clarification options, keep label short enough for a button, ideally 2-6 words and at most 42 characters. Do not include description fields on options.",
+          "Clarification option labels must be plausible answers the student can choose, not categories or field names. Never use labels like 'Prompt text', 'Question range', 'Page numbers', 'Question numbers', or 'Both'. For missing worksheet details, use concrete choices like 'Whole worksheet', 'Selected questions', 'Need to check', or 'Ask teacher first', and rely on customPlaceholder for exact pasted details.",
           "For any unknown optional text field, return an empty string. For no tone, return tone='none'. For no estimated minutes, return 0.",
           "Nested objects must remain objects. Do not summarize resolvedCommitment or roadmap step tasks as strings.",
           "Every roadmap step task must repeat the full task fields even if the same task appears in planTasks.",

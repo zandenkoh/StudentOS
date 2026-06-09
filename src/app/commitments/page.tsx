@@ -761,12 +761,57 @@ function completionToastForTask(task: DemoPlanTask, now: Date) {
   return "Completed. Plan updated.";
 }
 
+function looksLikeAssignmentDetailsQuestion(question: string) {
+  return /assignment|worksheet|homework|page|question|prompt|due/i.test(question);
+}
+
+function looksLikeFieldPickerOptions(options: AIClarificationQuestion["options"]) {
+  const labels = options.map((option) => option.label.toLowerCase()).join(" | ");
+
+  return (
+    /\b(prompt text|question range|page numbers|question numbers|both)\b/.test(labels) ||
+    (/\bunsure\b/.test(labels) && /\b(page|question|prompt|range)\b/.test(labels))
+  );
+}
+
+function assignmentDetailOptions(question: string): ClarificationQuestion["options"] {
+  const lowerQuestion = question.toLowerCase();
+  const asksForWorksheetScope = /worksheet|page|question number|question range/.test(lowerQuestion);
+
+  if (asksForWorksheetScope) {
+    return [
+      { label: "Whole worksheet", recommended: true },
+      { label: "Selected questions" },
+      { label: "Need to check" },
+      { label: "Ask teacher first" },
+    ];
+  }
+
+  return [
+    { label: "Use full prompt", recommended: true },
+    { label: "Selected questions" },
+    { label: "Need to check" },
+    { label: "Ask teacher first" },
+  ];
+}
+
+function normalizedOptionsForSheet(question: AIClarificationQuestion) {
+  if (
+    looksLikeAssignmentDetailsQuestion(question.question) &&
+    looksLikeFieldPickerOptions(question.options)
+  ) {
+    return assignmentDetailOptions(question.question);
+  }
+
+  return question.options;
+}
+
 function questionsForSheet(questions: AIClarificationQuestion[]): ClarificationQuestion[] | undefined {
   if (!questions.length) return undefined;
 
   return questions.map((question) => ({
     question: question.question,
-    options: question.options,
+    options: normalizedOptionsForSheet(question),
     customPlaceholder: question.customPlaceholder,
   }));
 }
