@@ -33,6 +33,7 @@ export type CapturedSourceForAI = {
 
 export type AIClarificationOption = {
   label: string;
+  description?: string;
   recommended?: boolean;
 };
 
@@ -131,3 +132,21 @@ export type StudentOSAgentFootprint = {
   agentLogs: AIAgentLog[];
   sponsorTrace: AISponsorTraceItem[];
 };
+
+export type AnalyseStudentChaosStreamEvent =
+  | {
+      type: "log";
+      log: AIAgentLog;
+    }
+  | {
+      type: "trace";
+      trace: AISponsorTraceItem;
+    }
+  | {
+      type: "footprint";
+      footprint: StudentOSAgentFootprint;
+    }
+  | {
+      type: "error";
+      error: string;
+    };

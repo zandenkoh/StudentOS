@@ -6,7 +6,13 @@ import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
-import type { StudentOSAgentFootprint, CapturedSourceForAI } from "@/lib/studentos-ai-types";
+import type {
+  AIAgentLog,
+  AISponsorTraceItem,
+  AnalyseStudentChaosStreamEvent,
+  CapturedSourceForAI,
+  StudentOSAgentFootprint,
+} from "@/lib/studentos-ai-types";
 
 const SourceSchema = z.object({
   id: z.string(),
@@ -88,6 +94,7 @@ const ClarificationQuestionSchema = z.object({
   question: z.string(),
   options: z.array(z.object({
     label: z.string(),
+    description: z.string().max(80).optional(),
     recommended: z.boolean().optional(),
   })).min(2).max(4),
   customPlaceholder: z.string(),
@@ -193,7 +200,8 @@ const GeneratedClarificationQuestionSchema = z.object({
   subtitle: z.string(),
   question: z.string(),
   options: z.array(z.object({
-    label: z.string(),
+    label: z.string().max(42),
+    description: z.string().max(80).optional(),
     recommended: z.boolean(),
   })).min(2).max(4),
   customPlaceholder: z.string(),
@@ -217,17 +225,6 @@ const GeneratedRoadmapStepSchema = z.object({
   status: z.enum(["scheduled", "in_progress", "upcoming"]),
 });
 
-const GeneratedAgentLogSchema = z.object({
-  id: z.string(),
-  at: z.number().int().min(0),
-  kind: z.enum(["thought", "analysis", "tool", "decision", "footprint"]),
-  title: z.string(),
-  body: z.string(),
-  detail: z.string(),
-  toolProvider: z.enum(["none", "AWS", "Exa", "Vercel AI Gateway", "StudentOS"]),
-  toolResult: z.string(),
-});
-
 const GeneratedCoreSchema = z.object({
   commitments: z.array(CommitmentSchema).min(1).max(8),
   clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(6),
@@ -237,7 +234,6 @@ const GeneratedCoreSchema = z.object({
   planTasks: z.array(GeneratedPlanTaskSchema).min(1).max(10),
   roadmapSteps: z.array(GeneratedRoadmapStepSchema).min(1).max(6),
   rationale: RationaleSchema,
-  agentLogs: z.array(GeneratedAgentLogSchema).min(5).max(8),
 });
 
 const FootprintSchema = z.object({
@@ -282,7 +278,9 @@ type GeneratedTimelineEvent = z.infer<typeof GeneratedTimelineEventSchema>;
 type GeneratedPlanTask = z.infer<typeof GeneratedPlanTaskSchema>;
 type GeneratedClarificationQuestion = z.infer<typeof GeneratedClarificationQuestionSchema>;
 type GeneratedRoadmapStep = z.infer<typeof GeneratedRoadmapStepSchema>;
-type GeneratedAgentLog = z.infer<typeof GeneratedAgentLogSchema>;
+type AnalyseStudentChaosOptions = {
+  onEvent?: (event: AnalyseStudentChaosStreamEvent) => void | Promise<void>;
+};
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -370,10 +368,84 @@ function sourceStats(sources: CapturedSourceForAI[]) {
   };
 }
 
+function broadGoalEvidence(sources: CapturedSourceForAI[]) {
+  return sources
+    .map(sourceText)
+    .find((text) => /goal|learn|coding|python|hackathon|competition|scholarship|portfolio/i.test(text));
+}
+
+function defaultObservableLogs(
+  sources: CapturedSourceForAI[],
+  reason: string,
+  goalResearch?: StudentOSAgentFootprint["goalResearch"],
+): AIAgentLog[] {
+  const stats = sourceStats(sources);
+
+  return [
+    {
+      id: "source-evidence",
+      at: 0,
+      kind: "analysis",
+      title: "Reading captured sources",
+      body: `Loaded ${stats.totalSources} submitted ${stats.totalSources === 1 ? "source" : "sources"} from the input step.`,
+      detail:
+        stats.ocrReadySources > 0
+          ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} OCR or interpreted text attached.`
+          : "No OCR or interpreted text was attached, so StudentOS used titles, snippets, and manual text.",
+    },
+    {
+      id: "source-summary",
+      at: 250,
+      kind: "tool",
+      title: "Source evidence loaded",
+      body: "StudentOS prepared the source packet for planning.",
+      tool: {
+        provider: "StudentOS",
+        result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} OCR/text-ready sources.`,
+      },
+    },
+    {
+      id: "goal-research",
+      at: 500,
+      kind: "tool",
+      title: goalResearch ? "Goal research attached" : "Goal research skipped",
+      body: goalResearch
+        ? "Exa context is included in the final planning input."
+        : "No live goal research was available for this run.",
+      tool: {
+        provider: "Exa",
+        result: goalResearch
+          ? `${goalResearch.citations.length} citations for ${goalResearch.query}.`
+          : "Planner continued with supplied evidence only.",
+      },
+    },
+    {
+      id: "planner-fallback",
+      at: 750,
+      kind: "decision",
+      title: "Fallback planner selected",
+      body: "StudentOS used its fallback footprint because the live planner could not complete this run.",
+      detail: reason,
+    },
+    {
+      id: "fallback-footprint",
+      at: 1000,
+      kind: "footprint",
+      title: "Fallback footprint ready",
+      body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
+      tool: {
+        provider: "StudentOS",
+        result: "Structured fallback footprint assembled.",
+      },
+    },
+  ];
+}
+
 function fallbackFootprint(
   input: AnalyseStudentChaosRequest,
   reason: string,
   goalResearch?: StudentOSAgentFootprint["goalResearch"],
+  agentLogs?: AIAgentLog[],
 ): StudentOSAgentFootprint {
   const sources = input.sources.length ? input.sources : defaultSources;
   const trace: StudentOSAgentFootprint["sponsorTrace"] = [
@@ -589,14 +661,7 @@ function fallbackFootprint(
       ],
     },
     goalResearch,
-    agentLogs: [
-      { id: "read", at: 0, kind: "thought", title: "Reading source packet", body: "StudentOS is using the captured sources as evidence, including OCR text when AWS returned it.", detail: `${sources.length} sources available.` },
-      { id: "aws", at: 900, kind: "tool", title: "Using AWS extraction", body: "Loaded source snippets and Textract-ready text from the input layer.", tool: { provider: "AWS", result: `${sourceStats(sources).ocrReadySources} OCR/text-ready sources.` } },
-      { id: "exa", at: 1900, kind: "tool", title: "Researching broad goal context", body: goalResearch ? "Exa returned web context for the broad coding goal." : "Exa was unavailable, so StudentOS used a fallback goal roadmap.", tool: { provider: "Exa", result: goalResearch ? `${goalResearch.citations.length} citations returned.` : "Fallback roadmap used." } },
-      { id: "extract", at: 3100, kind: "analysis", title: "Extracting commitments and questions", body: "The agent separated fixed events, deadlines, tentative items, and long-term goals." },
-      { id: "conflict", at: 4700, kind: "decision", title: "Resolving schedule conflict", body: "Tuition and CCA overlap, so StudentOS recommends preserving tuition and requesting CCA notes." },
-      { id: "plan", at: 6500, kind: "footprint", title: "Building live execution plan", body: "The final plan is now written as structured JSON for the review and roadmap screens.", tool: { provider: "Vercel AI Gateway", result: reason } },
-    ],
+    agentLogs: agentLogs?.length ? agentLogs : defaultObservableLogs(sources, reason, goalResearch),
     sponsorTrace: trace,
   };
 }
@@ -619,9 +684,7 @@ function mergeSponsorTrace(
 }
 
 async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<StudentOSAgentFootprint["goalResearch"] | undefined> {
-  const broadGoal = sources
-    .map(sourceText)
-    .find((text) => /goal|learn|coding|python|hackathon|competition|scholarship|portfolio/i.test(text));
+  const broadGoal = broadGoalEvidence(sources);
 
   if (!broadGoal || !isExaReady()) return undefined;
 
@@ -675,6 +738,7 @@ function normalizeClarificationQuestion(question: GeneratedClarificationQuestion
     ...question,
     options: question.options.map((option) => ({
       label: option.label,
+      description: optionalText(option.description ?? ""),
       recommended: option.recommended || undefined,
     })),
     resolvedCommitment: {
@@ -697,24 +761,6 @@ function normalizeRoadmapStep(step: GeneratedRoadmapStep) {
     scheduledDateRange: optionalText(step.scheduledDateRange),
     tasks: step.tasks.flatMap((task) => splitLongStudyTask(normalizePlanTask(task))),
     status: step.status,
-  };
-}
-
-function normalizeAgentLog(log: GeneratedAgentLog) {
-  return {
-    id: log.id,
-    at: log.at,
-    kind: log.kind,
-    title: log.title,
-    body: log.body,
-    detail: optionalText(log.detail),
-    tool:
-      log.toolProvider === "none"
-        ? undefined
-        : {
-            provider: log.toolProvider,
-            result: log.toolResult,
-          },
   };
 }
 
@@ -750,12 +796,14 @@ function buildFootprintFromCore({
   goalResearch,
   model,
   sponsorTrace,
+  agentLogs,
 }: {
   core: GeneratedCore;
   input: AnalyseStudentChaosRequest;
   goalResearch?: StudentOSAgentFootprint["goalResearch"];
   model: string;
   sponsorTrace: StudentOSAgentFootprint["sponsorTrace"];
+  agentLogs: AIAgentLog[];
 }): StudentOSAgentFootprint {
   const sources = input.sources.length ? input.sources : defaultSources;
   const timelineValidation = validateTimelineConflicts(core.timelineEvents.map(normalizeTimelineEvent));
@@ -777,7 +825,7 @@ function buildFootprintFromCore({
     roadmapSteps: core.roadmapSteps.map(normalizeRoadmapStep),
     rationale: core.rationale,
     goalResearch,
-    agentLogs: core.agentLogs.map(normalizeAgentLog),
+    agentLogs,
     sponsorTrace,
   };
 
@@ -822,8 +870,8 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "Create roadmap steps for any broad goal, using Exa context when provided.",
           "When Exa goal research includes clarificationQuestions, convert the most important unanswered items into goal clarification questions before finalizing the roadmap.",
           "When Exa goal research includes sections, reflect eligibility, criteria, scope, application steps, deadlines, or deliverables in roadmap tasks instead of only summarizing the topic.",
+          "For clarification options, keep label short enough for a button, ideally 2-6 words and at most 42 characters. Put any needed explanation in description, capped at one short line under 80 characters. If no explanation is needed, return an empty description.",
           "For any unknown optional text field, return an empty string. For no tone, return tone='none'. For no estimated minutes, return 0.",
-          "Agent logs must describe observable actions only: reading evidence, using AWS, researching with Exa, extracting commitments, resolving conflict, building plan.",
           "Keep titles short enough for a mobile UI.",
         ],
       },
@@ -835,48 +883,167 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
   return output;
 }
 
-export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Promise<StudentOSAgentFootprint> {
+export async function analyseStudentChaos(
+  input: AnalyseStudentChaosRequest,
+  options: AnalyseStudentChaosOptions = {},
+): Promise<StudentOSAgentFootprint> {
   const sources = input.sources.length ? input.sources : defaultSources;
   const normalizedInput = { ...input, sources };
+  const startedAt = Date.now();
+  const streamedLogs: AIAgentLog[] = [];
+  const stats = sourceStats(sources);
+  let logSequence = 0;
 
   let goalResearch: StudentOSAgentFootprint["goalResearch"];
-  const sponsorTrace: StudentOSAgentFootprint["sponsorTrace"] = [
-    {
-      provider: "AWS",
-      action: "Loaded source evidence",
-      status: "success" as const,
-      detail: `${sourceStats(sources).totalSources} sources available, ${sourceStats(sources).ocrReadySources} OCR/text-ready.`,
+  const sponsorTrace: StudentOSAgentFootprint["sponsorTrace"] = [];
+
+  const observableLogs = () => streamedLogs.slice().sort((a, b) => a.at - b.at);
+  const logId = (seed: string) => {
+    logSequence += 1;
+    const normalizedSeed = seed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 42);
+    return `${logSequence}-${normalizedSeed || "event"}`;
+  };
+  const emitLog = async (log: Omit<AIAgentLog, "id" | "at"> & Partial<Pick<AIAgentLog, "id" | "at">>) => {
+    const fullLog: AIAgentLog = {
+      id: log.id ?? logId(log.title),
+      at: log.at ?? Math.max(0, Date.now() - startedAt),
+      kind: log.kind,
+      title: log.title,
+      body: log.body,
+      detail: log.detail,
+      tool: log.tool,
+    };
+
+    streamedLogs.push(fullLog);
+    await options.onEvent?.({ type: "log", log: fullLog });
+    return fullLog;
+  };
+  const emitTrace = async (trace: AISponsorTraceItem) => {
+    sponsorTrace.push(trace);
+    await options.onEvent?.({ type: "trace", trace });
+  };
+
+  await emitLog({
+    id: "source-evidence",
+    kind: "analysis",
+    title: "Reading captured sources",
+    body: `Loaded ${stats.totalSources} submitted ${stats.totalSources === 1 ? "source" : "sources"} from the input step.`,
+    detail:
+      stats.ocrReadySources > 0
+        ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} OCR or interpreted text attached.`
+        : "No OCR or interpreted text was attached, so StudentOS will use titles, snippets, and manual text.",
+  });
+  await emitTrace({
+    provider: "StudentOS",
+    action: "Loaded source evidence",
+    status: "success",
+    detail: `${stats.totalSources} sources available, ${stats.ocrReadySources} OCR/text-ready.`,
+  });
+  await emitLog({
+    id: "source-evidence-loaded",
+    kind: "tool",
+    title: "Source evidence loaded",
+    body: "Prepared the source packet that will be sent to the planner.",
+    tool: {
+      provider: "StudentOS",
+      result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} OCR/text-ready sources.`,
     },
-  ];
+  });
+
+  const goalCandidate = broadGoalEvidence(sources);
+  await emitLog({
+    id: "goal-research-check",
+    kind: "analysis",
+    title: "Checking for broad goals",
+    body: goalCandidate
+      ? "Detected goal-like evidence that may benefit from live research context."
+      : "No broad goal evidence needed live research for this run.",
+    detail: goalCandidate && !isExaReady() ? "Exa is not configured, so research will be skipped." : undefined,
+  });
 
   try {
     goalResearch = await researchGoalContext(sources);
-    sponsorTrace.push({
+    const trace: AISponsorTraceItem = {
       provider: goalResearch?.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched broad goal context",
       status: goalResearch ? "success" : "fallback",
       detail: goalResearch
-        ? `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`
-        : "No Exa search was needed or Exa was unavailable.",
+          ? `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`
+          : "No Exa search was needed or Exa was unavailable.",
+    };
+    await emitTrace(trace);
+    await emitLog({
+      id: goalResearch ? "goal-research-complete" : "goal-research-skipped",
+      kind: "tool",
+      title: goalResearch ? "Goal research complete" : "Goal research skipped",
+      body: goalResearch
+        ? "Attached live goal research context to the planning request."
+        : "Continuing with the submitted evidence only.",
+      tool: {
+        provider: "Exa",
+        result: trace.detail,
+      },
     });
   } catch (error) {
-    sponsorTrace.push({
+    const trace: AISponsorTraceItem = {
       provider: "Exa",
       action: "Deep researched broad goal context",
       status: "fallback",
       detail: error instanceof Error ? error.message : "Exa research failed.",
+    };
+    await emitTrace(trace);
+    await emitLog({
+      id: "goal-research-failed",
+      kind: "tool",
+      title: "Goal research failed",
+      body: "The planner will continue with the submitted evidence only.",
+      tool: {
+        provider: "Exa",
+        result: trace.detail,
+      },
     });
   }
 
   if (!isVercelAiReady()) {
-    const fallback = fallbackFootprint(normalizedInput, "USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.", goalResearch);
+    const reason = "USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.";
+    await emitLog({
+      id: "gateway-unavailable",
+      kind: "decision",
+      title: "Live planner unavailable",
+      body: "StudentOS cannot call Vercel AI Gateway in this environment.",
+      detail: reason,
+    });
+    const fallback = fallbackFootprint(normalizedInput, reason, goalResearch, observableLogs());
+    await emitLog({
+      id: "fallback-footprint-ready",
+      kind: "footprint",
+      title: "Fallback footprint ready",
+      body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
+      tool: {
+        provider: "StudentOS",
+        result: "Structured fallback footprint assembled.",
+      },
+    });
+
     return {
       ...fallback,
       sponsorTrace: mergeSponsorTrace(sponsorTrace, fallback.sponsorTrace),
+      agentLogs: observableLogs(),
     };
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
+
+  await emitLog({
+    id: "gateway-call-started",
+    kind: "tool",
+    title: "Calling Vercel AI Gateway",
+    body: "Sending normalized evidence, current date, and optional Exa context to the planning model.",
+    tool: {
+      provider: "Vercel AI Gateway",
+      result: primaryModel,
+    },
+  });
 
   try {
     const result = await withTimeout(
@@ -884,35 +1051,93 @@ export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Pr
       18000,
       `Vercel AI Gateway ${primaryModel}`,
     );
-    const trace = [
-      ...sponsorTrace,
-      {
+    await emitTrace({
+      provider: "Vercel AI Gateway",
+      action: "Generated live StudentOS analysis",
+      status: "success",
+      detail: `${primaryModel} returned commitments, questions, roadmap, and plan JSON.`,
+    });
+    await emitLog({
+      id: "gateway-response-received",
+      kind: "tool",
+      title: "Gateway response received",
+      body: "The live planner returned structured JSON for commitments, questions, conflicts, roadmap, and plan tasks.",
+      tool: {
         provider: "Vercel AI Gateway",
-        action: "Generated live StudentOS analysis",
-        status: "success" as const,
-        detail: `${primaryModel} returned commitments, questions, roadmap, and plan JSON.`,
+        result: `${primaryModel} completed the planning call.`,
       },
-    ];
+    });
+    await emitLog({
+      id: "schema-validation",
+      kind: "analysis",
+      title: "Validating structured footprint",
+      body: "Checking the returned JSON against the app schema before storing it for the review screen.",
+      detail: "Commitments, clarification questions, timeline events, roadmap steps, and plan tasks are validated together.",
+    });
 
-    return buildFootprintFromCore({
+    const footprint = buildFootprintFromCore({
       core: result,
       input: normalizedInput,
       goalResearch,
       model: primaryModel,
-      sponsorTrace: trace,
+      sponsorTrace,
+      agentLogs: observableLogs(),
     });
+
+    await emitLog({
+      id: "live-footprint-ready",
+      kind: "footprint",
+      title: "Live footprint ready",
+      body: "The review screen can render the completed live analysis.",
+      detail: `${footprint.commitments.length} commitments, ${footprint.clarificationQuestions.length} clarification questions, ${footprint.planTasks.length} plan tasks.`,
+      tool: {
+        provider: "StudentOS",
+        result: "Validated footprint stored for the next screen.",
+      },
+    });
+
+    return {
+      ...footprint,
+      agentLogs: observableLogs(),
+    };
   } catch (primaryError) {
+    const reason = primaryError instanceof Error
+      ? `${primaryError.message.replace(/\.$/, "")}. Skipped model retry to preserve the 30 second transition budget.`
+      : "Unknown Gateway error. Skipped model retry to preserve the 30 second transition budget.";
+    await emitTrace({
+      provider: "Vercel AI Gateway",
+      action: "Generated student chaos analysis fallback",
+      status: "fallback",
+      detail: reason,
+    });
+    await emitLog({
+      id: "gateway-fallback-selected",
+      kind: "decision",
+      title: "Gateway fallback selected",
+      body: "The live planner did not complete cleanly, so StudentOS is keeping the flow moving with a fallback footprint.",
+      detail: reason,
+    });
     const fallback = fallbackFootprint(
       normalizedInput,
-      primaryError instanceof Error
-        ? `${primaryError.message.replace(/\.$/, "")}. Skipped model retry to preserve the 30 second transition budget.`
-        : "Unknown Gateway error. Skipped model retry to preserve the 30 second transition budget.",
+      reason,
       goalResearch,
+      observableLogs(),
     );
+    await emitLog({
+      id: "fallback-footprint-ready",
+      kind: "footprint",
+      title: "Fallback footprint ready",
+      body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
+      tool: {
+        provider: "StudentOS",
+        result: "Structured fallback footprint assembled.",
+      },
+    });
 
     return {
       ...fallback,
       sponsorTrace: mergeSponsorTrace(sponsorTrace, fallback.sponsorTrace),
+      agentLogs: observableLogs(),
     };
   }
 }

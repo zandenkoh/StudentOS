@@ -7,9 +7,11 @@ import { SourceChip } from "@/components/source-chip";
 import type { DemoPlanTask } from "@/lib/demo-data";
 
 export function FocusActionCard({
+  conflictResolved = false,
   onComplete,
   task
 }: {
+  conflictResolved?: boolean;
   onExplain?: () => void;
   onComplete?: (task: DemoPlanTask) => void;
   task?: DemoPlanTask;
@@ -37,6 +39,7 @@ export function FocusActionCard({
   const duration = task.estimatedMinutes ? `${task.estimatedMinutes} min` : "35 min";
   const deadline = task.deadline ? `Due ${task.deadline}` : "Due tomorrow 8 AM";
   const priority = task.reason ?? "High priority";
+  const showStatusChip = isCompleting || conflictResolved;
 
   const handleComplete = () => {
     if (isCompleting) return;
@@ -56,9 +59,11 @@ export function FocusActionCard({
     >
       <div className="mb-5 flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Do this now</p>
-        <SourceChip tone={isCompleting ? "neutral" : "success"}>
-          {isCompleting ? "Done!" : "Conflict resolved"}
-        </SourceChip>
+        {showStatusChip ? (
+          <SourceChip tone={isCompleting ? "neutral" : "success"}>
+            {isCompleting ? "Done!" : "Conflict resolved"}
+          </SourceChip>
+        ) : null}
       </div>
       <h2 className="text-[26px] font-semibold leading-[1.05]">{title}</h2>
       <p className="mt-3 text-[15px] leading-6 text-white/72">
@@ -78,4 +83,3 @@ export function FocusActionCard({
     </section>
   );
 }
-

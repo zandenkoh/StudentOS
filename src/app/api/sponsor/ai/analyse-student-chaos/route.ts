@@ -3,6 +3,7 @@ import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
 } from "@/lib/sponsor-tech/studentos-agent";
+import type { AnalyseStudentChaosStreamEvent } from "@/lib/studentos-ai-types";
 
 export const runtime = "nodejs";
 export const maxDuration = 35;
@@ -28,7 +29,46 @@ export async function POST(req: Request) {
     );
   }
 
-  const result = await analyseStudentChaos(parsed.data);
+  const wantsStream =
+    new URL(req.url).searchParams.get("stream") === "1" ||
+    req.headers.get("accept")?.includes("application/x-ndjson");
 
-  return NextResponse.json(result);
+  if (!wantsStream) {
+    const result = await analyseStudentChaos(parsed.data);
+
+    return NextResponse.json(result);
+  }
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (event: AnalyseStudentChaosStreamEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+
+      try {
+        const result = await analyseStudentChaos(parsed.data, {
+          onEvent: send,
+        });
+
+        send({ type: "footprint", footprint: result });
+      } catch (error) {
+        send({
+          type: "error",
+          error: error instanceof Error ? error.message : "StudentOS analysis stream failed.",
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

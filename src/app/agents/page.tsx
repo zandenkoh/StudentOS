@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type Ref } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BrainCircuit,
-  CalendarDays,
   Check,
   FileSearch,
-  Image,
   ListChecks,
   Server,
   Sparkles,
@@ -17,9 +15,15 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { cn } from "@/lib/utils";
-import type { CapturedSourceForAI, StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
+import type {
+  AIAgentLog,
+  AISponsorTraceItem,
+  AnalyseStudentChaosStreamEvent,
+  CapturedSourceForAI,
+  StudentOSAgentFootprint,
+} from "@/lib/studentos-ai-types";
 
-type LogKind = "thought" | "analysis" | "tool" | "decision" | "footprint";
+type LogKind = AIAgentLog["kind"];
 
 type AgentLog = {
   id: string;
@@ -36,119 +40,8 @@ type AgentLog = {
   };
 };
 
-const REDIRECT_MIN_AT = 7200;
-const REDIRECT_MAX_AT = 30000;
+const REDIRECT_MIN_AT = 1600;
 const ANALYSIS_TIMEOUT_MS = 30000;
-
-type SponsorTraceItem = {
-  provider: string;
-  action: string;
-  status: "success" | "fallback" | "error";
-  detail: string;
-};
-
-const logs: AgentLog[] = [
-  {
-    id: "read",
-    at: 0,
-    kind: "thought",
-    title: "Reading uploaded sources",
-    body: "Scanning the chaos packet across chat screenshots, homework PDF, voice note, calendar image, CCA notice, coding goal, and team message.",
-    detail: "7 sources queued. StudentOS is separating evidence from noise."
-  },
-  {
-    id: "extract",
-    at: 2000,
-    kind: "tool",
-    title: "Extracting commitments",
-    body: "Pulling out items that create a deadline, meeting, follow-up, or recurring study block.",
-    tool: {
-      name: "OCR + transcript scan",
-      icon: Image,
-      color: "text-neutral-700",
-      result: "5 commitments found"
-    }
-  },
-  {
-    id: "ambiguity",
-    at: 4000,
-    kind: "analysis",
-    title: "Resolving ambiguous items",
-    body: "Marking the coding goal and team message as questions so the next screen can clarify them quickly instead of guessing.",
-    detail: "Open questions prepared: target coding outcome, whether the team meeting is confirmed."
-  },
-  {
-    id: "exa",
-    at: 5400,
-    kind: "tool",
-    title: "Researching broad goals",
-    body: "Checking whether vague goals need live web context before StudentOS turns them into a roadmap.",
-    tool: {
-      name: "Exa goal research",
-      icon: FileSearch,
-      color: "text-violet-700",
-      result: "Grounding goal context"
-    }
-  },
-  {
-    id: "calendar",
-    at: 7000,
-    kind: "tool",
-    title: "Checking calendar conflicts",
-    body: "Comparing fixed tuition against the CCA briefing and flexible evening work blocks.",
-    tool: {
-      name: "Calendar check",
-      icon: CalendarDays,
-      color: "text-neutral-700",
-      result: "CCA conflict detected"
-    }
-  },
-  {
-    id: "plan",
-    at: 8800,
-    kind: "footprint",
-    title: "Calling planning agent",
-    body: "Vercel AI Gateway is returning structured commitments, questions, conflicts, roadmap steps, and a daily plan.",
-    detail: "StudentOS will open the review screen once the live footprint is ready."
-  },
-  {
-    id: "validate",
-    at: 12200,
-    kind: "analysis",
-    title: "Validating structured output",
-    body: "Checking that commitments, clarification questions, roadmap steps, and plan tasks match the app schema before moving screens.",
-    detail: "This is observable validation work, not hidden reasoning."
-  },
-  {
-    id: "research-merge",
-    at: 16200,
-    kind: "tool",
-    title: "Merging Exa context",
-    body: "Attaching the compact goal research packet: event identity, criteria, application process, open questions, and citations.",
-    tool: {
-      name: "Exa fast research",
-      icon: FileSearch,
-      color: "text-violet-700",
-      result: "3 targeted searches max"
-    }
-  },
-  {
-    id: "review-prep",
-    at: 21800,
-    kind: "decision",
-    title: "Preparing review screen",
-    body: "Saving the live footprint locally so the next page can render commitments, conflicts, roadmap, and citations immediately.",
-    detail: "If the live call exceeds 30 seconds, StudentOS falls back instead of blocking the transition."
-  },
-  {
-    id: "timeout-guard",
-    at: 28000,
-    kind: "footprint",
-    title: "Applying time budget",
-    body: "The agent is keeping the transition under the demo budget. Any late provider response will be replaced by the fallback footprint.",
-    detail: "Target: under 30 seconds."
-  }
-];
 
 const kindIcon: Record<LogKind, LucideIcon> = {
   thought: BrainCircuit,
@@ -159,12 +52,48 @@ const kindIcon: Record<LogKind, LucideIcon> = {
 };
 
 const kindLabel: Record<LogKind, string> = {
-  thought: "Thinking",
+  thought: "Observed",
   analysis: "Analysing",
   tool: "Tool call",
   decision: "Decision",
   footprint: "Footprint"
 };
+
+function toolColorForProvider(provider: string) {
+  if (provider === "AWS") return "text-sky-700";
+  if (provider === "Exa") return "text-violet-700";
+  if (provider === "Vercel AI Gateway") return "text-neutral-800";
+  return "text-neutral-700";
+}
+
+function toClientLog(log: AIAgentLog): AgentLog {
+  return {
+    id: log.id,
+    at: log.at,
+    kind: log.kind,
+    title: log.title,
+    body: log.body,
+    detail: log.detail,
+    tool: log.tool
+      ? {
+          name: log.tool.provider,
+          icon: Server,
+          color: toolColorForProvider(log.tool.provider),
+          result: log.tool.result,
+        }
+      : undefined,
+  };
+}
+
+function mergeLog(rows: AgentLog[], next: AgentLog) {
+  const existingIndex = rows.findIndex((row) => row.id === next.id);
+  const merged =
+    existingIndex >= 0
+      ? rows.map((row, index) => (index === existingIndex ? next : row))
+      : [...rows, next];
+
+  return merged.slice().sort((a, b) => a.at - b.at);
+}
 
 function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
   const Icon = kindIcon[kind];
@@ -255,24 +184,14 @@ function AgentLogItem({
 export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
+  const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [analysisFailed, setAnalysisFailed] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
   const logViewportRef = useRef<HTMLDivElement>(null);
   const activeLogRef = useRef<HTMLLIElement>(null);
   const shouldFollowLogRef = useRef(true);
   const analysisStartedRef = useRef(false);
-
-  useEffect(() => {
-    const trace = window.localStorage.getItem("studentos_sponsor_trace");
-    if (!trace) return;
-
-    try {
-      setSponsorTrace(JSON.parse(trace) as SponsorTraceItem[]);
-    } catch {
-      setSponsorTrace([]);
-    }
-  }, []);
 
   useEffect(() => {
     if (analysisStartedRef.current) return;
@@ -280,6 +199,18 @@ export default function AgentsThinkingPage() {
 
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
+    const requestStartedAt = Date.now();
+
+    function storeFootprint(result: StudentOSAgentFootprint) {
+      window.clearTimeout(timeout);
+      setAiFootprint(result);
+      setAgentLogs(result.agentLogs.map(toClientLog));
+      window.localStorage.setItem("studentos_footprint", "completed");
+      window.localStorage.setItem("agent_log_visited", "true");
+      window.localStorage.setItem("studentos_ai_footprint", JSON.stringify(result));
+      window.localStorage.setItem("studentos_commitment_footprint", JSON.stringify(result));
+      window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(result.sponsorTrace.slice(0, 8)));
+    }
 
     async function runAnalysis() {
       let capturedSources: CapturedSourceForAI[] = [];
@@ -295,9 +226,16 @@ export default function AgentsThinkingPage() {
       }
 
       try {
-        const response = await fetch("/api/sponsor/ai/analyse-student-chaos", {
+        setAgentLogs([]);
+        setAnalysisFailed(false);
+        setStreamError(null);
+
+        const response = await fetch("/api/sponsor/ai/analyse-student-chaos?stream=1", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/x-ndjson",
+          },
           signal: controller.signal,
           body: JSON.stringify({
             currentDate: "2026-06-09",
@@ -309,25 +247,93 @@ export default function AgentsThinkingPage() {
           }),
         });
 
-        const result = (await response.json()) as StudentOSAgentFootprint;
-        if (!response.ok) throw new Error("StudentOS analysis route returned an error.");
+        if (!response.ok) {
+          let message = "StudentOS analysis route returned an error.";
 
-        window.clearTimeout(timeout);
-        setAiFootprint(result);
-        setSponsorTrace(result.sponsorTrace);
-        window.localStorage.setItem("studentos_footprint", "completed");
-        window.localStorage.setItem("agent_log_visited", "true");
-        window.localStorage.setItem("studentos_ai_footprint", JSON.stringify(result));
-        window.localStorage.setItem("studentos_commitment_footprint", JSON.stringify(result));
-        window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(result.sponsorTrace.slice(0, 8)));
+          try {
+            const payload = (await response.json()) as { error?: string };
+            if (payload.error) message = payload.error;
+          } catch {
+            // Keep the route-level message when the error body is not JSON.
+          }
+
+          throw new Error(message);
+        }
+
+        if (!response.body) throw new Error("StudentOS analysis stream was not available.");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalFootprint: StudentOSAgentFootprint | null = null;
+        let streamErrorMessage = "";
+
+        const handleEvent = (event: AnalyseStudentChaosStreamEvent) => {
+          if (event.type === "log") {
+            setAgentLogs((current) => mergeLog(current, toClientLog(event.log)));
+            return;
+          }
+
+          if (event.type === "trace") {
+            return;
+          }
+
+          if (event.type === "footprint") {
+            finalFootprint = event.footprint;
+            storeFootprint(event.footprint);
+            return;
+          }
+
+          streamErrorMessage = event.error;
+          setStreamError(event.error);
+        };
+
+        const processLine = (line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          handleEvent(JSON.parse(trimmed) as AnalyseStudentChaosStreamEvent);
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          lines.forEach(processLine);
+        }
+
+        buffer += decoder.decode();
+        processLine(buffer);
+
+        if (!finalFootprint) {
+          throw new Error(streamErrorMessage || "StudentOS analysis stream ended before the final footprint.");
+        }
       } catch (error) {
         setAnalysisFailed(true);
-        let existingTrace: SponsorTraceItem[] = [];
+        const message = controller.signal.aborted
+          ? "StudentOS analysis stream timed out after 30 seconds."
+          : error instanceof Error
+            ? error.message
+            : "StudentOS analysis failed.";
+        setStreamError(message);
+        setAgentLogs((current) =>
+          mergeLog(current, {
+            id: "analysis-stream-error",
+            at: Math.max(0, Date.now() - requestStartedAt),
+            kind: "decision",
+            title: "Analysis stream stopped",
+            body: "The live analysis stream did not produce a final footprint.",
+            detail: message,
+          }),
+        );
+        let existingTrace: AISponsorTraceItem[] = [];
 
         try {
           const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
           if (rawTrace) {
-            const parsedTrace = JSON.parse(rawTrace) as SponsorTraceItem[];
+            const parsedTrace = JSON.parse(rawTrace) as AISponsorTraceItem[];
             if (Array.isArray(parsedTrace)) existingTrace = parsedTrace;
           }
         } catch {
@@ -336,19 +342,14 @@ export default function AgentsThinkingPage() {
 
         const fallbackTrace = [
           {
-            provider: "Vercel AI Gateway",
-            action: "Generated live StudentOS analysis",
-            status: "fallback" as const,
-            detail: controller.signal.aborted
-              ? "StudentOS hit the 30 second demo budget and moved forward with fallback data."
-              : error instanceof Error
-                ? error.message
-                : "StudentOS analysis failed.",
+            provider: "StudentOS",
+            action: "Analysis stream failed",
+            status: "error" as const,
+            detail: message,
           },
           ...existingTrace,
         ].slice(0, 8);
 
-        setSponsorTrace(fallbackTrace);
         window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(fallbackTrace));
       }
     }
@@ -362,72 +363,13 @@ export default function AgentsThinkingPage() {
     };
   }, []);
 
-  const allLogs = useMemo<AgentLog[]>(() => {
-    if (aiFootprint?.agentLogs.length) {
-      return aiFootprint.agentLogs
-        .slice()
-        .sort((a, b) => a.at - b.at)
-        .map((log) => ({
-          id: log.id,
-          at: log.at,
-          kind: log.kind,
-          title: log.title,
-          body: log.body,
-          detail: log.detail,
-          tool: log.tool
-            ? {
-                name: log.tool.provider,
-                icon: Server,
-                color:
-                  log.tool.provider === "AWS"
-                    ? "text-sky-700"
-                    : log.tool.provider === "Exa"
-                      ? "text-violet-700"
-                      : "text-neutral-800",
-                result: log.tool.result,
-              }
-            : undefined,
-        }));
-    }
-
-    const sponsorLogs = sponsorTrace
-      .slice()
-      .reverse()
-      .map((trace, index) => ({
-        id: `sponsor-${index}-${trace.action}`,
-        at: 900 + index * 900,
-        kind: "tool" as const,
-        title: trace.action,
-        body:
-          trace.status === "success"
-            ? `${trace.provider} completed a real sponsor-tech step for this source.`
-            : `${trace.provider} returned a ${trace.status} state, so StudentOS kept the demo flow resilient.`,
-        tool: {
-          name: trace.provider,
-          icon: Server,
-          color:
-            trace.status === "success"
-              ? "text-sky-700"
-              : trace.status === "error"
-                ? "text-red-600"
-                : "text-amber-600",
-          result: trace.detail,
-        },
-      }));
-
-    return [...logs.slice(0, 1), ...sponsorLogs, ...logs.slice(1)].sort((a, b) => a.at - b.at);
-  }, [aiFootprint, sponsorTrace]);
-
-  const visibleLogs = useMemo(
-    () => allLogs.filter((log) => elapsedMs >= log.at),
-    [allLogs, elapsedMs]
-  );
-  const activeLog = visibleLogs[visibleLogs.length - 1] ?? allLogs[0];
-  const analysisDone = Boolean(aiFootprint) || analysisFailed;
-  const progress = Math.min(0.92, 0.36 + (elapsedMs / REDIRECT_MAX_AT) * 0.56);
-  const readyToRedirect = analysisDone && elapsedMs >= REDIRECT_MIN_AT;
-  const done = readyToRedirect;
-  const progressPercent = Math.min(100, readyToRedirect ? 100 : Math.round(progress * 100));
+  const visibleLogs = agentLogs;
+  const activeLog = visibleLogs[visibleLogs.length - 1];
+  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT;
+  const done = Boolean(aiFootprint);
+  const progressPercent = done ? 100 : Math.min(92, visibleLogs.length ? 12 + visibleLogs.length * 10 : 8);
+  const statusLabel = analysisFailed ? "Error" : done ? "Done" : "Live";
+  const activeTitle = streamError ?? activeLog?.title ?? "Connecting to analysis stream";
 
   useEffect(() => {
     if (!shouldFollowLogRef.current) return;
@@ -496,13 +438,18 @@ export default function AgentsThinkingPage() {
                 Agent is building your map
               </h1>
               <p className="mt-1 truncate text-[13px] font-medium text-neutral-500">
-                {activeLog.title}
+                {activeTitle}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-2.5 py-1.5">
-              <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span
+                className={cn(
+                  "size-1.5 rounded-full animate-pulse",
+                  analysisFailed ? "bg-red-500" : "bg-emerald-500"
+                )}
+              />
               <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">
-                {done ? "Done" : "Live"}
+                {statusLabel}
               </span>
             </div>
           </div>

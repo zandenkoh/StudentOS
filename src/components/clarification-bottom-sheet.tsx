@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 
 type ClarificationOption = {
   label: string;
+  description?: string;
   recommended?: boolean;
 };
 
@@ -20,35 +21,53 @@ export type ClarificationAnswers = Record<number, string>;
 
 export function MCQOption({
   label,
+  description,
   recommended,
   selected,
   onClick
 }: {
   label: string;
+  description?: string;
   recommended?: boolean;
   selected: boolean;
   onClick: () => void;
 }) {
+  const shortDescription = description?.trim();
+
   return (
     <button
       onClick={onClick}
       className={cn(
-        "flex min-h-12 w-full items-center justify-between rounded-[18px] border px-4 py-3 text-left text-[15px] font-semibold transition",
+        "flex min-h-12 w-full items-center justify-between gap-3 rounded-[18px] border px-4 py-3 text-left transition",
         selected
           ? "border-ink bg-ink text-white"
           : "border-neutral-200 bg-white text-ink hover:bg-neutral-50"
       )}
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="truncate">{label}</span>
-        {recommended ? (
+      <span className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="line-clamp-2 min-w-0 break-words text-[15px] font-semibold leading-5">
+            {label}
+          </span>
+          {recommended ? (
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold leading-4",
+                selected ? "bg-white/15 text-white" : "bg-emerald-50 text-emerald-700"
+              )}
+            >
+              Recommended
+            </span>
+          ) : null}
+        </span>
+        {shortDescription ? (
           <span
             className={cn(
-              "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold",
-              selected ? "bg-white/15 text-white" : "bg-emerald-50 text-emerald-700"
+              "line-clamp-2 break-words text-[13px] font-medium leading-4",
+              selected ? "text-white/75" : "text-muted"
             )}
           >
-            Recommended
+            {shortDescription}
           </span>
         ) : null}
       </span>
@@ -224,6 +243,7 @@ export function ClarificationBottomSheet({
               <MCQOption
                 key={option.label}
                 label={option.label}
+                description={option.description}
                 recommended={option.recommended}
                 selected={answers[safeActiveIndex] === option.label}
                 onClick={() => chooseAnswer(option.label)}

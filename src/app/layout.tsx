@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans } from "next/font/google";
+import { ScrollToScreenTop } from "@/components/scroll-to-screen-top";
 import "./globals.css";
 
 const notoSans = Noto_Sans({
@@ -28,6 +29,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body className={`${notoSans.variable} font-sans antialiased`}>
+        <ScrollToScreenTop />
         {children}
       </body>
     </html>

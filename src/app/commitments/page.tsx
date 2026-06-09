@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -36,6 +36,7 @@ import { MobileTimeline } from "@/components/mobile-timeline";
 import { PlanSection } from "@/components/plan-section";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { ScreenHeader } from "@/components/screen-header";
+import { resetScreenScroll } from "@/components/scroll-to-screen-top";
 import { SourceChip } from "@/components/source-chip";
 import { TaskEditBottomSheet } from "@/components/task-edit-bottom-sheet";
 
@@ -1078,6 +1079,13 @@ export default function CommitmentsPage() {
       : "Risk: consistency, not deadline proximity.",
   ];
 
+  useLayoutEffect(() => {
+    resetScreenScroll();
+    const frameId = window.requestAnimationFrame(resetScreenScroll);
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [step]);
+
   useEffect(() => {
     try {
       const rawFootprint =
@@ -2038,6 +2046,7 @@ export default function CommitmentsPage() {
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
               <FocusActionCard
+                conflictResolved={hasConfirmedConflict && conflictResolved}
                 onExplain={() => setReasoningOpen(true)}
                 onComplete={handleCompleteTask}
                 task={focusTask}
