@@ -36,9 +36,32 @@ const chaosCardsData: ChaosCard[] = [
   { id: 18, text: "Ask physics teacher tmr", chip: "Reminder", icon: Bell, className: "right-[-12px] top-[375px] w-[160px]", rotate: 4 }
 ];
 
+function getClumpTarget(className: string) {
+  let x = 0;
+  let y = 0;
+
+  if (className.includes("left-")) {
+    x = 160;
+  } else if (className.includes("right-")) {
+    x = -160;
+  }
+
+  if (className.includes("top-")) {
+    y = 220;
+  } else if (className.includes("bottom-")) {
+    y = -220;
+  }
+  
+  if (className.includes("top-[280px]") || className.includes("top-[290px]") || className.includes("top-[375px]")) {
+    y = 50;
+  }
+  
+  return { x, y };
+}
+
 export default function ChaosPage() {
   const router = useRouter();
-  const [stage, setStage] = useState<"intro" | "populating" | "falling" | "reveal" | "leaving">("intro");
+  const [stage, setStage] = useState<"intro" | "populating" | "clumping" | "reveal" | "leaving">("intro");
   const [visibleCardCount, setVisibleCardCount] = useState(0);
 
   useEffect(() => {
@@ -58,9 +81,9 @@ export default function ChaosPage() {
       setVisibleCardCount((prev) => {
         if (prev >= chaosCardsData.length) {
           clearInterval(popupInterval);
-          // Wait a bit, then collapse/fall down
+          // Wait a bit, then clump together in the center
           setTimeout(() => {
-            setStage("falling");
+            setStage("clumping");
           }, 1000);
           return prev;
         }
@@ -72,23 +95,23 @@ export default function ChaosPage() {
   }, [stage]);
 
   useEffect(() => {
-    if (stage !== "falling") return;
+    if (stage !== "clumping") return;
 
-    // 3. Fall finishes after 900ms, then reveal the new narrative
-    const fallTimer = setTimeout(() => {
+    // 3. Clumping finishes after 800ms, then reveal the plan card
+    const clumpTimer = setTimeout(() => {
       setStage("reveal");
-    }, 1000);
+    }, 800);
 
-    return () => clearTimeout(fallTimer);
+    return () => clearTimeout(clumpTimer);
   }, [stage]);
 
   useEffect(() => {
     if (stage !== "reveal") return;
 
-    // 4. Stay on the narrative for 2.6s, then start transitioning out
+    // 4. Stay on the narrative for 3.6s, then start transitioning out
     const redirectTimer = setTimeout(() => {
       setStage("leaving");
-    }, 2600);
+    }, 3600);
 
     return () => clearTimeout(redirectTimer);
   }, [stage]);
@@ -125,7 +148,7 @@ export default function ChaosPage() {
         )}
         
         {/* Dynamic Cards Container */}
-        {(stage === "intro" || stage === "populating" || stage === "falling") && (
+        {(stage === "intro" || stage === "populating" || stage === "clumping") && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {chaosCardsData.map((card, index) => {
               const isVisible = index < visibleCardCount;
@@ -135,26 +158,27 @@ export default function ChaosPage() {
                 <motion.div
                   key={card.id}
                   className={`absolute z-20 rounded-[20px] border border-neutral-200/90 bg-white/95 p-3 shadow-soft backdrop-blur-sm ${card.className}`}
-                  initial={{ opacity: 0, scale: 0.7, rotate: card.rotate, y: 0 }}
+                  initial={{ opacity: 0, scale: 0.7, rotate: card.rotate, y: 0, x: 0 }}
                   animate={
-                    stage === "falling"
+                    stage === "clumping"
                       ? { 
                           opacity: 0, 
-                          y: 850, 
-                          rotate: card.rotate + (Math.random() * 30 - 15), 
-                          scale: 0.95
+                          scale: 0.15,
+                          x: getClumpTarget(card.className).x, 
+                          y: getClumpTarget(card.className).y,
+                          rotate: 0
                         }
                       : isVisible
-                      ? { opacity: 1, scale: 1, rotate: card.rotate, y: 0 }
-                      : { opacity: 0, scale: 0.7, rotate: card.rotate, y: 0 }
+                      ? { opacity: 1, scale: 1, rotate: card.rotate, y: 0, x: 0 }
+                      : { opacity: 0, scale: 0.7, rotate: card.rotate, y: 0, x: 0 }
                   }
                   transition={
-                    stage === "falling"
+                    stage === "clumping"
                       ? { 
                           type: "tween", 
-                          ease: "easeIn", 
-                          duration: 0.65, 
-                          delay: index * 0.015 
+                          ease: "easeInOut", 
+                          duration: 0.75, 
+                          delay: index * 0.005 
                         }
                       : { 
                           type: "spring", 
@@ -206,18 +230,82 @@ export default function ChaosPage() {
           {stage === "reveal" && (
             <motion.div
               key="reveal-content"
-              className="z-10 mx-auto w-full max-w-[300px] text-center"
+              className="z-10 mx-auto w-full max-w-[340px] text-center flex flex-col items-center justify-center gap-5"
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.75, ease: "easeOut", delay: 0.15 } }}
               exit={{ opacity: 0, scale: 0.95, y: -15, transition: { duration: 0.6, ease: "easeIn" } }}
             >
-              <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink mb-3">
-                One inbox for your school mess.
-              </h1>
-              <p className="text-[14px] font-medium leading-relaxed text-muted">
-                StudentOS pulls everything together, parses your commitments, and builds your day.
-              </p>
-              <div className="mt-8 flex justify-center">
+              <div>
+                <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink mb-2">
+                  One inbox for your school mess.
+                </h1>
+                <p className="text-[13px] font-medium leading-relaxed text-muted">
+                  StudentOS pulls everything together, parses your commitments, and builds your day.
+                </p>
+              </div>
+
+              {/* Minimalistic Plan Card */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 15, delay: 0.3 } }}
+                className="w-full rounded-[24px] border border-neutral-200/90 bg-white p-4 shadow-[0_8px_30px_rgb(0,0,0,0.03)] text-left"
+              >
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                    Just do these 3 today
+                  </h3>
+                  <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+                
+                <div className="space-y-2.5">
+                  {/* Task 1 */}
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold">
+                      1
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-ink leading-tight">
+                        Physics Chapter 12 homework
+                      </p>
+                      <p className="text-[9px] font-semibold text-neutral-400 mt-0.5">
+                        Due tomorrow 8 AM
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Task 2 */}
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold">
+                      2
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-ink leading-tight">
+                        CCA briefing
+                      </p>
+                      <p className="text-[9px] font-semibold text-neutral-400 mt-0.5">
+                        Scheduled at 5:30 PM
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Task 3 */}
+                  <div className="flex items-center gap-3">
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[9px] font-bold">
+                      3
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-ink leading-tight">
+                        Coding practice (5h/wk)
+                      </p>
+                      <p className="text-[9px] font-semibold text-neutral-400 mt-0.5">
+                        Flexible block allocated
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+
+              <div className="mt-2 flex justify-center">
                 <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-400">
                   <span>Entering inbox</span>
                   <span className="flex h-1.5 w-1.5 rounded-full bg-ink animate-ping" />
