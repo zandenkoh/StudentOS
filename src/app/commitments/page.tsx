@@ -88,6 +88,26 @@ type ResolutionMode = "recommended" | "manual" | null;
 const MANUAL_CONFLICT_INSTRUCTION =
   "Physics teacher has granted extension for worksheet deadline to 16 June. Reschedule tuition accordingly, so that it no longer clashes with CCA briefing.";
 
+type SponsorTraceItem = {
+  provider: string;
+  action: string;
+  status: "success" | "fallback" | "error";
+  detail: string;
+};
+
+type ProcessTextSourceResponse = {
+  provider: string;
+  warning?: string;
+  source?: {
+    sourceId: string;
+    source: string;
+    snippet: string;
+    s3Key?: string;
+    sponsorStatus?: string;
+  };
+  trace?: SponsorTraceItem[];
+};
+
 const planSectionOrder: Array<{ title: string; section: PlanTaskSection }> = [
   { title: "Do now", section: "do_now" },
   { title: "Do next", section: "do_next" },
@@ -362,6 +382,8 @@ export default function CommitmentsPage() {
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [addSourceOpen, setAddSourceOpen] = useState(false);
   const [sourceDraft, setSourceDraft] = useState("");
+  const [sourceProcessing, setSourceProcessing] = useState(false);
+  const [addedSourceKey, setAddedSourceKey] = useState<string | null>(null);
   const [impactOpen, setImpactOpen] = useState(false);
   const [chemistryAdded, setChemistryAdded] = useState(false);
   const [roadmapAdded, setRoadmapAdded] = useState(true);
@@ -431,6 +453,21 @@ export default function CommitmentsPage() {
     window.setTimeout(() => setToastMessage(null), 1800);
   }
 
+  function addSponsorTrace(item: SponsorTraceItem) {
+    const existing = window.localStorage.getItem("studentos_sponsor_trace");
+    let trace: SponsorTraceItem[] = [];
+
+    if (existing) {
+      try {
+        trace = JSON.parse(existing) as SponsorTraceItem[];
+      } catch {
+        trace = [];
+      }
+    }
+
+    window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
+  }
+
   function clarify(kind: "goal" | "team") {
     setCommitments((current) =>
       current.map((item) => {
@@ -495,10 +532,40 @@ export default function CommitmentsPage() {
     setAddSourceOpen(true);
   }
 
-  function submitAdditionalSource() {
-    setSourceDraft((current) => current.trim() || "Chemistry worksheet due 8 PM tonight");
-    setAddSourceOpen(false);
-    setImpactOpen(true);
+  async function submitAdditionalSource() {
+    if (sourceProcessing) return;
+
+    const text = sourceDraft.trim() || "Chemistry worksheet due 8 PM tonight";
+    setSourceProcessing(true);
+    setSourceDraft(text);
+
+    try {
+      const response = await fetch("/api/sponsor/aws/process-text-source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          origin: "mid_flow_add",
+          title: "Mid-flow added source",
+          text,
+        }),
+      });
+      const result = (await response.json()) as ProcessTextSourceResponse;
+
+      result.trace?.forEach(addSponsorTrace);
+      setAddedSourceKey(result.source?.s3Key ?? null);
+    } catch (error) {
+      addSponsorTrace({
+        provider: "AWS",
+        action: "Stored added source",
+        status: "fallback",
+        detail: error instanceof Error ? error.message : "Added source storage failed.",
+      });
+      setAddedSourceKey(null);
+    } finally {
+      setSourceProcessing(false);
+      setAddSourceOpen(false);
+      setImpactOpen(true);
+    }
   }
 
   function updatePlanWithChemistry() {
@@ -1020,14 +1087,17 @@ export default function CommitmentsPage() {
             <button
               type="button"
               onClick={submitAdditionalSource}
+              disabled={sourceProcessing}
               className="flex size-12 items-center justify-center rounded-full bg-ink text-white shadow-soft"
               aria-label="Add task"
             >
-              <ArrowUp className="size-5 stroke-[2.5]" />
+              <ArrowUp className={`size-5 stroke-[2.5] ${sourceProcessing ? "animate-pulse" : ""}`} />
             </button>
           </div>
           <div className="rounded-[18px] border border-neutral-100 bg-neutral-50 p-3 text-xs font-semibold leading-5 text-neutral-500">
-            Demo task used: Chemistry worksheet due 8 PM tonight.
+            {sourceProcessing
+              ? "Saving added source through AWS..."
+              : "Demo fallback: Chemistry worksheet due 8 PM tonight."}
           </div>
         </div>
       </BottomSheet>
@@ -1045,6 +1115,11 @@ export default function CommitmentsPage() {
               <span className="size-1.5 rounded-full bg-ink" />
               Chemistry worksheet due 8 PM
             </div>
+            {addedSourceKey ? (
+              <p className="mt-3 rounded-[14px] border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
+                AWS cached this added source at <span className="font-mono">{addedSourceKey}</span>.
+              </p>
+            ) : null}
           </div>
 
           <div className="rounded-[22px] border border-neutral-200 bg-white p-4">

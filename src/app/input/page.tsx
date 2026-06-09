@@ -23,7 +23,7 @@ type InputSource = {
   s3Key?: string;
   provider?: string;
   ocrText?: string;
-  sponsorStatus?: "uploaded" | "extracted" | "fallback" | "error";
+  sponsorStatus?: "cached" | "uploaded" | "extracted" | "fallback" | "error";
 };
 
 type SponsorTraceItem = {
@@ -51,6 +51,27 @@ type AwsExtractResponse = {
   error?: string;
   text?: string;
   blockCount?: number;
+};
+
+type CachedSourceResponse = {
+  sourceId: string;
+  title: string;
+  source: string;
+  snippet: string;
+  fileSize?: string;
+  fileType?: InputSource["fileType"];
+  filePath?: string;
+  s3Key?: string;
+  provider?: string;
+  textractText?: string;
+  sponsorStatus?: InputSource["sponsorStatus"];
+};
+
+type DemoPacketImportResponse = {
+  provider: string;
+  warning?: string;
+  sources?: CachedSourceResponse[];
+  trace?: SponsorTraceItem[];
 };
 
 const exampleSources: InputSource[] = [
@@ -219,6 +240,10 @@ export default function InputPage() {
     window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
   };
 
+  const addSponsorTraces = (items: SponsorTraceItem[]) => {
+    items.forEach(addSponsorTrace);
+  };
+
   const formatFileSize = (size: number) => {
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -375,15 +400,33 @@ export default function InputPage() {
     }
   };
 
-  // Inject example sources one by one
-  const handleInjectExamples = () => {
+  const sourceFromCachedResponse = (source: CachedSourceResponse): InputSource => {
+    const fileType = source.fileType || "text";
+
+    return {
+      id: source.sourceId,
+      icon: iconForFileType(fileType),
+      title: source.title,
+      source: source.source,
+      snippet: source.snippet,
+      fileSize: source.fileSize,
+      fileType,
+      filePath: source.filePath,
+      s3Key: source.s3Key,
+      provider: source.provider,
+      ocrText: source.textractText,
+      sponsorStatus: source.sponsorStatus,
+    };
+  };
+
+  const revealSources = (nextSources: InputSource[]) => {
     if (isInjecting) return;
     setIsInjecting(true);
     setSources([]);
 
     let currentIndex = 0;
     injectionIntervalRef.current = setInterval(() => {
-      const nextSource = exampleSources[currentIndex];
+      const nextSource = nextSources[currentIndex];
 
       if (!nextSource) {
         if (injectionIntervalRef.current) {
@@ -405,6 +448,30 @@ export default function InputPage() {
         setIsInjecting(false);
       }
     }, 280);
+  };
+
+  // Import stable demo sources through the AWS source cache, then reveal them one by one.
+  const handleInjectExamples = async () => {
+    if (isInjecting) return;
+
+    setIsInjecting(true);
+
+    try {
+      const response = await fetch("/api/sponsor/aws/import-demo-packet", { method: "POST" });
+      const packet = (await response.json()) as DemoPacketImportResponse;
+      const importedSources = packet.sources?.map(sourceFromCachedResponse) ?? exampleSources;
+
+      if (packet.trace) addSponsorTraces(packet.trace);
+      revealSources(importedSources);
+    } catch (error) {
+      addSponsorTrace({
+        provider: "AWS",
+        action: "Imported demo packet",
+        status: "fallback",
+        detail: error instanceof Error ? error.message : "Demo packet import failed.",
+      });
+      revealSources(exampleSources);
+    }
   };
 
   const handleRemoveSource = (id: string, e: React.MouseEvent) => {
@@ -564,7 +631,13 @@ export default function InputPage() {
                       <div className="flex items-center gap-1">
                         {source.sponsorStatus && (
                           <span className="hidden sm:inline-flex rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">
-                            {source.sponsorStatus === "extracted" ? "Textract" : source.sponsorStatus === "uploaded" ? "S3" : "Fallback"}
+                            {source.sponsorStatus === "cached"
+                              ? "Cached"
+                              : source.sponsorStatus === "extracted"
+                                ? "Textract"
+                                : source.sponsorStatus === "uploaded"
+                                  ? "S3"
+                                  : "Fallback"}
                           </span>
                         )}
                         <span className="hidden sm:inline-flex rounded-full bg-[#FAFAFA] border border-neutral-100 px-2 py-0.5 text-[9px] font-bold text-neutral-500">

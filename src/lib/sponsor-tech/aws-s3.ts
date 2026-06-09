@@ -42,3 +42,17 @@ export async function getReadUrl(key: string, expiresIn = 3600) {
 
   return getSignedUrl(client, command, { expiresIn });
 }
+
+export async function getObjectText(key: string) {
+  if (!sponsorEnv.awsBucket) throw new Error("Missing AWS_S3_BUCKET");
+
+  const client = getS3Client();
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: sponsorEnv.awsBucket,
+      Key: key,
+    }),
+  );
+
+  return response.Body?.transformToString() ?? "";
+}
