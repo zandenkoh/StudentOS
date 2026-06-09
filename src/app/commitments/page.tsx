@@ -162,6 +162,13 @@ type ProcessTextSourceResponse = {
   trace?: SponsorTraceItem[];
 };
 
+type AddedCommitmentInterpretation = {
+  commitment: Commitment;
+  task: DemoPlanTask;
+  impactItems: string[];
+  clarificationQuestion?: AIClarificationQuestion;
+};
+
 type PlanDayResponse = {
   provider: "vercel-ai-gateway" | "fallback";
   status: "success" | "fallback" | "error";
@@ -230,6 +237,7 @@ const fallbackPlanReasoning =
 const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
 const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
 const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
+const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
 
 const commitmentSourceKeywords: Record<string, RegExp> = {
   physics: /physics|homework|worksheet|chapter|teacher/i,
@@ -539,6 +547,52 @@ function scheduleLabelForTask(task: DemoPlanTask) {
   return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? "the selected slot";
 }
 
+const monthOrder: Record<string, number> = {
+  january: 1,
+  february: 2,
+  march: 3,
+  april: 4,
+  may: 5,
+  june: 6,
+  july: 7,
+  august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  december: 12,
+};
+
+function dateSortValue(task: DemoPlanTask) {
+  if (task.scheduledDateId) {
+    const timestamp = Date.parse(`${task.scheduledDateId}T00:00:00`);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+
+  const label = task.scheduledDate ?? task.scheduledDateRange;
+  if (!label) return Number.POSITIVE_INFINITY;
+
+  const normalized = label.toLowerCase();
+  const monthMatch = normalized.match(
+    /january|february|march|april|may|june|july|august|september|october|november|december/,
+  );
+  if (!monthMatch) return Number.POSITIVE_INFINITY;
+
+  const dayMatch = normalized.match(/\b\d{1,2}\b/);
+  const month = monthOrder[monthMatch[0]];
+  const day = dayMatch ? Number(dayMatch[0]) : 1;
+  return Date.UTC(2026, month - 1, day);
+}
+
+function sortSubsequentDayTasks(tasks: DemoPlanTask[]) {
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => {
+      const byDate = dateSortValue(a.task) - dateSortValue(b.task);
+      return byDate || a.index - b.index;
+    })
+    .map(({ task }) => task);
+}
+
 const defaultScheduleRationales: Record<string, string> = {
   "physics-focus":
     "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.",
@@ -603,68 +657,80 @@ function movedScheduleRationale(task: DemoPlanTask, schedule: string) {
   return `StudentOS moved ${baseTaskTitle(task.title)} to ${schedule} because it still fits${deadline} while reducing pressure on the original slot.`;
 }
 
-interface CompletionTime {
-  hours: number;
-  minutes: number;
+function dateFromDateId(dateId: string) {
+  const [year, month, day] = dateId.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
 }
 
-const DEMO_COMPLETION_TIMES: Record<string, CompletionTime> = {
-  "physics-focus": { hours: 20, minutes: 35 },        // 8:35 PM
-  "message-teammate": { hours: 20, minutes: 38 },     // 8:38 PM
-  "cca-notes": { hours: 18, minutes: 45 },            // 6:45 PM
-  "tuition": { hours: 18, minutes: 30 },              // 6:30 PM
-  "revision": { hours: 20, minutes: 30 },             // 8:30 PM
-  "coding-practice": { hours: 22, minutes: 0 },       // 10:00 PM
-};
+function calendarDayDiff(from: Date, to: Date) {
+  const fromDay = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
+  const toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
+  return Math.round((toDay - fromDay) / 86400000);
+}
 
-function getScheduledCompletionTime(
-  task: DemoPlanTask,
-  timelineEvents: TimelineEvent[]
-): Date {
-  const now = new Date();
-  const scheduled = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+function formatDayDistance(days: number) {
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  return `in ${days} days`;
+}
 
-  // 1. Check if ID exists in our map
-  const mapped = DEMO_COMPLETION_TIMES[task.id];
-  if (mapped) {
-    scheduled.setHours(mapped.hours, mapped.minutes, 0, 0);
-    return scheduled;
-  }
+function parseDeadlineTime(task: DemoPlanTask, date: Date) {
+  const match = task.deadline?.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
+  if (!match) return null;
 
-  // 2. Otherwise try to parse start time from timeline event and add estimated minutes
-  const event = timelineEvents.find(e => {
-    if (e.id === task.id) return true;
-    if (e.id === "physics" && task.id === "physics-focus") return true;
-    if (e.id === "notes" && task.id === "cca-notes") return true;
-    if (e.id === "coding" && task.id === "coding-practice") return true;
-    return false;
-  });
+  let hours = Number(match[1]);
+  const minutes = match[2] ? Number(match[2]) : 0;
+  const ampm = match[3].toUpperCase();
+  if (ampm === "PM" && hours < 12) hours += 12;
+  if (ampm === "AM" && hours === 12) hours = 0;
 
-  let startTimeStr = event?.time || "";
-  if (!startTimeStr && task.timeLabel) {
-    const parts = task.timeLabel.split("-");
-    startTimeStr = parts[0];
-  }
+  const deadline = new Date(date);
+  deadline.setHours(hours, minutes, 0, 0);
+  return deadline;
+}
 
-  if (startTimeStr) {
-    const match = startTimeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-    if (match) {
-      let hours = parseInt(match[1], 10);
-      const minutes = parseInt(match[2], 10);
-      const ampm = match[3].toUpperCase();
-      if (ampm === "PM" && hours < 12) hours += 12;
-      if (ampm === "AM" && hours === 12) hours = 0;
-      
-      scheduled.setHours(hours, minutes, 0, 0);
-      const duration = task.estimatedMinutes ?? (task.id === "tuition" ? 120 : 0);
-      scheduled.setMinutes(scheduled.getMinutes() + duration);
-      return scheduled;
+function completionToastForTask(task: DemoPlanTask, now: Date) {
+  if (task.deadlineDateId) {
+    const deadlineDate = dateFromDateId(task.deadlineDateId);
+
+    if (deadlineDate) {
+      const daysUntilDeadline = calendarDayDiff(now, deadlineDate);
+
+      if (daysUntilDeadline > 0) {
+        return `Completed. Deadline is ${formatDayDistance(daysUntilDeadline)}.`;
+      }
+
+      if (daysUntilDeadline === 0) {
+        const deadlineTime = parseDeadlineTime(task, deadlineDate);
+        if (!deadlineTime) return "Completed before today's deadline.";
+
+        const minutesUntilDeadline = Math.round((deadlineTime.getTime() - now.getTime()) / 60000);
+        if (minutesUntilDeadline >= 0) {
+          const hours = Math.floor(minutesUntilDeadline / 60);
+          const mins = minutesUntilDeadline % 60;
+          const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+          return `Completed ${timeStr} before the deadline.`;
+        }
+
+        return "Completed after the deadline.";
+      }
+
+      return "Completed after the deadline.";
     }
   }
 
-  // Fallback to task's estimated time from now
-  scheduled.setMinutes(scheduled.getMinutes() + (task.estimatedMinutes ?? 30));
-  return scheduled;
+  if (task.scheduledDateId) {
+    const scheduledDate = dateFromDateId(task.scheduledDateId);
+    if (scheduledDate) {
+      const daysUntilScheduled = calendarDayDiff(now, scheduledDate);
+      if (daysUntilScheduled > 0) {
+        return `Completed early. This was scheduled ${formatDayDistance(daysUntilScheduled)}.`;
+      }
+    }
+  }
+
+  return "Completed. Plan updated.";
 }
 
 function questionsForSheet(questions: AIClarificationQuestion[]): ClarificationQuestion[] | undefined {
@@ -687,6 +753,114 @@ function estimatedMinutesFromDuration(value: string, type: Commitment["type"]) {
   if (type === "event") return 30;
   if (type === "goal") return 30;
   return 25;
+}
+
+function slugFromText(value: string) {
+  return normalizeSearchText(value).split(" ").slice(0, 5).join("-") || "added-task";
+}
+
+function titleFromAddedText(text: string) {
+  const withoutDeadline = text
+    .replace(/\b(due|by|before)\b.+$/i, "")
+    .replace(/\b(today|tonight|tomorrow|tmr)\b/gi, "")
+    .trim();
+  const title = withoutDeadline || text.trim();
+
+  return title.length > 70 ? `${title.slice(0, 67).trim()}...` : title;
+}
+
+function deadlineFromAddedText(text: string) {
+  const timeMatch = text.match(/\b(?:due|by|before)\s+((?:\d{1,2})(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i);
+  const dayMatch = text.match(/\b(today|tonight|tomorrow|tmr)\b/i);
+  const rawTime = timeMatch?.[1]?.replace(/\./g, "").replace(/\s+/g, " ").trim();
+
+  if (!rawTime && !dayMatch) return null;
+
+  const timeLabel = rawTime ? rawTime.toUpperCase().replace(/([0-9])([AP]M)$/i, "$1 $2") : "";
+  const dayLabel = dayMatch?.[1]?.toLowerCase();
+  const isTomorrow = dayLabel === "tomorrow" || dayLabel === "tmr";
+
+  return {
+    label: [timeLabel, dayLabel && !isTomorrow ? "tonight" : isTomorrow ? "tomorrow" : ""]
+      .filter(Boolean)
+      .join(" "),
+    dateId: isTomorrow ? "2026-06-10" : "2026-06-09",
+    timeLabel: timeLabel ? `Before ${timeLabel}` : "After current focus",
+  };
+}
+
+function typeFromAddedText(text: string): Commitment["type"] {
+  if (/\b(goal|learn|improve|practice|become|proficient)\b/i.test(text)) return "goal";
+  if (/\b(meet|meeting|tuition|briefing|training|class|lesson|event)\b/i.test(text)) return "event";
+  if (/\b(due|deadline|submit|submission|by|before)\b/i.test(text)) return "deadline";
+  return "task";
+}
+
+function interpretAddedSource(text: string): AddedCommitmentInterpretation {
+  const normalized = text.trim();
+  const isUnclear = normalized.length < 8 || !/[a-z0-9]/i.test(normalized);
+  const title = isUnclear ? "Clarify added task" : titleFromAddedText(normalized);
+  const type = isUnclear ? "task" : typeFromAddedText(normalized);
+  const deadline = isUnclear ? null : deadlineFromAddedText(normalized);
+  const id = `added-${slugFromText(normalized)}`;
+  const estimatedDuration = type === "event" ? "30min" : type === "goal" ? "30min/session" : "30min";
+  const commitment: Commitment = {
+    id,
+    title: capitalize(title),
+    type,
+    state: isUnclear ? "needs_clarification" : "confirmed",
+    confidence: isUnclear ? 45 : deadline ? 88 : 76,
+    source: "Added task",
+    estimatedDuration,
+    explanation: isUnclear
+      ? "The added text did not include enough detail to schedule confidently."
+      : `Interpreted from added input: "${normalized}".`,
+  };
+  const task: DemoPlanTask = {
+    id,
+    title: type === "goal" ? `Plan next step for ${commitment.title}` : commitment.title,
+    section: "do_next",
+    estimatedMinutes: estimatedMinutesFromDuration(estimatedDuration, type),
+    timeLabel: deadline?.timeLabel ?? "After current focus",
+    deadline: deadline?.label,
+    deadlineDateId: deadline?.dateId,
+    reason: deadline ? "New commitment inserted before its deadline" : "New commitment added mid-plan",
+    scheduleRationale: deadline
+      ? `StudentOS schedules ${commitment.title} before ${deadline.label} because that deadline came from the added input.`
+      : `StudentOS adds ${commitment.title} after the current focus because the added input did not include a fixed deadline.`,
+    source: "Added task",
+    goalId: type === "goal" ? id : undefined,
+    isRoadmapTask: type === "goal" ? true : undefined,
+    updated: true,
+  };
+  const impactItems = [
+    isUnclear ? "Ask for details before scheduling" : `Add ${commitment.title}`,
+    deadline ? `Schedule before ${deadline.label}` : "Place after current focus",
+    "Keep existing fixed commitments stable",
+  ];
+
+  return {
+    commitment,
+    task,
+    impactItems,
+    clarificationQuestion: isUnclear
+      ? {
+          id: `${id}-clarification`,
+          commitmentId: id,
+          kind: "general",
+          title: "Clarify added task",
+          subtitle: "StudentOS needs more detail before adding this to the plan.",
+          question: "What exactly should StudentOS add, and when is it due?",
+          options: [],
+          customPlaceholder: "e.g. Chemistry worksheet due tonight by 8 PM",
+          resolvedCommitment: {
+            state: "confirmed",
+            confidence: 82,
+            explanation: "Clarified from the user's added task details.",
+          },
+        }
+      : undefined,
+  };
 }
 
 function commitmentHasScheduledTask(commitment: Commitment, tasks: DemoPlanTask[]) {
@@ -749,6 +923,30 @@ function persistPlanTasks(tasks: DemoPlanTask[]) {
   window.localStorage.setItem(SAVED_PLAN_TASKS_KEY, JSON.stringify(tasks));
 }
 
+function completedTaskIds() {
+  const raw = window.localStorage.getItem(COMPLETED_TASK_IDS_KEY);
+  if (!raw) return new Set<string>();
+
+  try {
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function persistCompletedTask(taskId: string) {
+  const ids = completedTaskIds();
+  ids.add(taskId);
+  window.localStorage.setItem(COMPLETED_TASK_IDS_KEY, JSON.stringify([...ids]));
+}
+
+function withoutCompletedTasks(tasks: DemoPlanTask[]) {
+  const completedIds = completedTaskIds();
+  if (completedIds.size === 0) return tasks;
+  return tasks.filter((task) => !completedIds.has(task.id));
+}
+
 function persistFlowState(state: {
   step?: CommitmentsStep;
   conflictResolved?: boolean;
@@ -796,6 +994,9 @@ export default function CommitmentsPage() {
   const [sourceDraft, setSourceDraft] = useState("");
   const [sourceProcessing, setSourceProcessing] = useState(false);
   const [addedSourceKey, setAddedSourceKey] = useState<string | null>(null);
+  const [addedSourceText, setAddedSourceText] = useState<string | null>(null);
+  const [addedInterpretation, setAddedInterpretation] =
+    useState<AddedCommitmentInterpretation | null>(null);
   const [impactOpen, setImpactOpen] = useState(false);
   const [chemistryAdded, setChemistryAdded] = useState(false);
   const [roadmapAdded, setRoadmapAdded] = useState(true);
@@ -817,10 +1018,14 @@ export default function CommitmentsPage() {
     (item) => item.state === "needs_clarification" || item.state === "unsure"
   ).length;
   const displayedPlanSections = useMemo<PlanDisplaySection[]>(() => {
-    return planSectionOrder.map((section) => ({
-      ...section,
-      items: planTasks.filter((task) => task.section === section.section)
-    }));
+    return planSectionOrder.map((section) => {
+      const items = planTasks.filter((task) => task.section === section.section);
+
+      return {
+        ...section,
+        items: section.section === "subsequent_days" ? sortSubsequentDayTasks(items) : items
+      };
+    });
   }, [planTasks]);
   const commitmentItems = useMemo(
     () => commitments.filter((item) => item.type !== "goal"),
@@ -889,7 +1094,7 @@ export default function CommitmentsPage() {
         ) {
           setAiFootprint(parsedFootprint);
           setCommitments(parsedFootprint.commitments);
-          setPlanTasks(enrichPlanTasksWithRationales(parsedFootprint.planTasks));
+          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedFootprint.planTasks)));
           setBaseTimeline(parsedFootprint.timelineEvents);
           setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
           setConflictAnalysis(parsedFootprint.conflict);
@@ -922,7 +1127,7 @@ export default function CommitmentsPage() {
       if (savedPlan) {
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
         if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
-          setPlanTasks(enrichPlanTasksWithRationales(parsedPlan));
+          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedPlan)));
         }
       }
 
@@ -987,7 +1192,7 @@ export default function CommitmentsPage() {
         });
       }
     } catch {
-      setPlanTasks(enrichPlanTasksWithRationales(initialPlanTasks));
+      setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(initialPlanTasks)));
     } finally {
       setPlanHydrated(true);
     }
@@ -1047,7 +1252,7 @@ export default function CommitmentsPage() {
     const clarificationSignature = clarificationAnswerRecords
       .map((item) => `${item.commitmentId}:${item.question}:${item.answer}`)
       .join("|");
-    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${chemistryAdded ? "chemistry" : "standard"}_${clarificationSignature.length}`;
+    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${addedInterpretation?.commitment.id ?? "standard"}_${clarificationSignature.length}`;
     const cached = window.localStorage.getItem(cacheKey);
 
     if (cached) {
@@ -1099,8 +1304,9 @@ export default function CommitmentsPage() {
             sourceContext: {
               narrative: "AWS extracted messy screenshots, PDFs, and text sources before this Vercel planning step.",
               conflictResolution: resolutionMode ?? "recommended",
-              addedSource: chemistryAdded ? "Chemistry worksheet due 8 PM" : undefined,
+              addedSource: addedSourceText ?? undefined,
               addedSourceKey,
+              addedCommitment: addedInterpretation?.commitment,
               clarificationSummary:
                 clarificationAnswerRecords.length > 0
                   ? clarificationAnswerRecords.map((item) => `${item.question}: ${item.answer}`)
@@ -1156,7 +1362,9 @@ export default function CommitmentsPage() {
   }, [
     addSponsorTrace,
     addedSourceKey,
+    addedSourceText,
     aiPlan,
+    addedInterpretation,
     chemistryAdded,
     clarificationAnswerRecords,
     commitments,
@@ -1174,27 +1382,7 @@ export default function CommitmentsPage() {
 
   function handleCompleteTask(task: DemoPlanTask) {
     const now = new Date();
-    const scheduled = getScheduledCompletionTime(task, visibleTimelineEvents);
-    const diffMs = now.getTime() - scheduled.getTime();
-    const diffMins = Math.round(diffMs / 60000);
-
-    let toastMsg = "";
-    if (diffMins < 0) {
-      const absMins = Math.abs(diffMins);
-      const hours = Math.floor(absMins / 60);
-      const mins = absMins % 60;
-      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
-      toastMsg = `Completed! You are ${timeStr} ahead of schedule.`;
-    } else if (diffMins > 0) {
-      const hours = Math.floor(diffMins / 60);
-      const mins = diffMins % 60;
-      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
-      toastMsg = `Completed! You are ${timeStr} behind schedule.`;
-    } else {
-      toastMsg = "Completed right on time!";
-    }
-
-    showToast(toastMsg);
+    showToast(completionToastForTask(task, now));
 
     const updatedTasks = planTasks.filter((t) => t.id !== task.id);
     const firstDoNext = updatedTasks.find((t) => t.section === "do_next");
@@ -1209,6 +1397,7 @@ export default function CommitmentsPage() {
       }
     }
     setPlanTasks(updatedTasks);
+    persistCompletedTask(task.id);
     persistPlanTasks(updatedTasks);
   }
 
@@ -1383,9 +1572,12 @@ export default function CommitmentsPage() {
   async function submitAdditionalSource() {
     if (sourceProcessing) return;
 
-    const text = sourceDraft.trim() || "Chemistry worksheet due 8 PM tonight";
+    const text = sourceDraft.trim();
+    const interpretation = interpretAddedSource(text);
     setSourceProcessing(true);
     setSourceDraft(text);
+    setAddedSourceText(text);
+    setAddedInterpretation(interpretation);
 
     try {
       const response = await fetch("/api/sponsor/aws/process-text-source", {
@@ -1417,38 +1609,87 @@ export default function CommitmentsPage() {
   }
 
   function updatePlanWithChemistry() {
-    if (chemistryAdded) {
+    if (!addedInterpretation) {
       setImpactOpen(false);
-      showToast("Chemistry already in plan");
       return;
     }
 
-    const chemistryTask: DemoPlanTask = {
-      id: "chemistry-worksheet",
-      title: "Chemistry worksheet",
-      section: "do_next",
-      estimatedMinutes: 30,
-      timeLabel: "Before 8 PM",
-      deadline: "8 PM tonight",
-      deadlineDateId: "2026-06-09",
-      reason: "New commitment inserted before the evening deadline",
-      scheduleRationale:
-        "Chemistry is inserted before 8 PM because it has a same-day deadline; coding moves later because goal practice is less urgent and can tolerate night fatigue better than deadline work.",
-      source: "Added task",
-      updated: true
-    };
+    if (chemistryAdded) {
+      setImpactOpen(false);
+      showToast("Already in plan");
+      return;
+    }
+
+    const { commitment, task, clarificationQuestion } = addedInterpretation;
+
+    setCommitments((current) => {
+      if (current.some((item) => item.id === commitment.id)) return current;
+
+      const updated = [...current, commitment];
+      persistCommitments(updated);
+      return updated;
+    });
+
+    if (clarificationQuestion) {
+      setAiFootprint((current) => {
+        const nextQuestion = {
+          ...clarificationQuestion,
+          options: clarificationQuestion.options ?? [],
+        };
+
+        if (!current) {
+          return {
+            createdAt: new Date().toISOString(),
+            currentDate: "2026-06-09",
+            provider: "fallback",
+            status: "fallback",
+            sourceSummary: {
+              totalSources: 1,
+              realSources: 1,
+              ocrReadySources: 0,
+            },
+            sources: [],
+            commitments: [commitment],
+            clarificationQuestions: [nextQuestion],
+            timelineEvents,
+            resolvedTimelineEvents,
+            conflict: defaultConflictAnalysis,
+            planTasks: initialPlanTasks,
+            roadmapSteps: [],
+            rationale: {
+              summary: "Additional item needs clarification before scheduling.",
+              bullets: ["The added text did not include enough scheduling detail."],
+            },
+            agentLogs: [],
+            sponsorTrace: [],
+          };
+        }
+
+        return {
+          ...current,
+          clarificationQuestions: [
+            ...current.clarificationQuestions.filter(
+              (item) => item.commitmentId !== commitment.id,
+            ),
+            nextQuestion,
+          ],
+        };
+      });
+    }
 
     setPlanTasks((current) => {
-      if (current.some((task) => task.id === chemistryTask.id)) return current;
+      if (current.some((item) => item.id === task.id) || commitment.state === "needs_clarification") {
+        return current;
+      }
 
       const updatedTasks = current.map((task) =>
         task.id === "coding-practice"
           ? {
               ...task,
               timeLabel: "9:45 PM",
-              reason: "Moved later after Chemistry",
+              reason: `Moved later after ${commitment.title}`,
               scheduleRationale:
-                "Coding practice moves to 9:45 PM because Chemistry now owns the pre-8 PM deadline slot, while coding remains a lower-urgency December goal block.",
+                `Coding practice moves to 9:45 PM because ${commitment.title} now needs the earlier flexible slot.`,
               updated: true
             }
           : task
@@ -1460,13 +1701,13 @@ export default function CommitmentsPage() {
           (task) => task.section === "subsequent_days"
         );
         if (firstFutureIndex < 0) {
-          const updated = [...updatedTasks, chemistryTask];
+          const updated = [...updatedTasks, task];
           persistPlanTasks(updated);
           return updated;
         }
         const updated = [
           ...updatedTasks.slice(0, firstFutureIndex),
-          chemistryTask,
+          task,
           ...updatedTasks.slice(firstFutureIndex)
         ];
         persistPlanTasks(updated);
@@ -1475,7 +1716,7 @@ export default function CommitmentsPage() {
 
       const updated = [
         ...updatedTasks.slice(0, codingIndex),
-        chemistryTask,
+        task,
         ...updatedTasks.slice(codingIndex)
       ];
       persistPlanTasks(updated);
@@ -1484,9 +1725,14 @@ export default function CommitmentsPage() {
     setChemistryAdded(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
-    window.localStorage.setItem("studentos_extra_source_added", "chemistry_worksheet_due_8pm");
+    window.localStorage.setItem("studentos_extra_source_added", commitment.id);
     persistFlowState({ chemistryAdded: true });
     setImpactOpen(false);
+    if (commitment.state === "needs_clarification") {
+      setClarifying({ kind: "general", commitmentId: commitment.id });
+      showToast("Clarification needed");
+      return;
+    }
     showToast("Plan updated");
   }
 
@@ -2020,7 +2266,7 @@ export default function CommitmentsPage() {
           <div className="rounded-[18px] border border-neutral-100 bg-neutral-50 p-3 text-xs font-semibold leading-5 text-neutral-500">
             {sourceProcessing
               ? "Saving added source through AWS..."
-              : "Demo fallback: Chemistry worksheet due 8 PM tonight."}
+              : "StudentOS will use the text you enter here as the source of truth."}
           </div>
         </div>
       </BottomSheet>
@@ -2029,14 +2275,20 @@ export default function CommitmentsPage() {
         open={impactOpen}
         onClose={() => setImpactOpen(false)}
         title={chemistryAdded ? "Already in your plan" : "1 new commitment found"}
-        subtitle={chemistryAdded ? "Chemistry is already scheduled before 8 PM." : "This affects today’s plan."}
+        subtitle={
+          chemistryAdded
+            ? `${addedInterpretation?.commitment.title ?? "This item"} is already in your plan.`
+            : addedInterpretation?.commitment.state === "needs_clarification"
+              ? "StudentOS needs one detail before scheduling it."
+              : "This affects today's plan."
+        }
       >
         <div className="space-y-4">
           <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">Added</p>
             <div className="mt-3 flex items-center gap-3 rounded-2xl bg-neutral-50 px-3 py-2 text-sm font-semibold text-ink">
               <span className="size-1.5 rounded-full bg-ink" />
-              Chemistry worksheet due 8 PM
+              {addedInterpretation?.commitment.title ?? addedSourceText ?? "Added task"}
             </div>
             {addedSourceKey ? (
               <p className="mt-3 rounded-[14px] border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
@@ -2048,11 +2300,7 @@ export default function CommitmentsPage() {
           <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">Plan impact</p>
             <div className="mt-3 space-y-2">
-              {[
-                "Add Chemistry worksheet before 8 PM",
-                "Keep Physics worksheet as first focus block",
-                "Move coding practice later"
-              ].map((item) => (
+              {(addedInterpretation?.impactItems ?? ["Review the added task"]).map((item) => (
                 <div key={item} className="flex items-center gap-3 rounded-2xl bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-700">
                   <span className="size-1.5 rounded-full bg-ink" />
                   {item}

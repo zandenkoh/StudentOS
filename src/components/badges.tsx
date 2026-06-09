@@ -26,10 +26,10 @@ export function UncertaintyBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold",
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
         confirmed
-          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-          : "border-red-200 bg-red-50 text-red-700"
+          ? "bg-emerald-100 text-emerald-700"
+          : "bg-red-100 text-red-700"
       )}
     >
       {confirmed ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}

@@ -2,8 +2,7 @@
 
 import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
-import { DurationBadge, UncertaintyBadge } from "@/components/badges";
-import { SourceChip } from "@/components/source-chip";
+import { UncertaintyBadge } from "@/components/badges";
 import type { Commitment } from "@/lib/demo-data";
 import { cn } from "@/lib/utils";
 
@@ -39,20 +38,28 @@ export function CommitmentCard({
         </div>
         <ChevronRight className="mt-1 size-5 shrink-0 text-neutral-300" />
       </div>
-      <div className="flex flex-wrap gap-2">
-        <SourceChip>{typeLabel}</SourceChip>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-[12px] font-semibold leading-5 text-neutral-500">{typeLabel}</span>
+        <span className="text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
+          {"\u00b7"}
+        </span>
         <button
           type="button"
           onClick={(event) => {
             event.stopPropagation();
             onSourceClick?.();
           }}
-          className="rounded-full transition hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/20"
+          className="text-[12px] font-semibold leading-5 text-neutral-500 transition hover:text-ink focus:outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ink/20"
           aria-label={`Open source for ${commitment.title}`}
         >
-          <SourceChip>{commitment.source}</SourceChip>
+          {commitment.source}
         </button>
-        <DurationBadge value={commitment.estimatedDuration} />
+        <span className="text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
+          {"\u00b7"}
+        </span>
+        <span className="text-[12px] font-semibold leading-5 text-neutral-500">
+          {commitment.estimatedDuration}
+        </span>
         <UncertaintyBadge state={commitment.state} />
       </div>
       <p className={cn("mt-3 text-xs font-semibold", uncertain ? "text-red-700" : "text-neutral-400")}>

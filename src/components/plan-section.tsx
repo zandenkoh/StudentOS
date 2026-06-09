@@ -53,30 +53,29 @@ function PlanTaskCard({
           </div>
 
           {future ? (
-            <div className="mt-3 space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                {schedule ? (
-                  <div className="rounded-2xl bg-neutral-50 px-3 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-400">
-                      Scheduled
-                    </p>
-                    <p className="mt-1 text-[12px] font-semibold text-ink">{schedule}</p>
-                  </div>
-                ) : null}
-                {task.deadline ? (
-                  <div className="rounded-2xl bg-neutral-50 px-3 py-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-400">
-                      Deadline
-                    </p>
-                    <p className="mt-1 text-[12px] font-semibold text-ink">{task.deadline}</p>
-                  </div>
-                ) : null}
-              </div>
+            <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] font-semibold text-neutral-500">
+              {schedule ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="size-3.5" />
+                  {schedule}
+                </span>
+              ) : null}
+              {schedule && task.deadline ? (
+                <span className="text-neutral-300" aria-hidden="true">
+                  {"\u00b7"}
+                </span>
+              ) : null}
+              {task.deadline ? <span>{task.deadline}</span> : null}
+              {(schedule || task.deadline) && duration ? (
+                <span className="text-neutral-300" aria-hidden="true">
+                  {"\u00b7"}
+                </span>
+              ) : null}
               {duration ? (
-                <p className="flex items-center gap-1.5 text-[13px] font-semibold text-neutral-500">
+                <span className="inline-flex items-center gap-1.5">
                   <Clock3 className="size-3.5" />
                   {duration}
-                </p>
+                </span>
               ) : null}
             </div>
           ) : (

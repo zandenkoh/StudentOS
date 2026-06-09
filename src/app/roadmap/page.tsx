@@ -43,6 +43,15 @@ export default function RoadmapPage() {
 
   function backToPlan() {
     window.localStorage.setItem("studentos_resume_step", "plan");
+    window.localStorage.setItem(
+      "studentos_flow_state",
+      JSON.stringify({
+        step: "plan",
+        conflictResolved: true,
+        resolutionMode: "recommended",
+        roadmapAdded: true,
+      }),
+    );
     router.push("/commitments");
   }
 
