@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   AudioLines, CalendarDays, FileText, Image, Globe2, MessageSquare,
-  Paperclip, ArrowUp, X, Play, Pause, Volume2, Sparkles, ChevronRight, Cloud,
+  Paperclip, ArrowUp, X, Play, Pause, Volume2, Sparkles, ChevronRight, Cloud, Mic,
   type LucideIcon
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -150,6 +150,8 @@ export default function InputPage() {
   const [inputText, setInputText] = useState("");
   const [isInjecting, setIsInjecting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState("");
   const [previewSource, setPreviewSource] = useState<InputSource | null>(null);
   
   // Audio player state
@@ -158,6 +160,9 @@ export default function InputPage() {
   const audioIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const injectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
 
   // Auto-grow textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -194,6 +199,7 @@ export default function InputPage() {
       if (injectionIntervalRef.current) {
         clearInterval(injectionIntervalRef.current);
       }
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
@@ -400,6 +406,77 @@ export default function InputPage() {
     }
   };
 
+  const stopRecordingTracks = () => {
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current = null;
+  };
+
+  const handleToggleRecording = async () => {
+    setRecordingError("");
+
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setRecordingError("Voice recording is not available in this browser.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const recordingBlob = new Blob(recordingChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+
+        if (recordingBlob.size > 0) {
+          const newSource: InputSource = {
+            id: `voice-recording-${Date.now()}`,
+            icon: AudioLines,
+            title: "Recorded voice note.webm",
+            source: "Voice Recording",
+            snippet: "New voice note captured and queued for transcription.",
+            fileSize: formatFileSize(recordingBlob.size),
+            fileType: "audio",
+          };
+          setSources((prev) => [newSource, ...prev]);
+        }
+
+        recordingChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        setIsRecording(false);
+        stopRecordingTracks();
+      };
+
+      recorder.onerror = () => {
+        setRecordingError("Voice recording stopped unexpectedly.");
+        setIsRecording(false);
+        stopRecordingTracks();
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      setRecordingError("Microphone access was not granted.");
+      setIsRecording(false);
+      stopRecordingTracks();
+    }
+  };
+
   const sourceFromCachedResponse = (source: CachedSourceResponse): InputSource => {
     const fileType = source.fileType || "text";
 
@@ -532,14 +609,30 @@ export default function InputPage() {
               className="hidden"
               onChange={(event) => handleFileSelected(event.target.files?.[0])}
             />
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="flex size-9 items-center justify-center rounded-full bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-ink transition-colors"
-              title="Upload file"
-            >
-              {isUploading ? <Cloud className="size-4.5 animate-pulse" /> : <Paperclip className="size-4.5" />}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="flex size-9 items-center justify-center rounded-full bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-ink transition-colors"
+                title="Upload file"
+                type="button"
+              >
+                {isUploading ? <Cloud className="size-4.5 animate-pulse" /> : <Paperclip className="size-4.5" />}
+              </button>
+              <button
+                onClick={handleToggleRecording}
+                className={`flex size-9 items-center justify-center rounded-full transition-colors ${
+                  isRecording
+                    ? "bg-red-50 text-red-600 ring-2 ring-red-100"
+                    : "bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-ink"
+                }`}
+                title={isRecording ? "Stop recording" : "Record voice note"}
+                type="button"
+                aria-pressed={isRecording}
+              >
+                <Mic className={`size-4.5 ${isRecording ? "animate-pulse" : ""}`} />
+              </button>
+            </div>
 
             <button
               disabled={!inputText.trim()}
@@ -553,6 +646,9 @@ export default function InputPage() {
               <ArrowUp className="size-4.5 stroke-[2.5]" />
             </button>
           </div>
+          {recordingError ? (
+            <p className="mt-2 px-1 text-[11px] font-semibold text-red-500">{recordingError}</p>
+          ) : null}
         </div>
 
         {/* Import Demo Packet Button */}

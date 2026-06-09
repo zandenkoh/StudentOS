@@ -19,7 +19,7 @@ export function BottomActionBar({
       <div className="mt-3">
         <SecondaryButton onClick={onReasoning} className="w-full">
           <Sparkles className="size-4" />
-          View reasoning
+          Why this plan?
         </SecondaryButton>
       </div>
     </div>

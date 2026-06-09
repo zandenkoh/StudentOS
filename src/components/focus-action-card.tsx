@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Play } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import { SourceChip } from "@/components/source-chip";
@@ -30,8 +30,8 @@ export function FocusActionCard({
       ) : null}
       <div className="mt-6 flex flex-col gap-3">
         <PrimaryButton onClick={() => setStarted(true)} className="bg-white text-ink hover:bg-neutral-100">
-          {started ? <CheckCircle2 className="size-4" /> : <Play className="size-4" />}
-          {started ? "Focus block running" : "Start focus block"}
+          <CheckCircle2 className="size-4" />
+          {started ? "Completed" : "Mark as complete"}
         </PrimaryButton>
         <SecondaryButton onClick={onExplain} className="w-full border-white/15 bg-white/10 text-white">
           Explain why

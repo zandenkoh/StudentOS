@@ -1017,7 +1017,7 @@ export default function CommitmentsPage() {
         <div className="space-y-4">
           <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
-              StudentOS view
+              Rationale for Schedule
             </p>
             <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
               {conflictResolved

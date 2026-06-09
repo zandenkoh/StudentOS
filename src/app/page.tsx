@@ -43,7 +43,7 @@ export default function Home() {
             Turn school chaos into a plan you can actually follow.
           </h1>
           <p className="text-[14px] font-medium leading-relaxed text-muted px-3">
-            Drop screenshots, messages, PDFs, or voice notes. StudentOS extracts commitments, resolves clashes, and builds your day.
+            Traditional planner apps assume you know when to do what. StudentOS figures that out for you.
           </p>
         </div>
 
