@@ -1,0 +1,82 @@
+"use client";
+
+import { motion } from "framer-motion";
+import { ChevronRight } from "lucide-react";
+import { SourceChip } from "@/components/source-chip";
+import type { TimelineEvent } from "@/lib/demo-data";
+import { cn } from "@/lib/utils";
+
+export function OverlapIndicator({ hidden }: { hidden: boolean }) {
+  if (hidden) return null;
+  return (
+    <div className="absolute right-3 top-[6.9rem] z-10 flex items-center gap-2">
+      <div className="h-24 w-1 rounded-full bg-red-400" />
+      <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+        45 min overlap
+      </span>
+    </div>
+  );
+}
+
+export function TimelineEventBlock({
+  event,
+  onClick
+}: {
+  event: TimelineEvent;
+  onClick: () => void;
+}) {
+  return (
+    <motion.button
+      layout
+      whileTap={{ scale: 0.985 }}
+      onClick={onClick}
+      className={cn(
+        "w-full rounded-[20px] border bg-white p-4 text-left shadow-[0_10px_35px_rgba(0,0,0,0.04)]",
+        event.tone === "conflict" && "border-red-200 bg-red-50",
+        event.tone === "success" && "border-emerald-200 bg-emerald-50",
+        event.tone === "priority" && "border-neutral-300"
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[15px] font-semibold">{event.title}</p>
+          <p className="mt-1 text-[13px] text-muted">{event.duration ?? event.time}</p>
+        </div>
+        <ChevronRight className="size-4 text-neutral-300" />
+      </div>
+      <div className="mt-3 flex items-center justify-between">
+        <SourceChip tone={event.tone === "conflict" ? "danger" : event.tone === "success" ? "success" : "neutral"}>
+          {event.chip}
+        </SourceChip>
+        <span className="text-xs font-semibold text-neutral-400">Tap to edit</span>
+      </div>
+    </motion.button>
+  );
+}
+
+export function MobileTimeline({
+  events,
+  resolved,
+  onEventClick
+}: {
+  events: TimelineEvent[];
+  resolved: boolean;
+  onEventClick: (event: TimelineEvent) => void;
+}) {
+  return (
+    <section className="relative rounded-[28px] border border-neutral-200 bg-[#F7F7F8] p-4 shadow-soft">
+      <OverlapIndicator hidden={resolved} />
+      <div className="absolute bottom-8 left-[4.8rem] top-8 w-px bg-neutral-200" />
+      <div className="space-y-4">
+        {events.map((event) => (
+          <div key={event.id} className="grid grid-cols-[56px_1fr] gap-4">
+            <div className="pt-4 text-right text-xs font-semibold text-neutral-400">
+              {event.time}
+            </div>
+            <TimelineEventBlock event={event} onClick={() => onEventClick(event)} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
