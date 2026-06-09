@@ -147,6 +147,7 @@ const GoalResearchSchema = z.object({
   query: z.string(),
   summary: z.string(),
   model: z.string().optional(),
+  filteredResultCount: z.number().optional(),
   searchQueries: z.array(z.string()).optional(),
   sections: z.array(z.object({
     title: z.string(),
@@ -988,7 +989,7 @@ function sourceDrivenTrace(
       provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched planning context",
       status: "success",
-      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`,
+      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered for ${goalResearch.query}.`,
     });
   }
 
@@ -1254,7 +1255,7 @@ function fallbackFootprint(
       provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched planning context",
       status: "success" as const,
-      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`,
+      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered for ${goalResearch.query}.`,
     });
   }
 
@@ -1800,7 +1801,7 @@ export async function analyseStudentChaos(
       action: "Deep researched planning context",
       status: goalResearch ? "success" : "fallback",
       detail: goalResearch
-          ? `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`
+          ? `${goalResearch.searchQueries?.length ?? 1} Exa searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered for ${goalResearch.query}.`
           : "No Exa search was needed or Exa was unavailable.",
     };
     await emitTrace(trace);

@@ -93,6 +93,7 @@ export type AIGoalResearch = {
   query: string;
   summary: string;
   model?: string;
+  filteredResultCount?: number;
   searchQueries?: string[];
   sections?: Array<{
     title: string;

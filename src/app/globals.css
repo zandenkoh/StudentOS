@@ -39,7 +39,7 @@ textarea {
   .fixed-bottom-action {
     position: fixed;
     left: 50%;
-    bottom: max(0.75rem, env(safe-area-inset-bottom));
+    bottom: 0;
     z-index: 40;
     width: 100%;
     max-width: 430px;

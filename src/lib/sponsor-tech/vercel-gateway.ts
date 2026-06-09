@@ -23,7 +23,21 @@ const GatewayPlanSchema = z.object({
   }),
 });
 
+const ClarificationReviewSchema = z.object({
+  summary: z.string(),
+  resolvedCommitments: z.array(z.object({
+    commitmentId: z.string(),
+    revisedTitle: z.string(),
+    resolvedState: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
+    estimatedDuration: z.string(),
+    schedulingDirective: z.string(),
+  })).max(8),
+  planningDirectives: z.array(z.string()).min(1).max(6),
+  remainingUncertainties: z.array(z.string()).max(6),
+});
+
 export type GatewayPlanResult = z.infer<typeof GatewayPlanSchema>;
+type ClarificationReview = z.infer<typeof ClarificationReviewSchema>;
 
 export type PlanDayInput = {
   currentDate: string;
@@ -48,7 +62,7 @@ export type PlanDayResponse = {
   dailyPlan: GatewayPlanResult["dailyPlan"];
   trace: Array<{
     provider: "Vercel AI Gateway";
-    action: string;
+    action: "Reviewed clarification answers" | "Vercel AI Gateway generated planning rationale" | "Vercel AI Gateway fallback planning";
     status: PlanDayTraceStatus;
     detail: string;
   }>;
@@ -128,8 +142,69 @@ function normalizeGatewayPlan(plan: GatewayPlanResult): GatewayPlanResult {
   };
 }
 
-export function buildFallbackPlan(reason: string): PlanDayResponse {
-  const normalizedFallbackPlan = normalizeGatewayPlan(fallbackPlan);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textValue(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function sourceDrivenFallbackPlan(input?: PlanDayInput): GatewayPlanResult {
+  const commitmentRecords = input?.commitments.filter(isRecord) ?? [];
+  const goalRecords = input?.goals.filter(isRecord) ?? [];
+  const items = [...commitmentRecords, ...goalRecords];
+
+  if (!items.length) return fallbackPlan;
+
+  const titles = items
+    .map((item) => textValue(item.title))
+    .filter(Boolean)
+    .slice(0, 5);
+  const firstTitle = titles[0] ?? "Review submitted commitment";
+  const planItems = titles.map((title, index) => ({
+    title,
+    timeLabel: ["3:30-4:00 PM", "4:15-4:45 PM", "5:00-5:30 PM", "8:00-8:30 PM", "8:45-9:15 PM"][index] ?? "8:45-9:15 PM",
+    estimatedMinutes: /goal|roadmap|learn|prepare|read/i.test(title) ? 30 : 25,
+    reason: "Fallback plan item derived from the submitted commitment instead of demo data.",
+  }));
+
+  return {
+    summary: `StudentOS kept the fallback plan grounded in the submitted item: ${firstTitle}.`,
+    bullets: [
+      "Fallback planning used submitted commitments and clarification answers only.",
+      "Flexible work stays in short blocks until exact deadlines and durations are confirmed.",
+      "No demo commitments were substituted into this plan.",
+    ],
+    dailyPlan: {
+      focus: firstTitle,
+      doNow: [planItems[0]],
+      doNext: planItems.slice(1, 4).length
+        ? planItems.slice(1, 4)
+        : [
+            {
+              title: `Confirm details for ${firstTitle}`,
+              timeLabel: "4:15-4:30 PM",
+              estimatedMinutes: 15,
+              reason: "Clarifies missing timing, scope, or output before deeper scheduling.",
+            },
+          ],
+      later: planItems.slice(4).length
+        ? planItems.slice(4)
+        : [
+            {
+              title: `Continue ${firstTitle}`,
+              timeLabel: "8:00-8:30 PM",
+              estimatedMinutes: 30,
+              reason: "Keeps momentum without inventing unrelated work.",
+            },
+          ],
+    },
+  };
+}
+
+export function buildFallbackPlan(reason: string, input?: PlanDayInput): PlanDayResponse {
+  const normalizedFallbackPlan = normalizeGatewayPlan(sourceDrivenFallbackPlan(input));
 
   return {
     provider: "fallback",
@@ -150,6 +225,91 @@ export function buildFallbackPlan(reason: string): PlanDayResponse {
   };
 }
 
+function clarificationAnswerCount(input: PlanDayInput) {
+  return input.clarificationAnswers?.length ?? 0;
+}
+
+function mergeSourceContextWithReview(sourceContext: unknown, review: ClarificationReview) {
+  return {
+    ...(isRecord(sourceContext) ? sourceContext : {}),
+    clarificationReview: review,
+  };
+}
+
+async function reviewClarificationsWithModel(model: string, input: PlanDayInput) {
+  const { output } = await generateText({
+    model,
+    output: Output.object({ schema: ClarificationReviewSchema }),
+    system:
+      "You are the StudentOS clarification-review agent. Review user clarification answers before the planner schedules anything. Resolve what is now known, keep unresolved uncertainty explicit, and never invent commitments unrelated to the supplied input.",
+    prompt: JSON.stringify(
+      {
+        task:
+          "Review clarification answers and return planning directives that the scheduler must follow.",
+        input: {
+          commitments: input.commitments,
+          goals: input.goals,
+          fixedEvents: input.fixedEvents,
+          clarificationAnswers: input.clarificationAnswers,
+          sourceContext: input.sourceContext,
+        },
+        rules: [
+          "Treat clarification answers as source-of-truth evidence, but check whether the answer actually resolves the question.",
+          "If an answer names a deadline, duration, scope, event status, or target outcome, convert it into a schedulingDirective.",
+          "If the answer is vague or contradictory, list the remaining uncertainty instead of pretending it is resolved.",
+          "Do not add demo tasks or unrelated defaults.",
+        ],
+        outputShape: {
+          summary: "string",
+          resolvedCommitments: [
+            {
+              commitmentId: "string",
+              revisedTitle: "string",
+              resolvedState: "confirmed|needs_clarification|unsure|resolved",
+              estimatedDuration: "string",
+              schedulingDirective: "string",
+            },
+          ],
+          planningDirectives: ["string"],
+          remainingUncertainties: ["string"],
+        },
+      },
+      null,
+      2,
+    ),
+  });
+
+  return output;
+}
+
+async function reviewClarifications(input: PlanDayInput) {
+  if (!clarificationAnswerCount(input)) return undefined;
+
+  const primaryModel = sponsorEnv.aiGatewayModel;
+  const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
+
+  try {
+    return {
+      review: await reviewClarificationsWithModel(primaryModel, input),
+      model: primaryModel,
+    };
+  } catch (primaryError) {
+    if (fallbackModel && fallbackModel !== primaryModel) {
+      try {
+        return {
+          review: await reviewClarificationsWithModel(fallbackModel, input),
+          model: fallbackModel,
+          fallbackModel: primaryModel,
+        };
+      } catch {
+        throw primaryError;
+      }
+    }
+
+    throw primaryError;
+  }
+}
+
 async function generatePlanWithModel(model: string, input: PlanDayInput) {
   const { output } = await generateText({
     model,
@@ -164,6 +324,8 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
         schemaNotes: [
           "Return every field in the schema.",
           "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
+          "When sourceContext.clarificationReview is present, follow its planningDirectives and remainingUncertainties before making schedule decisions.",
+          "If clarificationReview says an answer is still unresolved, keep the relevant task short, tentative, or ask for a follow-up instead of overcommitting.",
           "Every dailyPlan item must use an exact clock range in timeLabel, for example '4:30-5:15 PM'. Do this for task-only, goal-only, and mixed inputs.",
           "For goal-only inputs, do not stop at day, week, or month intervals. Put each next goal session into a concrete work window.",
           `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
@@ -182,14 +344,42 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
 
 export async function planDayWithVercelGateway(input: PlanDayInput): Promise<PlanDayResponse> {
   if (!isVercelAiReady()) {
-    return buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.");
+    return buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.", input);
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
   const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
+  const prePlanTrace: PlanDayResponse["trace"] = [];
+  let planningInput = input;
+
+  if (clarificationAnswerCount(input)) {
+    try {
+      const result = await reviewClarifications(input);
+
+      if (result?.review) {
+        planningInput = {
+          ...input,
+          sourceContext: mergeSourceContextWithReview(input.sourceContext, result.review),
+        };
+        prePlanTrace.push({
+          provider: "Vercel AI Gateway",
+          action: "Reviewed clarification answers",
+          status: "success",
+          detail: `${result.model} reviewed ${clarificationAnswerCount(input)} clarification ${clarificationAnswerCount(input) === 1 ? "answer" : "answers"} before replanning.`,
+        });
+      }
+    } catch (error) {
+      prePlanTrace.push({
+        provider: "Vercel AI Gateway",
+        action: "Reviewed clarification answers",
+        status: "error",
+        detail: error instanceof Error ? error.message : "Clarification review failed.",
+      });
+    }
+  }
 
   try {
-    const result = normalizeGatewayPlan(await generatePlanWithModel(primaryModel, input));
+    const result = normalizeGatewayPlan(await generatePlanWithModel(primaryModel, planningInput));
 
     return {
       provider: "vercel-ai-gateway",
@@ -201,6 +391,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
       },
       dailyPlan: result.dailyPlan,
       trace: [
+        ...prePlanTrace,
         {
           provider: "Vercel AI Gateway",
           action: "Vercel AI Gateway generated planning rationale",
@@ -212,7 +403,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
   } catch (primaryError) {
     if (fallbackModel && fallbackModel !== primaryModel) {
       try {
-        const result = normalizeGatewayPlan(await generatePlanWithModel(fallbackModel, input));
+        const result = normalizeGatewayPlan(await generatePlanWithModel(fallbackModel, planningInput));
 
         return {
           provider: "vercel-ai-gateway",
@@ -225,6 +416,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
           },
           dailyPlan: result.dailyPlan,
           trace: [
+            ...prePlanTrace,
             {
               provider: "Vercel AI Gateway",
               action: "Vercel AI Gateway generated planning rationale",
@@ -242,12 +434,14 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
                 ? primaryError.message
                 : "Unknown Gateway error"
           }`,
+          input,
         );
       }
     }
 
     return buildFallbackPlan(
       primaryError instanceof Error ? primaryError.message : "Unknown Gateway error",
+      input,
     );
   }
 }

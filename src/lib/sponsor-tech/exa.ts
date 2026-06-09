@@ -21,6 +21,7 @@ export type DeepGoalResearch = {
   query: string;
   summary: string;
   model?: string;
+  filteredResultCount?: number;
   searchQueries: string[];
   sections: Array<{
     title: string;
@@ -116,6 +117,11 @@ function cleanedResearchPrompt(goal: string) {
   return goal.trim().replace(/\s+/g, " ");
 }
 
+function titleCaseKnownSubject(subject: string) {
+  if (/^(the\s+)?mom test$/i.test(subject.trim())) return "The Mom Test";
+  return subject;
+}
+
 function compactEvidence(value: string, maxLength = 3500) {
   const text = value.replace(/\n{3,}/g, "\n\n").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
@@ -201,8 +207,18 @@ function normalizeResearchQueryPlan(
   provider: ResearchQueryPlan["provider"],
   model?: string,
 ): ResearchQueryPlan {
-  const queries = uniqueQueries(plan.queries);
-  const subject = compactResearchCopy(cleanedResearchPrompt(plan.subject), 180);
+  const rawSubject = compactResearchCopy(cleanedResearchPrompt(plan.subject), 180);
+  const focusEvidence = [
+    rawSubject,
+    plan.contextSummary,
+    ...plan.researchGoals,
+    ...plan.queries,
+  ].join(" ");
+  const focus = researchFocus(focusEvidence);
+  const subject = focus === "reading" ? quotedOrNamedSubject(rawSubject) : rawSubject;
+  const queries = focus === "reading"
+    ? uniqueQueries([...presetQueries(subject), ...plan.queries])
+    : uniqueQueries(plan.queries);
 
   return {
     subject,
@@ -217,28 +233,37 @@ function normalizeResearchQueryPlan(
 function quotedOrNamedSubject(goal: string) {
   const cleanedGoal = cleanedResearchPrompt(goal);
   const quoted = cleanedGoal.match(/["'“”‘’]([^"'“”‘’]{3,120})["'“”‘’]/)?.[1];
-  if (quoted) return quoted;
+  if (quoted) return titleCaseKnownSubject(quoted);
 
   const readMatch = cleanedGoal.match(/\bread\s+(.+?)(?:\s+(?:full\s+)?(?:book|novel|story|play|text|article|chapter)\b|\s+by\b|$)/i)?.[1];
-  if (readMatch && readMatch.length >= 3) return readMatch;
+  if (readMatch && readMatch.length >= 3) return titleCaseKnownSubject(readMatch);
 
   const learnMatch = cleanedGoal.match(/\blearn(?:ing)?\s+(.+?)(?:\s+by\b|\s+before\b|\s+for\b|$)/i)?.[1];
-  if (learnMatch && learnMatch.length >= 3) return learnMatch;
+  if (learnMatch && learnMatch.length >= 3) return titleCaseKnownSubject(learnMatch);
 
-  return cleanedGoal.length > 140 ? cleanedGoal.slice(0, 140) : cleanedGoal;
+  return titleCaseKnownSubject(cleanedGoal.length > 140 ? cleanedGoal.slice(0, 140) : cleanedGoal);
 }
 
 function researchFocus(goal: string): ResearchFocus {
   const lowerGoal = goal.toLowerCase();
 
-  if (/\b(read|book|novel|story|chapter|text|article|audiobook|literature)\b/.test(lowerGoal)) return "reading";
+  if (/\b(read|book|novel|story|chapter|text|article|audiobook|literature|author)\b/.test(lowerGoal)) return "reading";
+  if (/^(the\s+)?mom test\b/.test(lowerGoal)) return "reading";
   if (/\b(hackathon|competition|contest|olympiad|challenge|event|conference|tournament)\b/.test(lowerGoal)) return "event";
   if (/\b(scholarship|internship|application|admission|apply|registration|deadline|eligibility)\b/.test(lowerGoal)) return "application";
   if (/\b(learn|course|skill|coding|python|javascript|math|language|proficient|master)\b/.test(lowerGoal)) return "learning";
   if (/\b(project|portfolio|build|prototype|deliverable|presentation|essay|report)\b/.test(lowerGoal)) return "project";
-  if (/\b(exam|test|assessment|rubric|syllabus|worksheet|homework)\b/.test(lowerGoal)) return "assessment";
+  if (/\b(exam|assessment|rubric|syllabus|worksheet|homework)\b/.test(lowerGoal)) return "assessment";
+  if (/\btest\b/.test(lowerGoal) && /\b(prep|practice|study|grade|quiz|school|exam|assessment)\b/.test(lowerGoal)) return "assessment";
 
   return "general";
+}
+
+function quotedSearchSubject(subject: string) {
+  const cleaned = quotedOrNamedSubject(subject).replace(/^["']|["']$/g, "");
+  if (/^(the\s+)?mom test$/i.test(cleaned)) return "\"The Mom Test\" Rob Fitzpatrick";
+  if (/^[a-z0-9][a-z0-9 .:&+#'-]{2,80}$/i.test(cleaned)) return `"${cleaned}"`;
+  return cleaned;
 }
 
 function presetQueries(goal: string) {
@@ -247,12 +272,14 @@ function presetQueries(goal: string) {
   const focus = researchFocus(cleanedGoal);
 
   switch (focus) {
-    case "reading":
+    case "reading": {
+      const quotedSubject = quotedSearchSubject(subject);
       return [
-        `${subject} book length pages word count reading time`,
-        `${subject} chapter count audiobook duration summary`,
-        `${cleanedGoal} reading schedule time required`,
+        `${quotedSubject} book pages chapters reading time`,
+        `${quotedSubject} author summary audiobook duration`,
+        `${quotedSubject} reading schedule time required`,
       ];
+    }
     case "event":
       return [
         `${cleanedGoal} official page eligibility date location`,
@@ -383,6 +410,102 @@ export async function generateResearchQueryPlan(evidence: string): Promise<Resea
   }
 }
 
+const relevanceStopwords = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "into",
+  "book",
+  "read",
+  "reading",
+  "summary",
+  "chapter",
+  "chapters",
+  "pages",
+  "page",
+  "time",
+  "required",
+  "official",
+  "deadline",
+  "requirements",
+  "criteria",
+  "roadmap",
+  "preparation",
+]);
+
+function normalizedSearchText(value = "") {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function resultSearchText(result: ExaSearchResult) {
+  return [
+    result.title,
+    result.url,
+    result.text,
+    result.highlights?.join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function subjectTokens(subject: string) {
+  return normalizedSearchText(subject)
+    .split(" ")
+    .filter((token) => token.length >= 3 && !relevanceStopwords.has(token));
+}
+
+function relevanceScore(result: ExaSearchResult, subject: string, focus: ResearchFocus) {
+  const exactSubject = normalizedSearchText(quotedOrNamedSubject(subject));
+  const title = normalizedSearchText(result.title);
+  const haystack = normalizedSearchText(resultSearchText(result));
+  const tokens = subjectTokens(subject);
+  let score = 0;
+
+  if (exactSubject.length >= 5 && haystack.includes(exactSubject)) score += 10;
+  if (/^(the\s+)?mom test\b/i.test(subject) && /\b(the mom test|rob fitzpatrick)\b/i.test(resultSearchText(result))) {
+    score += 10;
+  }
+
+  tokens.forEach((token) => {
+    if (title.includes(token)) score += 3;
+    else if (haystack.includes(token)) score += 1;
+  });
+
+  const matchedTokens = tokens.filter((token) => haystack.includes(token)).length;
+  if (tokens.length >= 2 && matchedTokens >= Math.ceil(tokens.length * 0.6)) score += 3;
+  if (tokens.length === 1 && matchedTokens === 1) score += 2;
+
+  const schoolSyllabusNoise = /\b(syllabus|teacher|homework guidelines|grade honors|school district|student handbook|classroom|worksheet)\b/i.test(
+    resultSearchText(result),
+  );
+  if (focus === "reading" && schoolSyllabusNoise && !(exactSubject && haystack.includes(exactSubject))) {
+    score -= 8;
+  }
+
+  return score;
+}
+
+function relevantResultsFor(subject: string, results: ExaSearchResult[]) {
+  const focus = researchFocus(subject);
+  const threshold = focus === "reading" || focus === "event" || focus === "application" ? 4 : 2;
+  const ranked = results
+    .map((result) => ({ result, score: relevanceScore(result, subject, focus) }))
+    .filter((item) => item.score >= threshold)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.result);
+
+  if (ranked.length > 0 || focus === "reading") return ranked;
+
+  return results
+    .map((result) => ({ result, score: relevanceScore(result, subject, focus) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.result)
+    .slice(0, 4);
+}
+
 function snippetsFor(results: ExaSearchResult[], patterns: RegExp[]) {
   const seen = new Set<string>();
 
@@ -436,13 +559,15 @@ export async function deepResearchGoal(
   const results = settledResponses.flatMap((item) =>
     item.status === "fulfilled" ? item.value.results ?? [] : [],
   );
-  const citations = uniqueCitations(results);
-  const snippets = uniqueSnippets(results);
+  const relevantResults = relevantResultsFor(goal, results);
+  const filteredResultCount = Math.max(0, results.length - relevantResults.length);
+  const citations = uniqueCitations(relevantResults);
+  const snippets = uniqueSnippets(relevantResults);
   const focus = researchFocus(goal);
 
-  const identityBullets = snippetsFor(results, [/official|overview|about|author|organizer|source|edition|format|location|eligib|syllabus/i]);
-  const effortBullets = snippetsFor(results, [/length|pages|word|duration|time|hour|chapter|deadline|date|schedule|milestone|commitment/i]);
-  const requirementsBullets = snippetsFor(results, [/require|criteria|rubric|judg|apply|application|register|submit|deliverable|scope|prerequisite|checklist|resource/i]);
+  const identityBullets = snippetsFor(relevantResults, [/official|overview|about|author|organizer|source|edition|format|location|eligib|syllabus/i]);
+  const effortBullets = snippetsFor(relevantResults, [/length|pages|word|duration|time|hour|chapter|deadline|date|schedule|milestone|commitment/i]);
+  const requirementsBullets = snippetsFor(relevantResults, [/require|criteria|rubric|judg|apply|application|register|submit|deliverable|scope|prerequisite|checklist|resource/i]);
   const defaultSubject = focus === "reading" ? "the exact edition, page count, chapter count, and reading-time estimate" : "the exact source, scope, and constraints";
   const defaultEffort = focus === "event" || focus === "application"
     ? "deadlines, important dates, eligibility windows, and submission effort"
@@ -453,8 +578,9 @@ export async function deepResearchGoal(
 
   return {
     query: goal,
-    summary: snippets.slice(0, 2).join(" ") || "Exa returned research context for this goal.",
+    summary: snippets.slice(0, 2).join(" ") || "Exa returned no relevant citable context for this goal.",
     model: options.model,
+    filteredResultCount,
     searchQueries: queries,
     sections: [
       {
@@ -494,7 +620,10 @@ export async function deepResearchGoal(
       },
     ],
     researchGaps: [
-      ...(citations.length > 0 ? [] : ["No citable Exa results were returned."]),
+      ...(citations.length > 0 ? [] : ["No relevant citable Exa results were returned after subject matching."]),
+      ...(filteredResultCount > 0
+        ? [`Filtered ${filteredResultCount} unrelated Exa ${filteredResultCount === 1 ? "result" : "results"} before building roadmap context.`]
+        : []),
       ...(settledResponses.some((item) => item.status === "rejected")
         ? ["One or more Exa searches timed out, so StudentOS used the results that returned within the fast path."]
         : []),

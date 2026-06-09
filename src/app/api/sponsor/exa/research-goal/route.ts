@@ -3,7 +3,7 @@ import { z } from "zod";
 import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
 
 export const runtime = "nodejs";
-export const maxDuration = 35;
+export const maxDuration = 60;
 
 const RequestSchema = z.object({
   goal: z.string().min(1),
@@ -48,6 +48,7 @@ export async function POST(req: Request) {
       query: result.query,
       model: result.model,
       summary: result.summary,
+      filteredResultCount: result.filteredResultCount,
       sections: result.sections,
       clarificationQuestions: result.clarificationQuestions,
       researchGaps: result.researchGaps,
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
           provider: "Exa",
           action: "Deep researched goal context",
           status: "success",
-          detail: `${result.searchQueries.length} focused Exa searches, ${result.citations.length} citations.`,
+          detail: `${result.searchQueries.length} focused Exa searches, ${result.citations.length} citations, ${result.filteredResultCount ?? 0} unrelated results filtered.`,
         },
       ],
     });
