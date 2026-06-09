@@ -2012,14 +2012,6 @@ export default function CommitmentsPage() {
               <RecommendationCard
                 resolved={conflictResolved}
                 resolutionMode={resolutionMode}
-                onApply={() => {
-                  if (conflictResolved) {
-                    setStep("plan");
-                    persistFlowState({ step: "plan" });
-                  } else {
-                    applySuggestedConflict(false);
-                  }
-                }}
                 onEdit={() => setManualConflictOpen(true)}
                 conflict={conflictAnalysis}
               />
@@ -2029,7 +2021,7 @@ export default function CommitmentsPage() {
                   onClick={applyAndContinue}
                   className="flex h-[60px] w-full items-center justify-center gap-2 rounded-full bg-ink text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all hover:scale-[1.01] active:scale-[0.99]"
                 >
-                  <span>Apply and continue</span>
+                  <span>Apply fix and continue</span>
                   <ChevronRight className="size-4.5" />
                 </button>
               </div>

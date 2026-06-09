@@ -1,7 +1,7 @@
 "use client";
 
 import { ListChecks } from "lucide-react";
-import { PrimaryButton, SecondaryButton } from "@/components/buttons";
+import { SecondaryButton } from "@/components/buttons";
 import type { AIConflictAnalysis } from "@/lib/studentos-ai-types";
 
 const actions = [
@@ -22,13 +22,11 @@ const manualActions = [
 export function RecommendationCard({
   resolved,
   resolutionMode,
-  onApply,
   onEdit,
   conflict
 }: {
   resolved: boolean;
   resolutionMode: "recommended" | "manual" | null;
-  onApply: () => void;
   onEdit: () => void;
   conflict?: AIConflictAnalysis;
 }) {
@@ -67,9 +65,6 @@ export function RecommendationCard({
         ))}
       </div>
       <div className="mt-5 flex flex-col gap-3">
-        <PrimaryButton onClick={onApply}>
-          {resolved ? "Open plan" : "Apply suggested fix"}
-        </PrimaryButton>
         {!resolved ? (
           <SecondaryButton onClick={onEdit} className="w-full">Edit manually</SecondaryButton>
         ) : null}

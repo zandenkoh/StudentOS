@@ -1,6 +1,7 @@
 import "server-only";
 
 import { isExaReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { compactResearchCopy } from "@/lib/sponsor-tech/research-format";
 
 export type ExaSearchResult = {
   title?: string;
@@ -83,7 +84,7 @@ function uniqueCitations(results: ExaSearchResult[]) {
     })
     .slice(0, 8)
     .map((result) => ({
-      title: result.title || "Exa result",
+      title: compactResearchCopy(result.title || "Exa result", 72),
       url: result.url || "",
     }));
 }
@@ -100,14 +101,39 @@ function presetQueries(goal: string) {
 }
 
 function snippetsFor(results: ExaSearchResult[], patterns: RegExp[]) {
+  const seen = new Set<string>();
+
   return results
     .map((result) => result.highlights?.[0] || result.text || result.title || "")
+    .map((text) => compactResearchCopy(text, 170))
     .filter((text) => patterns.some((pattern) => pattern.test(text)))
+    .filter((text) => {
+      const key = text.toLowerCase();
+      if (!text || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     .slice(0, 3);
 }
 
 function fallbackBullet(label: string) {
   return `Verify ${label} from the official event page before locking the roadmap.`;
+}
+
+function uniqueSnippets(results: ExaSearchResult[]) {
+  const seen = new Set<string>();
+
+  return results
+    .map((result) => result.highlights?.[0] || result.text || result.title || "")
+    .map((text) => compactResearchCopy(text, 190))
+    .filter(Boolean)
+    .filter((text) => {
+      const key = text.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
 }
 
 export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> {
@@ -117,16 +143,13 @@ export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> 
 
   const queries = presetQueries(goal);
   const settledResponses = await Promise.allSettled(
-    queries.map((query) => exaSearch(query, { numResults: 4, maxCharacters: 800, timeoutMs: 6500 })),
+    queries.map((query) => exaSearch(query, { numResults: 4, maxCharacters: 550, timeoutMs: 6500 })),
   );
   const results = settledResponses.flatMap((item) =>
     item.status === "fulfilled" ? item.value.results ?? [] : [],
   );
   const citations = uniqueCitations(results);
-  const snippets = results
-    .map((result) => result.highlights?.[0] || result.text || result.title)
-    .filter(Boolean)
-    .slice(0, 5) as string[];
+  const snippets = uniqueSnippets(results);
 
   const eventBullets = snippetsFor(results, [/official|event|organizer|location|format|eligib/i]);
   const criteriaBullets = snippetsFor(results, [/judg|criteria|prize|winner|score|demo/i]);
@@ -134,7 +157,7 @@ export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> 
 
   return {
     query: goal,
-    summary: snippets.join(" ").slice(0, 700) || "Exa returned research context for this goal.",
+    summary: snippets.slice(0, 2).join(" ") || "Exa returned research context for this goal.",
     searchQueries: queries,
     sections: [
       {
