@@ -1,6 +1,7 @@
 import { CheckCircle2, Clock3 } from "lucide-react";
 import { SourceChip } from "@/components/source-chip";
 import type { DemoGoalRoadmapStep } from "@/lib/demo-data";
+import { scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
 
 const statusLabel: Record<DemoGoalRoadmapStep["status"], string> = {
   scheduled: "Scheduled",
@@ -52,7 +53,7 @@ export function GoalRoadmapTimeline({
                           {task.title}
                         </p>
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-semibold text-neutral-500">
-                          {task.scheduledDate ? <span>{task.scheduledDate}</span> : null}
+                          {scheduleLabelWithTimeRange(task) ? <span>{scheduleLabelWithTimeRange(task)}</span> : null}
                           {task.estimatedMinutes ? (
                             <span className="inline-flex items-center gap-1">
                               <Clock3 className="size-3" />

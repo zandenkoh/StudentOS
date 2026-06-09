@@ -273,18 +273,24 @@ export default function InputPage() {
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
+  const createTextSource = (text: string): InputSource => ({
+    id: `custom-text-${Date.now()}`,
+    icon: FileText,
+    title: "Typed Note",
+    source: "Manual Input",
+    snippet: text,
+    fileSize: `${Math.max(1, Math.round(text.length * 0.1))} KB`,
+    fileType: "text"
+  });
+
+  const trimmedInputText = inputText.trim();
+  const hasAnalyseInput = sources.length > 0 || trimmedInputText.length > 0;
+  const isAnalyseDisabled = isInjecting || !hasAnalyseInput;
+
   // Add text from textarea
   const handleAddText = () => {
-    if (!inputText.trim()) return;
-    const newSource: InputSource = {
-      id: `custom-text-${Date.now()}`,
-      icon: FileText,
-      title: "Typed Note",
-      source: "Manual Input",
-      snippet: inputText.trim(),
-      fileSize: `${Math.round(inputText.length * 0.1)} KB`,
-      fileType: "text"
-    };
+    if (!trimmedInputText) return;
+    const newSource = createTextSource(trimmedInputText);
     setSources((prev) => [newSource, ...prev]);
     setInputText("");
   };
@@ -645,7 +651,11 @@ export default function InputPage() {
   };
 
   const handleAnalyse = () => {
-    const analysisSources = sources.length > 0 ? sources : exampleSources;
+    if (!hasAnalyseInput) return;
+
+    const analysisSources = trimmedInputText
+      ? [createTextSource(trimmedInputText), ...sources]
+      : sources;
     const capturedSources: CapturedSourceForAI[] = analysisSources.map((source) => ({
       id: source.id,
       title: source.title,
@@ -870,11 +880,11 @@ export default function InputPage() {
         <div className="fixed-bottom-action">
           <motion.div variants={itemVariants}>
             <button
-              disabled={isInjecting}
+              disabled={isAnalyseDisabled}
               onClick={handleAnalyse}
               type="button"
               className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-                !isInjecting
+                !isAnalyseDisabled
                   ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
                   : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
               }`}

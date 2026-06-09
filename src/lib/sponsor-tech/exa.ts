@@ -89,15 +89,95 @@ function uniqueCitations(results: ExaSearchResult[]) {
     }));
 }
 
-function presetQueries(goal: string) {
-  const cleanedGoal = goal.trim().replace(/\s+/g, " ");
-  const quotedGoal = cleanedGoal.length > 90 ? cleanedGoal.slice(0, 90) : cleanedGoal;
+type ResearchFocus =
+  | "reading"
+  | "event"
+  | "application"
+  | "learning"
+  | "project"
+  | "assessment"
+  | "general";
 
-  return [
-    `${quotedGoal} official event page eligibility`,
-    `${quotedGoal} judging criteria prizes past winners`,
-    `${quotedGoal} application registration deadline challenge scope deliverables`,
-  ];
+function cleanedResearchPrompt(goal: string) {
+  return goal.trim().replace(/\s+/g, " ");
+}
+
+function quotedOrNamedSubject(goal: string) {
+  const cleanedGoal = cleanedResearchPrompt(goal);
+  const quoted = cleanedGoal.match(/["'“”‘’]([^"'“”‘’]{3,120})["'“”‘’]/)?.[1];
+  if (quoted) return quoted;
+
+  const readMatch = cleanedGoal.match(/\bread\s+(.+?)(?:\s+(?:full\s+)?(?:book|novel|story|play|text|article|chapter)\b|\s+by\b|$)/i)?.[1];
+  if (readMatch && readMatch.length >= 3) return readMatch;
+
+  const learnMatch = cleanedGoal.match(/\blearn(?:ing)?\s+(.+?)(?:\s+by\b|\s+before\b|\s+for\b|$)/i)?.[1];
+  if (learnMatch && learnMatch.length >= 3) return learnMatch;
+
+  return cleanedGoal.length > 140 ? cleanedGoal.slice(0, 140) : cleanedGoal;
+}
+
+function researchFocus(goal: string): ResearchFocus {
+  const lowerGoal = goal.toLowerCase();
+
+  if (/\b(read|book|novel|story|chapter|text|article|audiobook|literature)\b/.test(lowerGoal)) return "reading";
+  if (/\b(hackathon|competition|contest|olympiad|challenge|event|conference|tournament)\b/.test(lowerGoal)) return "event";
+  if (/\b(scholarship|internship|application|admission|apply|registration|deadline|eligibility)\b/.test(lowerGoal)) return "application";
+  if (/\b(learn|course|skill|coding|python|javascript|math|language|proficient|master)\b/.test(lowerGoal)) return "learning";
+  if (/\b(project|portfolio|build|prototype|deliverable|presentation|essay|report)\b/.test(lowerGoal)) return "project";
+  if (/\b(exam|test|assessment|rubric|syllabus|worksheet|homework)\b/.test(lowerGoal)) return "assessment";
+
+  return "general";
+}
+
+function presetQueries(goal: string) {
+  const cleanedGoal = cleanedResearchPrompt(goal);
+  const subject = quotedOrNamedSubject(cleanedGoal);
+  const focus = researchFocus(cleanedGoal);
+
+  switch (focus) {
+    case "reading":
+      return [
+        `${subject} book length pages word count reading time`,
+        `${subject} chapter count audiobook duration summary`,
+        `${cleanedGoal} reading schedule time required`,
+      ];
+    case "event":
+      return [
+        `${cleanedGoal} official page eligibility date location`,
+        `${cleanedGoal} judging criteria prizes past winners`,
+        `${cleanedGoal} registration deadline challenge scope deliverables`,
+      ];
+    case "application":
+      return [
+        `${cleanedGoal} official eligibility requirements deadline`,
+        `${cleanedGoal} application steps documents selection criteria`,
+        `${cleanedGoal} timeline important dates preparation checklist`,
+      ];
+    case "learning":
+      return [
+        `${cleanedGoal} learning roadmap prerequisites time commitment`,
+        `${cleanedGoal} beginner curriculum practice projects`,
+        `${cleanedGoal} study plan milestones resources`,
+      ];
+    case "project":
+      return [
+        `${cleanedGoal} requirements deliverables rubric examples`,
+        `${cleanedGoal} project plan milestones scope checklist`,
+        `${cleanedGoal} best practices timeline preparation`,
+      ];
+    case "assessment":
+      return [
+        `${cleanedGoal} syllabus rubric requirements duration`,
+        `${cleanedGoal} topic overview practice questions study time`,
+        `${cleanedGoal} preparation checklist common mistakes`,
+      ];
+    default:
+      return [
+        `${cleanedGoal} official information requirements duration`,
+        `${cleanedGoal} planning context time commitment checklist`,
+        `${cleanedGoal} deadline milestones preparation steps`,
+      ];
+  }
 }
 
 function snippetsFor(results: ExaSearchResult[], patterns: RegExp[]) {
@@ -117,7 +197,7 @@ function snippetsFor(results: ExaSearchResult[], patterns: RegExp[]) {
 }
 
 function fallbackBullet(label: string) {
-  return `Verify ${label} from the official event page before locking the roadmap.`;
+  return `Verify ${label} from a reliable source before locking the plan.`;
 }
 
 function uniqueSnippets(results: ExaSearchResult[]) {
@@ -150,10 +230,18 @@ export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> 
   );
   const citations = uniqueCitations(results);
   const snippets = uniqueSnippets(results);
+  const focus = researchFocus(goal);
 
-  const eventBullets = snippetsFor(results, [/official|event|organizer|location|format|eligib/i]);
-  const criteriaBullets = snippetsFor(results, [/judg|criteria|prize|winner|score|demo/i]);
-  const applicationBullets = snippetsFor(results, [/apply|application|register|deadline|submit|deliverable|scope|theme/i]);
+  const identityBullets = snippetsFor(results, [/official|overview|about|author|organizer|source|edition|format|location|eligib|syllabus/i]);
+  const effortBullets = snippetsFor(results, [/length|pages|word|duration|time|hour|chapter|deadline|date|schedule|milestone|commitment/i]);
+  const requirementsBullets = snippetsFor(results, [/require|criteria|rubric|judg|apply|application|register|submit|deliverable|scope|prerequisite|checklist|resource/i]);
+  const defaultSubject = focus === "reading" ? "the exact edition, page count, chapter count, and reading-time estimate" : "the exact source, scope, and constraints";
+  const defaultEffort = focus === "event" || focus === "application"
+    ? "deadlines, important dates, eligibility windows, and submission effort"
+    : "duration, workload, prerequisites, and realistic time commitment";
+  const defaultRequirements = focus === "reading"
+    ? "assigned edition, expected depth, notes needed, and whether summaries or annotations are required"
+    : "requirements, deliverables, criteria, resources, and next milestones";
 
   return {
     query: goal,
@@ -161,39 +249,39 @@ export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> 
     searchQueries: queries,
     sections: [
       {
-        title: "Event identity and eligibility",
-        bullets: (eventBullets.length ? eventBullets : [
-          fallbackBullet("the exact event identity, organizer, eligibility, and team rules"),
-          "Confirm whether this is the intended NEXT hackathon before scheduling prep.",
+        title: "Source identity and scope",
+        bullets: (identityBullets.length ? identityBullets : [
+          fallbackBullet(defaultSubject),
+          "Confirm the intended source before turning this into scheduled work.",
         ]).slice(0, 3),
       },
       {
-        title: "Winning criteria",
-        bullets: (criteriaBullets.length ? criteriaBullets : [
-          fallbackBullet("judging criteria, prizes, sponsor tracks, and past winner patterns"),
-          "Convert the rubric into preparation workstreams once the exact event is confirmed.",
+        title: "Time and workload",
+        bullets: (effortBullets.length ? effortBullets : [
+          fallbackBullet(defaultEffort),
+          "Use the verified workload to size each scheduled session realistically.",
         ]).slice(0, 3),
       },
       {
-        title: "Application, scope, and deliverables",
-        bullets: (applicationBullets.length ? applicationBullets : [
-          fallbackBullet("registration steps, deadlines, submission deliverables, and challenge scope"),
-          "Schedule the next milestone around the first confirmed application or submission date.",
+        title: "Requirements and milestones",
+        bullets: (requirementsBullets.length ? requirementsBullets : [
+          fallbackBullet(defaultRequirements),
+          "Schedule the next milestone around the first confirmed requirement or due date.",
         ]).slice(0, 3),
       },
     ],
     clarificationQuestions: [
       {
-        question: "Which NEXT hackathon page or organizer are you targeting?",
-        why: "Several events can share similar names; the exact page controls eligibility, deadlines, and judging criteria.",
+        question: "Which exact source, edition, event, or requirement should StudentOS use?",
+        why: "Similar names can point to different lengths, rules, deadlines, or expectations.",
       },
       {
-        question: "Are you applying solo or with a team?",
-        why: "Team size changes registration steps, role planning, and build scope.",
+        question: "What level of completion or quality is expected?",
+        why: "Reading, practice, application, and project plans need different amounts of review and output work.",
       },
       {
-        question: "What skills and assets do you already have for this hackathon?",
-        why: "The prep plan should focus on the gaps that matter for the judging rubric.",
+        question: "How much time can be reserved before the deadline?",
+        why: "The plan should match the real available study blocks instead of assuming unlimited time.",
       },
     ],
     researchGaps: [

@@ -242,10 +242,6 @@ export default function AgentsThinkingPage() {
           body: JSON.stringify({
             currentDate: "2026-06-09",
             sources: capturedSources,
-            sourceContext: {
-              productNarrative:
-                "AWS reads messy screenshots, PDFs, and text. Exa researches broad goals. Vercel AI Gateway runs the planning agent.",
-            },
           }),
         });
 

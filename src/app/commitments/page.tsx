@@ -58,6 +58,7 @@ import type {
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
+import { ensureTaskTimeRange, ensureTaskTimeRanges, scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
 
 type CommitmentsStep = "commitments" | "conflict" | "plan";
 
@@ -577,7 +578,7 @@ function baseTaskTitle(title: string) {
 }
 
 function scheduleLabelForTask(task: DemoPlanTask) {
-  return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? "the selected slot";
+  return scheduleLabelWithTimeRange(task) ?? "the selected slot";
 }
 
 const monthOrder: Record<string, number> = {
@@ -657,7 +658,7 @@ function defaultScheduleRationale(task: DemoPlanTask) {
 }
 
 function enrichPlanTasksWithRationales(tasks: DemoPlanTask[]) {
-  return tasks.map((task) => ({
+  return ensureTaskTimeRanges(tasks).map((task) => ({
     ...task,
     scheduleRationale: task.scheduleRationale ?? defaultScheduleRationale(task),
   }));
@@ -914,7 +915,7 @@ function interpretAddedSource(text: string): AddedCommitmentInterpretation {
 
   return {
     commitment,
-    task,
+    task: ensureTaskTimeRange(task),
     impactItems,
     clarificationQuestion: isUnclear
       ? {
@@ -922,13 +923,20 @@ function interpretAddedSource(text: string): AddedCommitmentInterpretation {
           commitmentId: id,
           kind: "general",
           title: "Clarify added task",
-          subtitle: "StudentOS needs more detail before adding this to the plan.",
-          question: "What exactly should StudentOS add, and when is it due?",
-          options: [],
-          customPlaceholder: "e.g. Chemistry worksheet due tonight by 8 PM",
+          subtitle: "Choose the closest type so StudentOS can ask for only the missing details.",
+          question: "What kind of item should this become?",
+          options: [
+            { label: "School task", recommended: true },
+            { label: "Deadline" },
+            { label: "Fixed event" },
+            { label: "Personal goal" },
+          ],
+          customPlaceholder: "Type details, like 'Chemistry worksheet due tonight by 8 PM'",
           resolvedCommitment: {
+            title: "Clarified added task",
             state: "confirmed",
             confidence: 82,
+            estimatedDuration: "30min",
             explanation: "Clarified from the user's added task details.",
           },
         }
@@ -959,7 +967,7 @@ function taskFromClarifiedCommitment(
       ? `Plan next step for ${commitment.title}`
       : commitment.title;
 
-  return {
+  return ensureTaskTimeRange({
     id: `clarified-${commitment.id}`,
     title,
     section: "do_next",
@@ -971,7 +979,7 @@ function taskFromClarifiedCommitment(
     goalId: commitment.type === "goal" ? commitment.id : undefined,
     isRoadmapTask: commitment.type === "goal" ? true : undefined,
     updated: true,
-  };
+  });
 }
 
 function upsertClarifiedCommitmentTask(
@@ -1469,11 +1477,11 @@ export default function CommitmentsPage() {
     if (firstDoNext) {
       const idx = updatedTasks.findIndex((t) => t.id === firstDoNext.id);
       if (idx !== -1) {
-        updatedTasks[idx] = {
+        updatedTasks[idx] = ensureTaskTimeRange({
           ...firstDoNext,
           section: "do_now",
-          timeLabel: "Now",
-        };
+          timeLabel: undefined,
+        });
       }
     }
     setPlanTasks(updatedTasks);
@@ -1766,7 +1774,7 @@ export default function CommitmentsPage() {
         task.id === "coding-practice"
           ? {
               ...task,
-              timeLabel: "9:45 PM",
+              timeLabel: "9:45-10:45 PM",
               reason: `Moved later after ${commitment.title}`,
               scheduleRationale:
                 `Coding practice moves to 9:45 PM because ${commitment.title} now needs the earlier flexible slot.`,

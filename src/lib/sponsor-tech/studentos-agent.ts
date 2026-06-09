@@ -385,6 +385,178 @@ function assignmentDetailOptions(question: string) {
   ];
 }
 
+function guidedGoalClarificationOptions(question: string) {
+  const lowerQuestion = question.toLowerCase();
+
+  if (/session|cadence|week|time|often|schedule/.test(lowerQuestion)) {
+    return [
+      { label: "1 session/week", recommended: false },
+      { label: "2 sessions/week", recommended: true },
+      { label: "3 sessions/week", recommended: false },
+      { label: "Short daily reps", recommended: false },
+    ];
+  }
+
+  if (/starting|start|level|experience|background|already|know/.test(lowerQuestion)) {
+    return [
+      { label: "Starting from basics", recommended: true },
+      { label: "Some experience", recommended: false },
+      { label: "Already practicing", recommended: false },
+      { label: "Need diagnostic first", recommended: false },
+    ];
+  }
+
+  if (/deadline|when|target date|date|finish/.test(lowerQuestion)) {
+    return [
+      { label: "This week", recommended: false },
+      { label: "This month", recommended: true },
+      { label: "This term", recommended: false },
+      { label: "No fixed deadline", recommended: false },
+    ];
+  }
+
+  return [
+    { label: "Build a project", recommended: true },
+    { label: "Improve grades", recommended: false },
+    { label: "Learn a skill", recommended: false },
+    { label: "Prepare for event", recommended: false },
+  ];
+}
+
+function guidedGeneralClarificationOptions(question: string) {
+  const lowerQuestion = question.toLowerCase();
+
+  if (/event|meeting|confirmed|possible/.test(lowerQuestion)) {
+    return [
+      { label: "Confirmed event", recommended: true },
+      { label: "Possible event", recommended: false },
+      { label: "Need to confirm", recommended: false },
+      { label: "Cancel it", recommended: false },
+    ];
+  }
+
+  if (/due|deadline|when/.test(lowerQuestion)) {
+    return [
+      { label: "Due today", recommended: false },
+      { label: "Due tomorrow", recommended: true },
+      { label: "Due this week", recommended: false },
+      { label: "No clear deadline", recommended: false },
+    ];
+  }
+
+  return [
+    { label: "School task", recommended: true },
+    { label: "Personal goal", recommended: false },
+    { label: "Fixed event", recommended: false },
+    { label: "Need to check", recommended: false },
+  ];
+}
+
+function guidedOptionsForClarification(kind: unknown, question: string) {
+  return kind === "goal"
+    ? guidedGoalClarificationOptions(question)
+    : guidedGeneralClarificationOptions(question);
+}
+
+function broadGoalCommitments(core: Record<string, unknown>) {
+  if (!Array.isArray(core.commitments)) return [];
+
+  return core.commitments.filter((commitment): commitment is Record<string, unknown> => {
+    if (!isRecord(commitment)) return false;
+
+    const type = textValue(commitment.type);
+    const state = textValue(commitment.state);
+    const title = textValue(commitment.title);
+    const explanation = textValue(commitment.explanation);
+
+    return (
+      type === "goal" &&
+      (state === "needs_clarification" ||
+        state === "unsure" ||
+        /\b(vague|broad|unclear|unspecified|needs? clarification)\b/i.test(`${title} ${explanation}`))
+    );
+  });
+}
+
+function goalQuestionExists(
+  questions: unknown[],
+  commitmentId: string,
+  patterns: RegExp[],
+) {
+  return questions.some((question) => {
+    if (!isRecord(question) || textValue(question.commitmentId) !== commitmentId) return false;
+    const questionText = textValue(question.question);
+    return patterns.some((pattern) => pattern.test(questionText));
+  });
+}
+
+function guidedGoalQuestionsForCommitment(
+  commitment: Record<string, unknown>,
+  questions: unknown[],
+) {
+  const commitmentId = textValue(commitment.id, "goal");
+  const title = textValue(commitment.title, "this goal");
+  const baseId = slugFrom(commitmentId || title, "goal");
+  const templates = [
+    {
+      suffix: "outcome",
+      patterns: [/success|outcome|aim|target|result|trying/i],
+      question: "What outcome should this goal aim for first?",
+      options: guidedGoalClarificationOptions("outcome"),
+      customPlaceholder: "Type the first concrete outcome...",
+    },
+    {
+      suffix: "cadence",
+      patterns: [/session|cadence|week|time|often|schedule/i],
+      question: "How often can you work on it?",
+      options: guidedGoalClarificationOptions("sessions per week"),
+      customPlaceholder: "Type a realistic study cadence...",
+    },
+    {
+      suffix: "starting-point",
+      patterns: [/starting|start|level|experience|background|already|know/i],
+      question: "Where are you starting from?",
+      options: guidedGoalClarificationOptions("starting point"),
+      customPlaceholder: "Type your current level...",
+    },
+  ];
+
+  return templates
+    .filter((template) => !goalQuestionExists(questions, commitmentId, template.patterns))
+    .map((template) => ({
+      id: `${baseId}-${template.suffix}`,
+      commitmentId,
+      kind: "goal",
+      title: `Clarify ${title}`,
+      subtitle: "Choose the closest answer so StudentOS can break the goal down.",
+      question: template.question,
+      options: template.options,
+      customPlaceholder: template.customPlaceholder,
+      resolvedCommitment: {
+        title,
+        state: "confirmed",
+        confidence: 82,
+        estimatedDuration: "30min/session",
+        explanation: "Clarified from guided goal choices.",
+      },
+    }));
+}
+
+function isClarifyOnlyGoalTask(task: unknown, broadGoalIds: Set<string>) {
+  if (!isRecord(task)) return false;
+  const goalId = textValue(task.goalId);
+  const title = textValue(task.title);
+  const reason = textValue(task.reason);
+  const joinedText = `${title} ${reason}`;
+  const isClarificationAction =
+    /\b(clarify|specify|define scope|choose scope|decide scope|ask for details)\b/i.test(joinedText);
+
+  return (
+    isClarificationAction &&
+    (broadGoalIds.has(goalId) || (broadGoalIds.size > 0 && /\bgoal\b/i.test(joinedText)))
+  );
+}
+
 function coerceGeneratedPlanTask(
   value: unknown,
   fallbackTitle: string,
@@ -423,6 +595,8 @@ function coerceGeneratedCore(raw: unknown) {
   if (!isRecord(raw)) return raw;
 
   const core = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+  const broadGoals = broadGoalCommitments(core);
+  const broadGoalIds = new Set(broadGoals.map((commitment) => textValue(commitment.id)).filter(Boolean));
 
   if (Array.isArray(core.clarificationQuestions)) {
     core.clarificationQuestions = core.clarificationQuestions.map((question, index) => {
@@ -448,14 +622,12 @@ function coerceGeneratedCore(raw: unknown) {
         })
         .filter((option) => option.label);
 
+      const questionText = textValue(question.question, "");
       while (options.length < 2) {
-        options.push({
-          label: options.length === 0 ? "Confirm" : "Skip for now",
-          recommended: options.length === 0,
-        });
+        const guidedOption = guidedOptionsForClarification(question.kind, questionText)[options.length];
+        options.push(guidedOption);
       }
 
-      const questionText = textValue(question.question, "");
       const safeOptions =
         looksLikeAssignmentDetailsQuestion(questionText) && looksLikeFieldPickerOptions(options)
           ? assignmentDetailOptions(questionText)
@@ -473,6 +645,20 @@ function coerceGeneratedCore(raw: unknown) {
         },
       };
     });
+  } else {
+    core.clarificationQuestions = [];
+  }
+
+  if (broadGoals.length && Array.isArray(core.clarificationQuestions)) {
+    const existingQuestions = core.clarificationQuestions;
+    const guidedQuestions = broadGoals.flatMap((commitment) =>
+      guidedGoalQuestionsForCommitment(commitment, existingQuestions as unknown[]),
+    );
+    const existingLimit = Math.max(0, 6 - guidedQuestions.length);
+    core.clarificationQuestions = [
+      ...existingQuestions.slice(0, existingLimit),
+      ...guidedQuestions,
+    ].slice(0, 6);
   }
 
   if (isRecord(core.conflict)) {
@@ -509,7 +695,10 @@ function coerceGeneratedCore(raw: unknown) {
   }
 
   if (Array.isArray(core.planTasks)) {
-    core.planTasks = core.planTasks.map((task, index) =>
+    const filteredTasks = core.planTasks.filter((task) => !isClarifyOnlyGoalTask(task, broadGoalIds));
+    const tasksToCoerce = filteredTasks.length ? filteredTasks : core.planTasks;
+
+    core.planTasks = tasksToCoerce.map((task, index) =>
       coerceGeneratedPlanTask(task, `Plan task ${index + 1}`, index),
     );
   }
@@ -520,7 +709,9 @@ function coerceGeneratedCore(raw: unknown) {
 
       const title = textValue(step.title, `Roadmap step ${stepIndex + 1}`);
       const goalId = textValue(step.goalId, slugFrom(title, "goal"));
-      const rawTasks = Array.isArray(step.tasks) && step.tasks.length ? step.tasks : [`${title} task`];
+      const rawStepTasks = Array.isArray(step.tasks) && step.tasks.length ? step.tasks : [`${title} task`];
+      const filteredStepTasks = rawStepTasks.filter((task) => !isClarifyOnlyGoalTask(task, broadGoalIds));
+      const rawTasks = filteredStepTasks.length ? filteredStepTasks : rawStepTasks;
 
       return {
         ...step,
@@ -533,7 +724,7 @@ function coerceGeneratedCore(raw: unknown) {
         status: enumValue(step.status, ["scheduled", "in_progress", "upcoming"] as const, "upcoming"),
         tasks: rawTasks.map((task, taskIndex) =>
           coerceGeneratedPlanTask(task, `${title} task ${taskIndex + 1}`, taskIndex, {
-            section: "subsequent_days",
+            section: "subsequent_days" as const,
             goalId,
             isRoadmapTask: true,
             source: "Roadmap",
@@ -545,51 +736,6 @@ function coerceGeneratedCore(raw: unknown) {
 
   return core;
 }
-
-const defaultSources: CapturedSourceForAI[] = [
-  {
-    id: "whatsapp-screenshot",
-    title: "WhatsApp project chat.jpg",
-    source: "WhatsApp Screenshot",
-    snippet: "Team chat: project meeting may move because Sarah has CCA and tuition.",
-    fileType: "image",
-  },
-  {
-    id: "physics-homework-pdf",
-    title: "Physics Chapter 12 homework.pdf",
-    source: "Homework PDF",
-    snippet: "Worksheet due tomorrow 8 AM with Chapter 12 induction questions.",
-    fileType: "pdf",
-  },
-  {
-    id: "calendar-conflict",
-    title: "Tuition calendar clash.png",
-    source: "Calendar Conflict",
-    snippet: "Tuition is fixed from 4:30-6:30 PM, overlapping the CCA briefing.",
-    fileType: "image",
-  },
-  {
-    id: "cca-screenshot",
-    title: "CCA announcement screenshot.jpg",
-    source: "CCA Announcement",
-    snippet: "Briefing starts at 5:30 PM today in the auditorium.",
-    fileType: "image",
-  },
-  {
-    id: "coding-goal",
-    title: "goalDemo.txt",
-    source: "Long-term Coding Goal",
-    snippet: "I have zero Python experience and want to be proficient with data-handling libraries by year end.",
-    fileType: "text",
-  },
-  {
-    id: "team-project-message",
-    title: "Team project follow-up",
-    source: "Team Message",
-    snippet: "Ask teammate first before locking tonight's project discussion.",
-    fileType: "text",
-  },
-];
 
 function sourceText(source: CapturedSourceForAI) {
   return [
@@ -614,10 +760,27 @@ function sourceStats(sources: CapturedSourceForAI[]) {
   };
 }
 
-function broadGoalEvidence(sources: CapturedSourceForAI[]) {
-  return sources
+function researchContextEvidence(sources: CapturedSourceForAI[]) {
+  const meaningfulTexts = sources
     .map(sourceText)
-    .find((text) => /goal|learn|coding|python|hackathon|competition|scholarship|portfolio/i.test(text));
+    .map((text) => text.trim())
+    .filter((text) => text.replace(/\s+/g, " ").length >= 12);
+
+  const externalContextPatterns = [
+    /\b(goal|learn|course|coding|python|javascript|language|skill|proficient|master)\b/i,
+    /\b(read|book|novel|story|chapter|article|text|audiobook|literature)\b/i,
+    /\b(hackathon|competition|contest|olympiad|challenge|event|conference|tournament)\b/i,
+    /\b(scholarship|internship|application|admission|apply|registration|eligibility)\b/i,
+    /\b(project|portfolio|prototype|deliverable|presentation|essay|report|rubric)\b/i,
+    /\b(deadline|due|by the end|before|duration|how long|full|complete|finish)\b/i,
+    /["'“”‘’][^"'“”‘’]{3,120}["'“”‘’]/,
+  ];
+
+  return (
+    meaningfulTexts.find((text) => externalContextPatterns.some((pattern) => pattern.test(text))) ??
+    meaningfulTexts.find((text) => /\b(i|we)\s+(?:need|want|have|should|must|plan|aim|hope)\b/i.test(text)) ??
+    meaningfulTexts[0]
+  );
 }
 
 function defaultObservableLogs(
@@ -654,10 +817,10 @@ function defaultObservableLogs(
       id: "goal-research",
       at: 500,
       kind: "tool",
-      title: goalResearch ? "Goal research attached" : "Goal research skipped",
+      title: goalResearch ? "Context research attached" : "Context research skipped",
       body: goalResearch
         ? "Exa context is included in the final planning input."
-        : "No live goal research was available for this run.",
+        : "No live context research was available for this run.",
       tool: {
         provider: "Exa",
         result: goalResearch
@@ -693,7 +856,7 @@ function fallbackFootprint(
   goalResearch?: StudentOSAgentFootprint["goalResearch"],
   agentLogs?: AIAgentLog[],
 ): StudentOSAgentFootprint {
-  const sources = input.sources.length ? input.sources : defaultSources;
+  const sources = input.sources;
   const trace: StudentOSAgentFootprint["sponsorTrace"] = [
     {
       provider: "Vercel AI Gateway",
@@ -706,7 +869,7 @@ function fallbackFootprint(
   if (goalResearch) {
     trace.unshift({
       provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
-      action: "Deep researched broad goal context",
+      action: "Deep researched planning context",
       status: "success" as const,
       detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`,
     });
@@ -858,16 +1021,16 @@ function fallbackFootprint(
         "Protect coding practice as a weekly goal block",
       ],
     },
-    planTasks: [
-      { id: "physics-focus", title: "Finish Physics worksheet", section: "do_now", estimatedMinutes: 35, timeLabel: "Now", deadline: "tomorrow 8 AM", deadlineDateId: "2026-06-10", reason: "Submit before school", scheduleRationale: "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.", source: "AWS Textract" },
-      { id: "message-teammate", title: "Message teammate", section: "do_next", estimatedMinutes: 3, timeLabel: "After Physics", reason: "Clarifies the tentative team meeting", scheduleRationale: "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.", source: "Voice note" },
-      { id: "cca-notes", title: "Ask CCA lead for briefing notes", section: "do_next", estimatedMinutes: 5, timeLabel: "Before briefing", reason: "Resolves the CCA and tuition clash", scheduleRationale: "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.", source: "CCA announcement" },
-      { id: "tuition", title: "Tuition", section: "do_next", timeLabel: "4:30-6:30 PM", reason: "Fixed calendar block", scheduleRationale: "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.", source: "Calendar" },
-      { id: "revision", title: "Revision block", section: "do_next", estimatedMinutes: 45, timeLabel: "7:45 PM", reason: "Moved after dinner", scheduleRationale: "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.", source: "Plan" },
-      { id: "coding-practice", title: "Python data-handling practice", section: "do_next", estimatedMinutes: 60, timeLabel: "9:00 PM", deadline: "December", deadlineDateId: "2026-12-31", reason: "Exa-grounded goal roadmap started", scheduleRationale: "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.", source: "Exa + Goal", goalId: "learn-coding", isRoadmapTask: true },
-      { id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days", estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", reason: "First scheduled step for the coding goal", scheduleRationale: "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
-      { id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days", estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", reason: "Turns the broad goal into a concrete build", scheduleRationale: "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
-    ],
+    planTasks: splitLongStudyTasks([
+      { id: "physics-focus", title: "Finish Physics worksheet", section: "do_now" as const, estimatedMinutes: 35, timeLabel: "3:30-4:05 PM", deadline: "tomorrow 8 AM", deadlineDateId: "2026-06-10", reason: "Submit before school", scheduleRationale: "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.", source: "AWS Textract" },
+      { id: "message-teammate", title: "Message teammate", section: "do_next" as const, estimatedMinutes: 3, timeLabel: "4:10-4:13 PM", reason: "Clarifies the tentative team meeting", scheduleRationale: "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.", source: "Voice note" },
+      { id: "cca-notes", title: "Ask CCA lead for briefing notes", section: "do_next" as const, estimatedMinutes: 5, timeLabel: "5:20-5:25 PM", reason: "Resolves the CCA and tuition clash", scheduleRationale: "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.", source: "CCA announcement" },
+      { id: "tuition", title: "Tuition", section: "do_next" as const, timeLabel: "4:30-6:30 PM", reason: "Fixed calendar block", scheduleRationale: "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.", source: "Calendar" },
+      { id: "revision", title: "Revision block", section: "do_next" as const, estimatedMinutes: 45, timeLabel: "7:45-8:30 PM", reason: "Moved after dinner", scheduleRationale: "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.", source: "Plan" },
+      { id: "coding-practice", title: "Python data-handling practice", section: "do_next" as const, estimatedMinutes: 60, timeLabel: "9:00-10:00 PM", deadline: "December", deadlineDateId: "2026-12-31", reason: "Exa-grounded goal roadmap started", scheduleRationale: "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.", source: "Exa + Goal", goalId: "learn-coding", isRoadmapTask: true },
+      { id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days" as const, estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", reason: "First scheduled step for the coding goal", scheduleRationale: "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
+      { id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days" as const, estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", reason: "Turns the broad goal into a concrete build", scheduleRationale: "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
+    ]),
     roadmapSteps: [
       {
         id: "define-outcome",
@@ -876,7 +1039,7 @@ function fallbackFootprint(
         scheduledDate: "16 June",
         description: "Choose whether success means an app, portfolio readiness, or competition prep.",
         status: "scheduled",
-        tasks: [{ id: "define-coding-outcome", title: "Define coding target outcome", section: "subsequent_days", estimatedMinutes: 20, scheduledDate: "16 June", scheduledDateId: "2026-06-16", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }],
+        tasks: splitLongStudyTasks([{ id: "define-coding-outcome", title: "Define coding target outcome", section: "subsequent_days" as const, estimatedMinutes: 20, scheduledDate: "16 June", scheduledDateId: "2026-06-16", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
       },
       {
         id: "fundamentals",
@@ -885,7 +1048,7 @@ function fallbackFootprint(
         scheduledDateRange: "17-30 June",
         description: "Build syntax confidence before moving into data handling.",
         status: "in_progress",
-        tasks: [{ id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days", estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }],
+        tasks: splitLongStudyTasks([{ id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days" as const, estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
       },
       {
         id: "data-handling-project",
@@ -894,7 +1057,7 @@ function fallbackFootprint(
         scheduledDateRange: "July-August",
         description: "Use pandas or similar tooling on a real CSV so the goal becomes demonstrable.",
         status: "upcoming",
-        tasks: [{ id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days", estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }],
+        tasks: splitLongStudyTasks([{ id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days" as const, estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
       },
     ],
     rationale: {
@@ -930,14 +1093,14 @@ function mergeSponsorTrace(
 }
 
 async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<StudentOSAgentFootprint["goalResearch"] | undefined> {
-  const broadGoal = broadGoalEvidence(sources);
+  const researchContext = researchContextEvidence(sources);
 
-  if (!broadGoal || !isExaReady()) return undefined;
+  if (!researchContext || !isExaReady()) return undefined;
 
   return withTimeout(
-    deepResearchGoal(broadGoal.slice(0, 1200)),
+    deepResearchGoal(researchContext.slice(0, 1200)),
     8000,
-    "Exa fast goal research",
+    "Exa fast context research",
   );
 }
 
@@ -1051,7 +1214,7 @@ function buildFootprintFromCore({
   sponsorTrace: StudentOSAgentFootprint["sponsorTrace"];
   agentLogs: AIAgentLog[];
 }): StudentOSAgentFootprint {
-  const sources = input.sources.length ? input.sources : defaultSources;
+  const sources = input.sources;
   const timelineValidation = validateTimelineConflicts(core.timelineEvents.map(normalizeTimelineEvent));
   const resolvedTimelineValidation = validateTimelineConflicts(core.resolvedTimelineEvents.map(normalizeTimelineEvent));
   const footprint: StudentOSAgentFootprint = {
@@ -1079,7 +1242,7 @@ function buildFootprintFromCore({
 }
 
 async function generateFootprintCore(model: string, input: AnalyseStudentChaosRequest, goalResearch?: StudentOSAgentFootprint["goalResearch"]) {
-  const sources = input.sources.length ? input.sources : defaultSources;
+  const sources = input.sources;
 
   const { text } = await generateText({
     model,
@@ -1104,7 +1267,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
           resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
           conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
-          planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean.",
+          planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
           roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
           rationale: "summary plus 3-6 bullets.",
           emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
@@ -1116,16 +1279,21 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "If OCR appears to have dropped Chinese or other non-English text, use the interpreted summary when available; otherwise mark the source unclear and ask a review-page clarification.",
           "If one source contains multiple worksheets or actionable messages, split them into separate commitments only when the evidence identifies distinct actions.",
           "Mark broad goals or tentative items with clarification questions. If a commitment is excluded from today's plan for lack of clarity, create 2-3 concrete clarification questions for that commitment rather than relying on a single generic question.",
+          "For very vague goals, never create a task whose main action is asking the student to clarify, specify, or scope the goal. Keep the goal as needs_clarification and ask guided multiple-choice clarification questions instead.",
+          "Very vague goal clarification questions must be specific and answerable by choosing an option. Cover the first desired outcome, realistic cadence, and current starting point when those details are missing.",
+          "Do not ask open-ended questions like 'What exactly do you want?' or 'Please specify the scope' without answer choices. Use 2-4 plausible answer options plus customPlaceholder for details that do not fit.",
           "Create a conflict timeline and a resolved timeline.",
           "Only set conflictGroupId for two or more confirmed fixed-time items whose explicit start-end time ranges overlap. Never set conflictGroupId for time-flexible tasks; schedule them around fixed-time items instead. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
+          "Every plan task must include an exact clock range in timeLabel. This applies to task-only uploads, goal-only uploads, and mixed uploads. Goal roadmap tasks may also include scheduledDate or scheduledDateRange, but must still include a concrete work window such as '5:15-6:00 PM'.",
+          "For broad goals, schedule the next actionable sessions into specific time ranges instead of only assigning day intervals or month ranges.",
           `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
           `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
           "For every scheduled task and timeline event, include scheduleRationale: one concise user-facing agent rationale for why that exact time slot or date is a good assignment for that task.",
-          "Create roadmap steps for any broad goal, using Exa context when provided.",
-          "When Exa goal research includes clarificationQuestions, convert the most important unanswered items into goal clarification questions before finalizing the roadmap.",
-          "When Exa goal research includes sections, reflect eligibility, criteria, scope, application steps, deadlines, or deliverables in roadmap tasks instead of only summarizing the topic.",
+          "Create roadmap steps for any broad goal, reading target, application, project, event, or externally contextual task, using Exa context when provided.",
+          "When Exa research includes clarificationQuestions, convert the most important unanswered items into clarification questions before finalizing the roadmap.",
+          "When Exa research includes sections, reflect source scope, workload, requirements, criteria, deadlines, duration, deliverables, or milestones in roadmap tasks instead of only summarizing the topic.",
           "For clarification options, keep label short enough for a button, ideally 2-6 words and at most 42 characters. Do not include description fields on options.",
           "Clarification option labels must be plausible answers the student can choose, not categories or field names. Never use labels like 'Prompt text', 'Question range', 'Page numbers', 'Question numbers', or 'Both'. For missing worksheet details, use concrete choices like 'Whole worksheet', 'Selected questions', 'Need to check', or 'Ask teacher first', and rely on customPlaceholder for exact pasted details.",
           "For any unknown optional text field, return an empty string. For no tone, return tone='none'. For no estimated minutes, return 0.",
@@ -1147,7 +1315,7 @@ export async function analyseStudentChaos(
   input: AnalyseStudentChaosRequest,
   options: AnalyseStudentChaosOptions = {},
 ): Promise<StudentOSAgentFootprint> {
-  const sources = input.sources.length ? input.sources : defaultSources;
+  const sources = input.sources;
   const normalizedInput = { ...input, sources };
   const startedAt = Date.now();
   const streamedLogs: AIAgentLog[] = [];
@@ -1210,22 +1378,22 @@ export async function analyseStudentChaos(
     },
   });
 
-  const goalCandidate = broadGoalEvidence(sources);
+  const contextCandidate = researchContextEvidence(sources);
   await emitLog({
     id: "goal-research-check",
     kind: "analysis",
-    title: "Checking for broad goals",
-    body: goalCandidate
-      ? "Detected goal-like evidence that may benefit from live research context."
-      : "No broad goal evidence needed live research for this run.",
-    detail: goalCandidate && !isExaReady() ? "Exa is not configured, so research will be skipped." : undefined,
+    title: "Checking for research context",
+    body: contextCandidate
+      ? "Detected evidence that may benefit from live research context."
+      : "No evidence needed live research for this run.",
+    detail: contextCandidate && !isExaReady() ? "Exa is not configured, so research will be skipped." : undefined,
   });
 
   try {
     goalResearch = await researchGoalContext(sources);
     const trace: AISponsorTraceItem = {
       provider: goalResearch?.model ? "Vercel AI Gateway + Exa" : "Exa",
-      action: "Deep researched broad goal context",
+      action: "Deep researched planning context",
       status: goalResearch ? "success" : "fallback",
       detail: goalResearch
           ? `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`
@@ -1235,9 +1403,9 @@ export async function analyseStudentChaos(
     await emitLog({
       id: goalResearch ? "goal-research-complete" : "goal-research-skipped",
       kind: "tool",
-      title: goalResearch ? "Goal research complete" : "Goal research skipped",
+      title: goalResearch ? "Context research complete" : "Context research skipped",
       body: goalResearch
-        ? "Attached live goal research context to the planning request."
+        ? "Attached live research context to the planning request."
         : "Continuing with the submitted evidence only.",
       tool: {
         provider: "Exa",
@@ -1247,7 +1415,7 @@ export async function analyseStudentChaos(
   } catch (error) {
     const trace: AISponsorTraceItem = {
       provider: "Exa",
-      action: "Deep researched broad goal context",
+      action: "Deep researched planning context",
       status: "fallback",
       detail: error instanceof Error ? error.message : "Exa research failed.",
     };
@@ -1255,7 +1423,7 @@ export async function analyseStudentChaos(
     await emitLog({
       id: "goal-research-failed",
       kind: "tool",
-      title: "Goal research failed",
+      title: "Context research failed",
       body: "The planner will continue with the submitted evidence only.",
       tool: {
         provider: "Exa",

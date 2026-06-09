@@ -68,7 +68,7 @@ const fallbackPlan: GatewayPlanResult = {
     doNow: [
       {
         title: "Finish Physics worksheet",
-        timeLabel: "Now",
+        timeLabel: "3:30-4:05 PM",
         estimatedMinutes: 35,
         reason: "Due tomorrow at 8 AM and needs uninterrupted focus.",
       },
@@ -76,19 +76,19 @@ const fallbackPlan: GatewayPlanResult = {
     doNext: [
       {
         title: "Message teammate",
-        timeLabel: "After Physics",
+        timeLabel: "4:10-4:13 PM",
         estimatedMinutes: 3,
         reason: "Clarifies the project meeting before the evening fills up.",
       },
       {
         title: "Ask CCA lead for briefing notes",
-        timeLabel: "Before briefing",
+        timeLabel: "5:20-5:25 PM",
         estimatedMinutes: 5,
         reason: "Preserves tuition while still covering the CCA commitment.",
       },
       {
         title: "Coding practice",
-        timeLabel: "9:00 PM",
+        timeLabel: "9:00-10:00 PM",
         estimatedMinutes: 60,
         reason: "Starts the Python roadmap without crowding urgent work.",
       },
@@ -96,7 +96,7 @@ const fallbackPlan: GatewayPlanResult = {
     later: [
       {
         title: "Coding fundamentals session",
-        timeLabel: "17 June",
+        timeLabel: "4:30-5:00 PM",
         estimatedMinutes: 30,
         reason: "Keeps the December goal moving through smaller scheduled steps.",
       },
@@ -104,10 +104,13 @@ const fallbackPlan: GatewayPlanResult = {
   },
 };
 
-function normalizePlanItems(items: GatewayPlanResult["dailyPlan"]["doNow"]) {
-  return splitLongStudyTasks(items).map((item) => ({
+function normalizePlanItems(
+  items: GatewayPlanResult["dailyPlan"]["doNow"],
+  section: "do_now" | "do_next" | "subsequent_days",
+) {
+  return splitLongStudyTasks(items.map((item) => ({ ...item, section }))).map((item) => ({
     title: item.title,
-    timeLabel: item.timeLabel || "Next non-consecutive session",
+    timeLabel: item.timeLabel || "Next scheduled session",
     estimatedMinutes: item.estimatedMinutes ?? MAX_STUDY_SESSION_MINUTES,
     reason: item.reason || "Continues the goal step without creating an oversized study block.",
   }));
@@ -118,9 +121,9 @@ function normalizeGatewayPlan(plan: GatewayPlanResult): GatewayPlanResult {
     ...plan,
     dailyPlan: {
       ...plan.dailyPlan,
-      doNow: normalizePlanItems(plan.dailyPlan.doNow),
-      doNext: normalizePlanItems(plan.dailyPlan.doNext),
-      later: normalizePlanItems(plan.dailyPlan.later),
+      doNow: normalizePlanItems(plan.dailyPlan.doNow, "do_now"),
+      doNext: normalizePlanItems(plan.dailyPlan.doNext, "do_next"),
+      later: normalizePlanItems(plan.dailyPlan.later, "subsequent_days"),
     },
   };
 }
@@ -161,9 +164,11 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
         schemaNotes: [
           "Return every field in the schema.",
           "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
+          "Every dailyPlan item must use an exact clock range in timeLabel, for example '4:30-5:15 PM'. Do this for task-only, goal-only, and mixed inputs.",
+          "For goal-only inputs, do not stop at day, week, or month intervals. Put each next goal session into a concrete work window.",
           `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
           `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
-          "Use an empty string for an unknown timeLabel.",
+          "If the user gave no preferred time, choose a reasonable after-school/evening clock range instead of returning an empty timeLabel.",
           "Use 0 for an unknown estimatedMinutes value.",
         ],
       },

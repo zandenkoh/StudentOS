@@ -1,5 +1,6 @@
 import { CalendarDays, CheckCircle2, ChevronRight, Clock3 } from "lucide-react";
 import type { DemoPlanTask } from "@/lib/demo-data";
+import { scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
 
 function durationLabel(task: DemoPlanTask) {
   if (!task.estimatedMinutes) return null;
@@ -7,7 +8,7 @@ function durationLabel(task: DemoPlanTask) {
 }
 
 function scheduleLabel(task: DemoPlanTask) {
-  return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? null;
+  return scheduleLabelWithTimeRange(task);
 }
 
 

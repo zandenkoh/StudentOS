@@ -1,3 +1,5 @@
+import { defaultTimeRangeForTask, ensureTaskTimeRange } from "@/lib/time-scheduling";
+
 export const MAX_STUDY_SESSION_MINUTES = 180;
 
 type SplittableStudyTask = {
@@ -23,7 +25,7 @@ function sessionTitle(title: string, sessionNumber: number) {
 }
 
 export function splitLongStudyTask<T extends SplittableStudyTask>(task: T): T[] {
-  if (!shouldSplitTask(task) || !task.estimatedMinutes) return [task];
+  if (!shouldSplitTask(task) || !task.estimatedMinutes) return [ensureTaskTimeRange(task)];
 
   const sessionCount = Math.ceil(task.estimatedMinutes / MAX_STUDY_SESSION_MINUTES);
   const baseMinutes = Math.floor(task.estimatedMinutes / sessionCount);
@@ -38,12 +40,11 @@ export function splitLongStudyTask<T extends SplittableStudyTask>(task: T): T[] 
     );
     remainingMinutes -= estimatedMinutes;
 
-    return {
+    const sessionTask = {
       ...task,
       id: `${task.id || task.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-session-${sessionNumber}`,
       title: sessionTitle(task.title, sessionNumber),
       estimatedMinutes: Math.max(estimatedMinutes, baseMinutes),
-      timeLabel: sessionNumber === 1 ? task.timeLabel : "Next non-consecutive session",
       scheduledDate: sessionNumber === 1 ? task.scheduledDate : undefined,
       scheduledDateId: sessionNumber === 1 ? task.scheduledDateId : undefined,
       scheduledDateRange:
@@ -59,6 +60,11 @@ export function splitLongStudyTask<T extends SplittableStudyTask>(task: T): T[] 
           ? task.scheduleRationale
           : "Scheduled as a separate non-consecutive session so no study block exceeds 180 minutes.",
     };
+
+    return ensureTaskTimeRange({
+      ...sessionTask,
+      timeLabel: sessionNumber === 1 ? task.timeLabel : defaultTimeRangeForTask(sessionTask, index + 1),
+    } as T, index);
   });
 }
 

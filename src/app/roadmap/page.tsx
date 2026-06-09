@@ -11,6 +11,7 @@ import { SourceChip } from "@/components/source-chip";
 import { goalRoadmapSteps, type DemoGoalRoadmapStep } from "@/lib/demo-data";
 import { cleanResearchCopy, compactResearchCopy } from "@/lib/sponsor-tech/research-format";
 import type { StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
+import { ensureTaskTimeRanges } from "@/lib/time-scheduling";
 
 type GoalResearch = NonNullable<StudentOSAgentFootprint["goalResearch"]>;
 
@@ -38,10 +39,17 @@ function searchCountLabel(goalResearch: GoalResearch) {
   return `${count} ${count === 1 ? "search" : "searches"}`;
 }
 
+function stepsWithClockRanges(steps: DemoGoalRoadmapStep[]) {
+  return steps.map((step) => ({
+    ...step,
+    tasks: ensureTaskTimeRanges(step.tasks),
+  }));
+}
+
 export default function RoadmapPage() {
   const router = useRouter();
   const [roadmapAdded, setRoadmapAdded] = useState(true);
-  const [steps, setSteps] = useState<DemoGoalRoadmapStep[]>(goalRoadmapSteps);
+  const [steps, setSteps] = useState<DemoGoalRoadmapStep[]>(() => stepsWithClockRanges(goalRoadmapSteps));
   const [goalTitle, setGoalTitle] = useState("Learn coding by December");
   const [goalResearch, setGoalResearch] = useState<StudentOSAgentFootprint["goalResearch"]>();
 
@@ -54,14 +62,14 @@ export default function RoadmapPage() {
       if (rawFootprint) {
         const footprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
         if (Array.isArray(footprint.roadmapSteps) && footprint.roadmapSteps.length > 0) {
-          setSteps(footprint.roadmapSteps);
+          setSteps(stepsWithClockRanges(footprint.roadmapSteps));
         }
         const goal = footprint.commitments.find((item) => item.type === "goal");
         if (goal) setGoalTitle(goal.title);
         setGoalResearch(footprint.goalResearch);
       }
     } catch {
-      setSteps(goalRoadmapSteps);
+      setSteps(stepsWithClockRanges(goalRoadmapSteps));
     }
 
     window.localStorage.setItem("studentos_roadmap_added", "true");
