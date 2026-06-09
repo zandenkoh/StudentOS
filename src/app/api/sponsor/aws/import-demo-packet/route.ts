@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import { NextResponse } from "next/server";
 import { detectTextFromS3 } from "@/lib/sponsor-tech/aws-textract";
@@ -24,77 +24,84 @@ type DemoPacketFile = {
   fileType: CachedSourceRecord["fileType"];
   publicPath?: string;
   mimeType?: string;
+  absolutePath?: string;
 };
 
-const demoPacketFiles: DemoPacketFile[] = [
-  {
-    sourceId: "whatsapp-screenshot",
-    title: "IMG-20260609-WA0004.jpg",
-    source: "WhatsApp Screenshot",
-    snippet: "Team chat: project meeting may move because Sarah has CCA and tuition.",
-    fileSize: "185 KB",
-    fileType: "image",
-    publicPath: "/IMG-20260609-WA0004.jpg",
-    mimeType: "image/jpeg",
-  },
-  {
-    sourceId: "physics-homework-pdf",
-    title: "Physics Chapter 12 homework.pdf",
-    source: "Homework PDF",
-    snippet: "Worksheet due tomorrow 8 AM with Chapter 12 induction questions.",
-    fileSize: "2.1 MB",
-    fileType: "pdf",
-  },
-  {
-    sourceId: "team-voice-note",
-    title: "Teammate voice note.m4a",
-    source: "Voice Note",
-    snippet: "1:24 transcript: ask if the project meeting can move to tomorrow morning.",
-    fileSize: "1:24",
-    fileType: "audio",
-  },
-  {
-    sourceId: "calendar-conflict",
-    title: "Screenshot 2026-06-09 123905.jpg",
-    source: "Calendar Conflict",
-    snippet: "Tuition is fixed from 4:30-6:30 PM, overlapping the CCA briefing.",
-    fileSize: "210 KB",
-    fileType: "image",
-    publicPath: "/Screenshot 2026-06-09 123905.jpg",
-    mimeType: "image/jpeg",
-  },
-  {
-    sourceId: "cca-screenshot",
-    title: "Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
-    source: "CCA Announcement",
-    snippet: "Briefing starts at 5:30 PM today in the auditorium.",
-    fileSize: "492 KB",
-    fileType: "image",
-    publicPath: "/Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
-    mimeType: "image/jpeg",
-  },
-  {
-    sourceId: "coding-goal",
-    title: "goalDemo.txt",
-    source: "Long-term Coding Goal",
-    snippet: "I have zero Python experience and want to be proficient with data-handling libraries by year end.",
-    fileSize: "1 KB",
-    fileType: "text",
-    publicPath: "/goalDemo.txt",
-    mimeType: "text/plain",
-  },
-  {
-    sourceId: "team-project-message",
-    title: "Team project follow-up",
-    source: "Team Message",
-    snippet: "Ask teammate first before locking tonight's project discussion.",
-    fileSize: "8 KB",
-    fileType: "text",
-  },
-];
+const ASSETS_DIR = path.join(process.cwd(), "assets");
 
-function filePathForPublicPath(publicPath: string) {
-  return path.join(process.cwd(), "public", decodeURIComponent(publicPath.replace(/^\//, "")));
+const mimeTypesByExtension: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".pdf": "application/pdf",
+  ".txt": "text/plain",
+  ".md": "text/markdown",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".m4a": "audio/mp4",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+};
+
+function fileTypeForExtension(extension: string): CachedSourceRecord["fileType"] {
+  if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(extension)) return "image";
+  if (extension === ".pdf") return "pdf";
+  if ([".m4a", ".mp3", ".wav"].includes(extension)) return "audio";
+  return "text";
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function slugForFilename(filename: string) {
+  return filename
+    .replace(/\.[^.]+$/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+function sourceLabelForFileType(fileType: CachedSourceRecord["fileType"]) {
+  if (fileType === "image") return "Assets Image";
+  if (fileType === "pdf") return "Assets PDF";
+  if (fileType === "audio") return "Assets Audio";
+  return "Assets Text";
+}
+
+async function discoverDemoPacketFiles(): Promise<DemoPacketFile[]> {
+  const entries = await readdir(ASSETS_DIR, { withFileTypes: true });
+  const files = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(async (entry) => {
+        const absolutePath = path.join(ASSETS_DIR, entry.name);
+        const extension = path.extname(entry.name).toLowerCase();
+        const fileType = fileTypeForExtension(extension);
+        const fileStat = await stat(absolutePath);
+        const publicPath = `/api/sponsor/aws/demo-asset/${encodeURIComponent(entry.name)}`;
+
+        return {
+          sourceId: slugForFilename(entry.name) || sha256(entry.name).slice(0, 12),
+          title: entry.name,
+          source: sourceLabelForFileType(fileType),
+          snippet: `Imported from assets/${entry.name}.`,
+          fileSize: formatFileSize(fileStat.size),
+          fileType,
+          publicPath,
+          mimeType: mimeTypesByExtension[extension] || "application/octet-stream",
+          absolutePath,
+        };
+      }),
+  );
+
+  return files;
 }
 
 function templateS3Key(source: DemoPacketFile) {
@@ -108,7 +115,7 @@ function usesCurrentTemplateKey(source: DemoPacketFile, cached?: CachedSourceRec
 }
 
 async function processFileBackedSource(source: DemoPacketFile, manifestRecords: Record<string, CachedSourceRecord>) {
-  if (!source.publicPath || !source.mimeType) {
+  if (!source.absolutePath || !source.publicPath || !source.mimeType) {
     return {
       sourceId: source.sourceId,
       origin: "initial_packet" as const,
@@ -124,7 +131,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     };
   }
 
-  const buffer = await readFile(filePathForPublicPath(source.publicPath));
+  const buffer = await readFile(source.absolutePath);
   const contentHash = sha256(buffer);
   const cacheKey = sourceCacheKey("initial_packet", source.sourceId);
   const cached = manifestRecords[cacheKey];
@@ -226,6 +233,8 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
 }
 
 export async function POST() {
+  const demoPacketFiles = await discoverDemoPacketFiles();
+
   if (!isAwsReady()) {
     return NextResponse.json({
       provider: "mock",
@@ -257,6 +266,13 @@ export async function POST() {
     const sources = await Promise.all(
       demoPacketFiles.map((source) => processFileBackedSource(source, manifest.records)),
     );
+    const currentCacheKeys = new Set(sources.map((source) => sourceCacheKey("initial_packet", source.sourceId)));
+
+    for (const key of Object.keys(manifest.records)) {
+      if (key.startsWith("initial_packet:") && !currentCacheKeys.has(key)) {
+        delete manifest.records[key];
+      }
+    }
 
     for (const source of sources) {
       manifest.records[sourceCacheKey("initial_packet", source.sourceId)] = source;

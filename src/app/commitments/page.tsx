@@ -454,6 +454,64 @@ function persistFlowState(state: {
   window.localStorage.setItem(SAVED_FLOW_STATE_KEY, JSON.stringify({ ...current, ...state }));
 }
 
+function firstFlexiblePlanTaskId(tasks: DemoPlanTask[]) {
+  const target = tasks.find((task) => {
+    const text = `${task.title} ${task.reason ?? ""} ${task.source ?? ""}`.toLowerCase();
+    return task.section !== "do_now" && !/\bfixed\b|calendar|appointment|class|lesson/.test(text);
+  });
+
+  return target?.id ?? tasks[0]?.id;
+}
+
+function applyManualInstructionToPlanTasks(tasks: DemoPlanTask[], instruction: string) {
+  const targetId = firstFlexiblePlanTaskId(tasks);
+  if (!targetId) return tasks;
+
+  return tasks.map((task) =>
+    task.id === targetId
+      ? {
+          ...task,
+          reason: "Updated after manual instruction",
+          scheduleRationale: `StudentOS is rebuilding this item around the user's manual conflict instruction: ${instruction}.`,
+          updated: true,
+        }
+      : task,
+  );
+}
+
+function insertMissingPreservedPlanTasks(
+  resultTasks: DemoPlanTask[],
+  baselineTasks: DemoPlanTask[],
+  preservePlanTaskIds: string[],
+) {
+  if (!preservePlanTaskIds.length) return resultTasks;
+
+  const resultIds = new Set(resultTasks.map((task) => task.id));
+  const missingTasks = baselineTasks.filter(
+    (task) => preservePlanTaskIds.includes(task.id) && !resultIds.has(task.id),
+  );
+
+  return missingTasks.reduce((tasks, missingTask) => {
+    const firstFutureIndex = tasks.findIndex((task) => task.section === "subsequent_days");
+    const sameSectionLastIndex = tasks.reduce(
+      (lastIndex, task, index) => (task.section === missingTask.section ? index : lastIndex),
+      -1,
+    );
+    const insertionIndex =
+      sameSectionLastIndex >= 0
+        ? sameSectionLastIndex + 1
+        : firstFutureIndex >= 0 && missingTask.section !== "subsequent_days"
+          ? firstFutureIndex
+          : tasks.length;
+
+    return [
+      ...tasks.slice(0, insertionIndex),
+      missingTask,
+      ...tasks.slice(insertionIndex),
+    ];
+  }, resultTasks);
+}
+
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
@@ -486,6 +544,7 @@ export default function CommitmentsPage() {
   const [impactOpen, setImpactOpen] = useState(false);
   const [addedTaskApplied, setAddedTaskApplied] = useState(false);
   const [roadmapAdded, setRoadmapAdded] = useState(true);
+  const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   const [planHydrated, setPlanHydrated] = useState(false);
   const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(() =>
     enrichPlanTasksWithRationales(initialPlanTasks)
@@ -577,6 +636,24 @@ export default function CommitmentsPage() {
 
     return () => window.cancelAnimationFrame(frameId);
   }, [step]);
+
+  useEffect(() => {
+    if (step !== "plan" || !highlightedTaskId) return;
+
+    let clearTimer: number | undefined;
+    const frameId = window.requestAnimationFrame(() => {
+      const element = document.getElementById(`plan-task-${highlightedTaskId}`);
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      clearTimer = window.setTimeout(() => {
+        setHighlightedTaskId((current) => (current === highlightedTaskId ? null : current));
+      }, 2600);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      if (clearTimer) window.clearTimeout(clearTimer);
+    };
+  }, [highlightedTaskId, planTasks, step]);
 
   useEffect(() => {
     try {
@@ -793,6 +870,8 @@ export default function CommitmentsPage() {
     beforePlanTasks = planTasks,
     runId,
     sourceContext,
+    preservePlanTaskIds = [],
+    focusPlanTaskId,
   }: {
     trigger: ReplanTrigger;
     nextCommitments?: Commitment[];
@@ -805,6 +884,8 @@ export default function CommitmentsPage() {
     beforePlanTasks?: DemoPlanTask[];
     runId?: string;
     sourceContext?: Record<string, unknown>;
+    preservePlanTaskIds?: string[];
+    focusPlanTaskId?: string;
   }) {
     const activeRunId = runId ?? beginAgentRun(trigger).runId;
 
@@ -906,20 +987,31 @@ export default function CommitmentsPage() {
       }
 
       const result = finalResult as ReplanAgentResponse;
-      const afterTasks = enrichPlanTasksWithRationales(withoutCompletedTasks(result.planTasks));
-      const changedCommitments = diffCommitments(beforeCommitments, result.commitments);
+      const effectiveResult: ReplanAgentResponse = {
+        ...result,
+        planTasks: insertMissingPreservedPlanTasks(
+          result.planTasks,
+          nextPlanTasks,
+          preservePlanTaskIds,
+        ),
+      };
+      const afterTasks = enrichPlanTasksWithRationales(withoutCompletedTasks(effectiveResult.planTasks));
+      const changedCommitments = diffCommitments(beforeCommitments, effectiveResult.commitments);
       const changedPlanTasks = diffPlanTasks(beforePlanTasks, afterTasks);
       const runStatus: AgentRunStatus =
-        result.status === "success"
+        effectiveResult.status === "success"
           ? "success"
-          : result.status === "error"
+          : effectiveResult.status === "error"
             ? "error"
             : "fallback";
-      const fallbackReason = result.trace?.find((item) => item.status === "fallback")?.detail;
+      const fallbackReason = effectiveResult.trace?.find((item) => item.status === "fallback")?.detail;
 
-      applyReplanResult(result);
+      applyReplanResult(effectiveResult);
+      if (focusPlanTaskId) {
+        setHighlightedTaskId(focusPlanTaskId);
+      }
       if (trigger === "manual_conflict") {
-        const stillHasConflict = validateTimelineConflicts(result.resolvedTimelineEvents).groups.length > 0;
+        const stillHasConflict = validateTimelineConflicts(effectiveResult.resolvedTimelineEvents).groups.length > 0;
         setConflictResolved(!stillHasConflict);
         setResolutionMode("manual");
         persistFlowState({
@@ -1331,22 +1423,32 @@ export default function CommitmentsPage() {
       return;
     }
 
+    const nextPlanTasks = applyManualInstructionToPlanTasks(planTasks, instruction);
+    const focusPlanTaskId = firstFlexiblePlanTaskId(nextPlanTasks);
+
+    setPlanTasks(nextPlanTasks);
+    persistPlanTasks(nextPlanTasks);
     setResolutionMode("manual");
     setManualConflictOpen(false);
     persistFlowState({ resolutionMode: "manual" });
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
     showToast("Manual instruction sent to agent");
     void runAgentReplan({
       trigger: "manual_conflict",
+      nextPlanTasks,
       manualInstruction: instruction,
       nextConflictResolved: true,
       nextResolutionMode: "manual",
       beforeCommitments: commitments,
       beforePlanTasks: planTasks,
+      preservePlanTaskIds: focusPlanTaskId ? [focusPlanTaskId] : [],
+      focusPlanTaskId,
     });
   }
 
   function applyAndContinue() {
-    if (!conflictResolved) {
+    if (!conflictResolved && resolutionMode !== "manual") {
       applySuggestedConflict(true);
       return;
     }
@@ -1385,6 +1487,10 @@ export default function CommitmentsPage() {
     setSourceDraft(text);
     setAddedSourceText(text);
     setAddedInterpretation(interpretation);
+    setCommitments(nextCommitments);
+    persistCommitments(nextCommitments);
+    setPlanTasks(nextPlanTasks);
+    persistPlanTasks(nextPlanTasks);
 
     try {
       const response = await fetch("/api/sponsor/aws/process-text-source", {
@@ -1429,6 +1535,10 @@ export default function CommitmentsPage() {
     } finally {
       setSourceProcessing(false);
       setAddSourceOpen(false);
+      if (commitment.state !== "needs_clarification") {
+        setHighlightedTaskId(null);
+        window.setTimeout(() => setHighlightedTaskId(task.id), 0);
+      }
     }
 
     if (clarificationQuestion) {
@@ -1491,6 +1601,8 @@ export default function CommitmentsPage() {
       runId: run.runId,
       beforeCommitments,
       beforePlanTasks,
+      preservePlanTaskIds: commitment.state === "needs_clarification" ? [] : [task.id],
+      focusPlanTaskId: commitment.state === "needs_clarification" ? undefined : task.id,
       sourceContext: {
         addedSource: text,
         addedSourceKey: nextSourceKey ?? undefined,
@@ -1578,6 +1690,9 @@ export default function CommitmentsPage() {
       persistPlanTasks(updated);
       return updated;
     });
+    if (commitment.state !== "needs_clarification") {
+      setHighlightedTaskId(task.id);
+    }
     setAddedTaskApplied(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
@@ -1922,6 +2037,7 @@ export default function CommitmentsPage() {
                     key={section.title}
                     title={section.title}
                     items={section.items}
+                    highlightedTaskId={highlightedTaskId}
                     onTaskClick={setSelectedTaskForEdit}
                   />
                 ))}
@@ -2224,6 +2340,14 @@ export default function CommitmentsPage() {
         onClose={() => setExportOpen(false)}
         includeAddedTask={addedTaskApplied}
         includeRoadmap={roadmapAdded}
+        focusTitle={focusTask?.title}
+        scheduledBlockCount={planTasks.length}
+        conflictResolved={hasConfirmedConflict && conflictResolved}
+        onViewFinalPlan={() => {
+          setExportOpen(false);
+          resetScreenScroll();
+        }}
+        onStartOver={reset}
         onSaved={() => {
           window.localStorage.setItem("studentos_calendar_saved", "true");
           showToast("Saved to calendar");

@@ -1,6 +1,7 @@
 import { CalendarDays, CheckCircle2, ChevronRight, Clock3 } from "lucide-react";
 import type { DemoPlanTask } from "@/lib/demo-data";
 import { scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
+import { cn } from "@/lib/utils";
 
 function durationLabel(task: DemoPlanTask) {
   if (!task.estimatedMinutes) return null;
@@ -15,10 +16,12 @@ function scheduleLabel(task: DemoPlanTask) {
 function PlanTaskCard({
   task,
   future,
+  highlighted,
   onClick
 }: {
   task: DemoPlanTask;
   future: boolean;
+  highlighted: boolean;
   onClick: () => void;
 }) {
   const schedule = scheduleLabel(task);
@@ -26,11 +29,14 @@ function PlanTaskCard({
 
   return (
     <button
+      id={`plan-task-${task.id}`}
       type="button"
       onClick={onClick}
-      className={`w-full rounded-[22px] border bg-white p-4 text-left shadow-[0_10px_35px_rgba(0,0,0,0.035)] transition hover:bg-neutral-50 ${
-        task.updated ? "border-ink" : "border-neutral-200"
-      }`}
+      className={cn(
+        "w-full scroll-mt-24 rounded-[22px] border bg-white p-4 text-left shadow-[0_10px_35px_rgba(0,0,0,0.035)] transition hover:bg-neutral-50",
+        task.updated ? "border-ink" : "border-neutral-200",
+        highlighted && "border-amber-400 bg-amber-50/80 ring-4 ring-amber-200/80 shadow-[0_18px_45px_rgba(245,158,11,0.22)]"
+      )}
     >
       <div className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
@@ -101,10 +107,12 @@ function PlanTaskCard({
 export function PlanSection({
   title,
   items,
+  highlightedTaskId,
   onTaskClick
 }: {
   title: string;
   items: DemoPlanTask[];
+  highlightedTaskId?: string | null;
   onTaskClick: (task: DemoPlanTask) => void;
 }) {
   const future = title === "Subsequent days";
@@ -118,6 +126,7 @@ export function PlanSection({
             key={item.id}
             task={item}
             future={future}
+            highlighted={highlightedTaskId === item.id}
             onClick={() => onTaskClick(item)}
           />
         ))}
