@@ -97,10 +97,14 @@ function filePathForPublicPath(publicPath: string) {
   return path.join(process.cwd(), "public", decodeURIComponent(publicPath.replace(/^\//, "")));
 }
 
-function templateS3Key(source: DemoPacketFile, contentHash: string) {
+function templateS3Key(source: DemoPacketFile) {
   const filename = source.publicPath ? path.basename(decodeURIComponent(source.publicPath)) : source.title;
   const safeTitle = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-  return `studentos-demo/templates/${source.sourceId}-${contentHash.slice(0, 12)}-${safeTitle}`;
+  return `assets/${safeTitle}`;
+}
+
+function usesCurrentTemplateKey(source: DemoPacketFile, cached?: CachedSourceRecord) {
+  return cached?.s3Key === templateS3Key(source);
 }
 
 async function processFileBackedSource(source: DemoPacketFile, manifestRecords: Record<string, CachedSourceRecord>) {
@@ -125,7 +129,12 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
   const cacheKey = sourceCacheKey("initial_packet", source.sourceId);
   const cached = manifestRecords[cacheKey];
 
-  if (cached?.contentHash === contentHash && cached.s3Key && cached.title === source.title) {
+  if (
+    cached?.contentHash === contentHash &&
+    cached.s3Key &&
+    cached.title === source.title &&
+    usesCurrentTemplateKey(source, cached)
+  ) {
     if (!cached.sourceSummary && (source.fileType === "image" || source.fileType === "pdf" || source.fileType === "text")) {
       const interpretation = await interpretSourceAttachment({
         title: source.title,
@@ -153,7 +162,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     };
   }
 
-  const s3Key = templateS3Key(source, contentHash);
+  const s3Key = templateS3Key(source);
   await uploadBufferToS3({
     key: s3Key,
     body: buffer,
