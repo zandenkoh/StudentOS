@@ -515,6 +515,76 @@ export function planTasksWithAddedTask(
   ];
 }
 
+function taskMatchesCommitment(task: DemoPlanTask, commitment: Commitment) {
+  if (task.id === commitment.id) return true;
+  if (task.id === `clarified-${commitment.id}`) return true;
+  if (task.goalId === commitment.id) return true;
+  if (task.id.startsWith(`${commitment.id}-`)) return true;
+
+  const taskSource = normalizeSearchText(task.source ?? "");
+  const commitmentSource = normalizeSearchText(commitment.source);
+  if (
+    taskSource &&
+    taskSource === commitmentSource &&
+    !["screenshot", "message screenshot", "plan"].includes(taskSource)
+  ) {
+    return true;
+  }
+
+  const taskText = normalizeSearchText([task.title, task.source].filter(Boolean).join(" "));
+  const commitmentText = normalizeSearchText([commitment.title, commitment.source].join(" "));
+  const titleWords = normalizeSearchText(commitment.title)
+    .split(" ")
+    .filter((word) => word.length > 3);
+
+  if (titleWords.length > 0) {
+    const matchingWords = titleWords.filter((word) => taskText.includes(word)).length;
+    if (matchingWords >= Math.min(2, titleWords.length)) return true;
+  }
+
+  return taskText.length > 0 && commitmentText.length > 0 && (
+    taskText.includes(commitmentText) || commitmentText.includes(taskText)
+  );
+}
+
+export function planTasksWithEditedCommitment(
+  current: DemoPlanTask[],
+  previousCommitment: Commitment,
+  nextCommitment: Commitment,
+) {
+  const nextTitle =
+    nextCommitment.type === "goal"
+      ? `Plan next step for ${nextCommitment.title}`
+      : nextCommitment.title;
+  const nextEstimatedMinutes = estimatedMinutesFromDuration(
+    nextCommitment.estimatedDuration,
+    nextCommitment.type,
+  );
+
+  return current.map((task) => {
+    if (!taskMatchesCommitment(task, previousCommitment)) return task;
+
+    return ensureTaskTimeRange({
+      ...task,
+      title: task.isRoadmapTask && nextCommitment.type === "goal" ? nextTitle : nextCommitment.title,
+      estimatedMinutes: nextEstimatedMinutes,
+      source: nextCommitment.source,
+      goalId: nextCommitment.type === "goal" ? nextCommitment.id : task.goalId,
+      isRoadmapTask: nextCommitment.type === "goal" ? true : task.isRoadmapTask,
+      reason: task.reason ?? "Updated from edited commitment",
+      scheduleRationale: `StudentOS updated this scheduled task after the commitment was edited to "${nextCommitment.title}".`,
+      updated: true,
+    });
+  });
+}
+
+export function planTasksWithoutCommitment(
+  current: DemoPlanTask[],
+  commitment: Commitment,
+) {
+  return current.filter((task) => !taskMatchesCommitment(task, commitment));
+}
+
 export function fallbackPlanSummary(commitments: Commitment[], tasks: DemoPlanTask[]) {
   const focus = tasks.find((task) => task.section === "do_now") ?? tasks[0];
   const fixedCount = commitments.filter((item) => item.type === "event").length;

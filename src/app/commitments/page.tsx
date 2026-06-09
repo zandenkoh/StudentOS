@@ -80,7 +80,9 @@ import {
   formatScheduleDateLabel,
   interpretAddedSource,
   nextDayForTask,
+  planTasksWithEditedCommitment,
   planTasksWithAddedTask,
+  planTasksWithoutCommitment,
   scheduleLabelForTask,
   scheduleRationaleForEvent,
   sortSubsequentDayTasks,
@@ -406,6 +408,12 @@ function persistCommitments(commitments: Commitment[]) {
 
 function persistPlanTasks(tasks: DemoPlanTask[]) {
   window.localStorage.setItem(SAVED_PLAN_TASKS_KEY, JSON.stringify(tasks));
+}
+
+function clearAiPlanCaches() {
+  Object.keys(window.localStorage)
+    .filter((key) => key.startsWith("studentos_vercel_plan_day_"))
+    .forEach((key) => window.localStorage.removeItem(key));
 }
 
 function completedTaskIds() {
@@ -1591,6 +1599,7 @@ export default function CommitmentsPage() {
     setAddedTaskApplied(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
+    clearAiPlanCaches();
     window.localStorage.setItem("studentos_extra_source_added", commitment.id);
     persistFlowState({ addedTaskApplied: true });
 
@@ -1696,6 +1705,7 @@ export default function CommitmentsPage() {
     setAddedTaskApplied(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
+    clearAiPlanCaches();
     window.localStorage.setItem("studentos_extra_source_added", commitment.id);
     persistFlowState({ addedTaskApplied: true });
     setImpactOpen(false);
@@ -1838,31 +1848,54 @@ export default function CommitmentsPage() {
 
   function saveEdit() {
     if (!editing) return;
-    setCommitments((current) => {
-      const updated = current.map((item) =>
-        item.id === editing.id
-          ? {
-              ...item,
-              title: editDraft.title.trim() || item.title,
-              type: editDraft.type,
-              estimatedDuration: editDraft.estimatedDuration.trim() || item.estimatedDuration
-            }
-          : item
-      );
-      persistCommitments(updated);
-      return updated;
+    const previousCommitment = editing;
+    const nextCommitment: Commitment = {
+      ...editing,
+      title: editDraft.title.trim() || editing.title,
+      type: editDraft.type,
+      estimatedDuration: editDraft.estimatedDuration.trim() || editing.estimatedDuration,
+      explanation: `${editing.explanation} Edited by user.`,
+    };
+    const nextCommitments = commitments.map((item) =>
+      item.id === editing.id ? nextCommitment : item,
+    );
+    const nextPlanTasks = enrichPlanTasksWithRationales(
+      planTasksWithEditedCommitment(planTasks, previousCommitment, nextCommitment),
+    );
+
+    setCommitments(nextCommitments);
+    persistCommitments(nextCommitments);
+    setPlanTasks(nextPlanTasks);
+    persistPlanTasks(nextPlanTasks);
+    setSelectedTaskForEdit((current) => {
+      if (!current) return current;
+      return nextPlanTasks.find((task) => task.id === current.id) ?? current;
     });
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
+    clearAiPlanCaches();
     setEditing(null);
+    showToast("Item updated");
   }
 
   function deleteEditing() {
     if (!editing) return;
-    setCommitments((current) => {
-      const updated = current.filter((item) => item.id !== editing.id);
-      persistCommitments(updated);
-      return updated;
-    });
+    const removedCommitment = editing;
+    const nextCommitments = commitments.filter((item) => item.id !== removedCommitment.id);
+    const nextPlanTasks = planTasksWithoutCommitment(planTasks, removedCommitment);
+
+    setCommitments(nextCommitments);
+    persistCommitments(nextCommitments);
+    setPlanTasks(nextPlanTasks);
+    persistPlanTasks(nextPlanTasks);
+    setSelectedTaskForEdit((current) =>
+      current && nextPlanTasks.some((task) => task.id === current.id) ? current : null,
+    );
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
+    clearAiPlanCaches();
     setEditing(null);
+    showToast("Item deleted");
   }
 
   return (
