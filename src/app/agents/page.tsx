@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BrainCircuit,
   CalendarDays,
   Check,
-  Clock3,
   FileSearch,
   Image,
   ListChecks,
@@ -129,13 +128,6 @@ const kindLabel: Record<LogKind, string> = {
   footprint: "Footprint"
 };
 
-function formatElapsed(seconds: number) {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return remaining === 0 ? `${minutes}min` : `${minutes}min ${remaining}s`;
-}
-
 function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
   const Icon = kindIcon[kind];
 
@@ -156,17 +148,17 @@ function ToolCall({ log }: { log: AgentLog }) {
   const ToolIcon = log.tool.icon;
 
   return (
-    <div className="mt-3 rounded-[8px] border border-neutral-200 bg-white px-3 py-2.5">
+    <div className="mt-3 rounded-[8px] border border-ink/10 bg-ink px-3 py-2.5 text-white shadow-[0_12px_28px_rgba(0,0,0,0.12)]">
       <div className="flex min-w-0 items-center gap-2">
-        <ToolIcon className={cn("size-4 shrink-0", log.tool.color)} />
-        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-neutral-800">
+        <ToolIcon className="size-4 shrink-0 text-white" />
+        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-white">
           {log.tool.name}
         </span>
-        <span className="shrink-0 text-[11px] font-semibold text-neutral-400">
-          called
+        <span className="shrink-0 text-[11px] font-semibold text-white/55">
+          running
         </span>
       </div>
-      <p className="mt-1.5 text-[12px] leading-snug text-neutral-500">{log.tool.result}</p>
+      <p className="mt-1.5 text-[12px] leading-snug text-white/72">{log.tool.result}</p>
     </div>
   );
 }
@@ -174,20 +166,28 @@ function ToolCall({ log }: { log: AgentLog }) {
 function AgentLogItem({
   log,
   complete,
-  isLast
+  isLast,
+  isActive,
+  activeRef
 }: {
   log: AgentLog;
   complete: boolean;
   isLast: boolean;
+  isActive: boolean;
+  activeRef?: Ref<HTMLLIElement>;
 }) {
   return (
     <motion.li
+      ref={activeRef}
       layout
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
       transition={{ duration: 0.35, ease: "easeOut" }}
-      className="relative flex gap-3"
+      className={cn(
+        "relative flex gap-3 rounded-[8px] px-2 py-1.5 transition-colors",
+        isActive ? "bg-neutral-50" : "bg-transparent"
+      )}
     >
       <div className="flex shrink-0 flex-col items-center">
         <LogMarker kind={log.kind} complete={complete} />
@@ -198,17 +198,13 @@ function AgentLogItem({
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-400">
             {kindLabel[log.kind]}
           </span>
-          <span className="size-1 shrink-0 rounded-full bg-neutral-300" />
-          <span className="truncate text-[11px] font-semibold text-neutral-400">
-            {formatElapsed(Math.floor(log.at / 1000))}
-          </span>
         </div>
         <h2 className="mt-1 text-[15px] font-semibold leading-snug tracking-tight text-ink">
           {log.title}
         </h2>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-550">{log.body}</p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{log.body}</p>
         {log.detail ? (
-          <p className="mt-2 rounded-[8px] border border-neutral-100 bg-neutral-50 px-3 py-2 text-[12px] leading-snug text-neutral-500">
+          <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
             {log.detail}
           </p>
         ) : null}
@@ -225,6 +221,8 @@ export default function AgentsThinkingPage() {
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const logViewportRef = useRef<HTMLDivElement>(null);
+  const activeLogRef = useRef<HTMLLIElement>(null);
+  const shouldFollowLogRef = useRef(true);
   const analysisStartedRef = useRef(false);
 
   useEffect(() => {
@@ -386,15 +384,34 @@ export default function AgentsThinkingPage() {
   const progress = Math.min(0.92, 0.36 + (elapsedMs / REDIRECT_MAX_AT) * 0.56);
   const readyToRedirect = analysisDone && elapsedMs >= REDIRECT_MIN_AT;
   const done = readyToRedirect;
-  const sourceCount = aiFootprint?.sourceSummary.totalSources ?? (sponsorTrace.length > 0 ? "Real" : "7");
-  const foundCount = aiFootprint?.commitments.length ?? "5";
-  const openCount = aiFootprint?.clarificationQuestions.length ?? "2";
+  const progressPercent = Math.min(100, readyToRedirect ? 100 : Math.round(progress * 100));
 
   useEffect(() => {
+    if (!shouldFollowLogRef.current) return;
+    activeLogRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [visibleLogs.length]);
+
+  function handleLogScroll() {
     const viewport = logViewportRef.current;
     if (!viewport) return;
-    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-  }, [visibleLogs.length]);
+
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    if (distanceFromBottom <= 36) {
+      shouldFollowLogRef.current = true;
+    }
+  }
+
+  function pauseLogFollow(forcePause = false) {
+    const viewport = logViewportRef.current;
+    if (!viewport) return;
+
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    if (forcePause || distanceFromBottom > 36) {
+      shouldFollowLogRef.current = false;
+    }
+  }
 
   useEffect(() => {
     const startedAt = Date.now();
@@ -417,51 +434,43 @@ export default function AgentsThinkingPage() {
   }, [readyToRedirect, router]);
 
   return (
-    <AppShell stepLabel="Agent Log" progress={progress} hideHeader={false}>
-      <div className="flex h-[calc(100dvh-124px)] min-h-0 flex-col overflow-hidden px-5 pb-[92px] pt-1">
-        <section className="rounded-[8px] border border-neutral-200 bg-white p-4 shadow-[0_18px_45px_rgba(0,0,0,0.045)]">
+    <AppShell stepLabel="Agent Log" hideHeader={false}>
+      <div className="flex h-[calc(100dvh-104px)] min-h-0 flex-col overflow-hidden px-5 pb-4 pt-1">
+        <section className="sticky top-0 z-20 rounded-[8px] border border-neutral-200 bg-white/95 p-3 shadow-[0_12px_30px_rgba(0,0,0,0.05)] backdrop-blur-xl">
+          <div className="mb-3 h-2 overflow-hidden rounded-full bg-neutral-100">
+            <motion.div
+              className="relative h-full rounded-full bg-ink"
+              animate={{ width: `${progressPercent}%` }}
+              transition={{ duration: 0.45, ease: "easeOut" }}
+            >
+              <span className="absolute inset-y-0 right-0 w-16 bg-gradient-to-r from-transparent via-white/35 to-transparent" />
+            </motion.div>
+          </div>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h1 className="text-[24px] font-bold leading-tight tracking-tight text-ink">
-                Building your commitment map
+              <h1 className="text-[19px] font-bold leading-tight tracking-tight text-ink">
+                Agent is building your map
               </h1>
-              <p className="mt-2 text-[13px] leading-relaxed text-neutral-500">
-                StudentOS is reading the uploaded material, extracting obligations, checking conflicts, and preparing the next screen.
+              <p className="mt-1 truncate text-[13px] font-medium text-neutral-500">
+                {activeLog.title}
               </p>
             </div>
-            <div className="shrink-0 rounded-[8px] border border-neutral-200 bg-white px-3 py-2 text-right">
-              <div className="flex items-center justify-end gap-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400">
-                <Clock3 className="size-3.5" />
-                Live
-              </div>
-              <p className="mt-1 text-[18px] font-bold tabular-nums text-ink">
-                {formatElapsed(Math.floor(elapsedMs / 1000))}
-              </p>
+            <div className="flex shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-2.5 py-1.5">
+              <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+                {done ? "Done" : "Live"}
+              </span>
             </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            {[
-              ["Sources", sourceCount],
-              ["Found", foundCount],
-              ["Open", openCount]
-            ].map(([label, value]) => (
-              <div key={label} className="rounded-[8px] border border-neutral-100 bg-neutral-50 px-3 py-2">
-                <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-neutral-400">{label}</p>
-                <p className="mt-1 text-[18px] font-bold text-ink">{value}</p>
-              </div>
-            ))}
           </div>
         </section>
 
-        <section className="mt-4 flex min-h-0 flex-1 flex-col rounded-[8px] border border-neutral-200 bg-white shadow-[0_18px_45px_rgba(0,0,0,0.035)]">
-          <div className="border-b border-neutral-100 px-4 py-3">
+        <section className="mt-3 flex min-h-0 flex-1 flex-col rounded-[8px] border border-neutral-200 bg-white shadow-[0_18px_45px_rgba(0,0,0,0.035)]">
+          <div className="border-b border-neutral-100 px-4 py-2.5">
             <div className="flex min-w-0 items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-neutral-400">
-                  Current activity
+                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+                  Thought process and tool calls
                 </p>
-                <p className="mt-1 truncate text-[14px] font-semibold text-ink">{activeLog.title}</p>
               </div>
               <div className="flex shrink-0 gap-1.5">
                 <span className="size-1.5 rounded-full bg-neutral-400 animate-pulse" />
@@ -471,8 +480,14 @@ export default function AgentsThinkingPage() {
             </div>
           </div>
 
-          <div ref={logViewportRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <ol className="min-w-0">
+          <div
+            ref={logViewportRef}
+            onScroll={handleLogScroll}
+            onWheel={(event) => pauseLogFollow(event.deltaY < 0)}
+            onTouchMove={() => pauseLogFollow(true)}
+            className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
+          >
+            <ol className="min-w-0 space-y-1">
               <AnimatePresence initial={false}>
                 {visibleLogs.map((log, index) => (
                   <AgentLogItem
@@ -480,32 +495,14 @@ export default function AgentsThinkingPage() {
                     log={log}
                     complete={index < visibleLogs.length - 1 || done}
                     isLast={index === visibleLogs.length - 1}
+                    isActive={index === visibleLogs.length - 1}
+                    activeRef={index === visibleLogs.length - 1 ? activeLogRef : undefined}
                   />
                 ))}
               </AnimatePresence>
             </ol>
           </div>
         </section>
-
-        <div className="fixed-bottom-action">
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
-                Next
-              </p>
-              <p className="truncate text-[13px] font-semibold text-ink">
-                {done ? "Opening commitments" : "Auto-moving when done"}
-              </p>
-            </div>
-            <div className="h-2 w-28 overflow-hidden rounded-full bg-neutral-100">
-              <motion.div
-                className="h-full rounded-full bg-ink"
-                animate={{ width: `${Math.min(100, readyToRedirect ? 100 : (elapsedMs / REDIRECT_MAX_AT) * 100)}%` }}
-                transition={{ duration: 0.2, ease: "linear" }}
-              />
-            </div>
-          </div>
-        </div>
       </div>
     </AppShell>
   );
