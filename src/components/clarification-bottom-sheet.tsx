@@ -120,18 +120,32 @@ export function ClarificationBottomSheet({
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
   const customInputRef = useRef<HTMLInputElement>(null);
-  const activeQuestion = questions[activeIndex];
-  const progress = (activeIndex + 1) / questions.length;
+  const advanceTimeoutRef = useRef<number | null>(null);
+  const safeActiveIndex = Math.min(activeIndex, questions.length - 1);
+  const activeQuestion = questions[safeActiveIndex];
+  const progress = (safeActiveIndex + 1) / questions.length;
 
   useEffect(() => {
+    if (advanceTimeoutRef.current) {
+      window.clearTimeout(advanceTimeoutRef.current);
+      advanceTimeoutRef.current = null;
+    }
     if (!open) return;
     setActiveIndex(0);
     setAnswers({});
     setCustomAnswers({});
   }, [kind, open]);
 
+  useEffect(() => {
+    return () => {
+      if (advanceTimeoutRef.current) {
+        window.clearTimeout(advanceTimeoutRef.current);
+      }
+    };
+  }, []);
+
   function advance() {
-    if (activeIndex < questions.length - 1) {
+    if (safeActiveIndex < questions.length - 1) {
       setActiveIndex((current) => current + 1);
       return;
     }
@@ -139,19 +153,25 @@ export function ClarificationBottomSheet({
   }
 
   function chooseAnswer(answer: string) {
-    setAnswers((current) => ({ ...current, [activeIndex]: answer }));
-    window.setTimeout(advance, 140);
+    setAnswers((current) => ({ ...current, [safeActiveIndex]: answer }));
+    if (advanceTimeoutRef.current) {
+      window.clearTimeout(advanceTimeoutRef.current);
+    }
+    advanceTimeoutRef.current = window.setTimeout(() => {
+      advanceTimeoutRef.current = null;
+      advance();
+    }, 140);
   }
 
   function updateCustomAnswer(value: string) {
-    setCustomAnswers((current) => ({ ...current, [activeIndex]: value }));
+    setCustomAnswers((current) => ({ ...current, [safeActiveIndex]: value }));
     if (value.trim()) {
-      setAnswers((current) => ({ ...current, [activeIndex]: value }));
+      setAnswers((current) => ({ ...current, [safeActiveIndex]: value }));
     }
   }
 
   function skipQuestion() {
-    setAnswers((current) => ({ ...current, [activeIndex]: "Skipped" }));
+    setAnswers((current) => ({ ...current, [safeActiveIndex]: "Skipped" }));
     advance();
   }
 
@@ -178,7 +198,7 @@ export function ClarificationBottomSheet({
           <div className="mb-4 flex items-center justify-between gap-3">
             <p className="text-[15px] font-semibold">{activeQuestion.question}</p>
             <span className="shrink-0 text-xs font-semibold text-neutral-400">
-              {activeIndex + 1}/{questions.length}
+              {safeActiveIndex + 1}/{questions.length}
             </span>
           </div>
 
@@ -188,7 +208,7 @@ export function ClarificationBottomSheet({
                 key={option.label}
                 label={option.label}
                 recommended={option.recommended}
-                selected={answers[activeIndex] === option.label}
+                selected={answers[safeActiveIndex] === option.label}
                 onClick={() => chooseAnswer(option.label)}
               />
             ))}
@@ -198,17 +218,17 @@ export function ClarificationBottomSheet({
               onClick={() => customInputRef.current?.focus()}
               className={cn(
                 "flex min-h-12 w-full items-center justify-between rounded-[18px] border px-4 py-3 text-left transition",
-                customAnswers[activeIndex]?.trim()
+                customAnswers[safeActiveIndex]?.trim()
                   ? "border-ink bg-ink text-white"
                   : "border-neutral-200 bg-white text-ink hover:bg-neutral-50"
               )}
             >
               <input
                 ref={customInputRef}
-                value={customAnswers[activeIndex] ?? ""}
+                value={customAnswers[safeActiveIndex] ?? ""}
                 onChange={(event) => updateCustomAnswer(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && customAnswers[activeIndex]?.trim()) {
+                  if (event.key === "Enter" && customAnswers[safeActiveIndex]?.trim()) {
                     event.preventDefault();
                     advance();
                   }
@@ -216,10 +236,10 @@ export function ClarificationBottomSheet({
                 placeholder={activeQuestion.customPlaceholder}
                 className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[15px] font-semibold placeholder:text-neutral-400 focus:outline-none focus:ring-0"
               />
-              {customAnswers[activeIndex]?.trim() ? <Check className="ml-3 size-4 shrink-0" /> : null}
+              {customAnswers[safeActiveIndex]?.trim() ? <Check className="ml-3 size-4 shrink-0" /> : null}
             </button>
 
-            {customAnswers[activeIndex]?.trim() ? (
+            {customAnswers[safeActiveIndex]?.trim() ? (
               <button
                 type="button"
                 onClick={advance}
