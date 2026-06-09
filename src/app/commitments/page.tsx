@@ -58,6 +58,7 @@ import type {
   CapturedSourceForAI,
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
+import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 
 type CommitmentsStep = "commitments" | "conflict" | "plan";
 
@@ -71,6 +72,35 @@ const progressMap: Record<CommitmentsStep, number> = {
   commitments: 0.65,
   conflict: 0.85,
   plan: 1.0
+};
+
+const defaultConflictAnalysis: AIConflictAnalysis = {
+  title: "CCA briefing overlaps with tuition",
+  unresolvedSummary: "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule.",
+  resolvedTitle: "Conflict resolved",
+  resolvedSummary: "StudentOS keeps tuition fixed and handles CCA with a notes request.",
+  fixedEventTitle: "Tuition",
+  fixedEventTime: "4:30-6:30 PM",
+  conflictingEventTitle: "CCA briefing",
+  conflictingEventTime: "5:30-6:15 PM",
+  overlapLabel: validateTimelineConflicts(timelineEvents).groups[0]?.overlapLabel ?? "Not confirmed",
+  impactLabel: "Decision needed",
+  resolvedImpactLabel: "Plan ready",
+  recommendationSummary:
+    "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner. Physics stays first because it is due tomorrow morning.",
+  recommendedActions: [
+    "Keep tuition at 4:30 PM",
+    "Ask CCA lead for briefing notes",
+    "Move revision after dinner",
+    "Start Physics at 8:00 PM",
+    "Keep coding practice as a weekly goal block",
+  ],
+  manualActions: [
+    "Record Physics extension to 16 June",
+    "Reschedule tuition away from CCA briefing",
+    "Keep CCA briefing as fixed",
+    "Protect coding practice as a weekly goal block",
+  ],
 };
 
 type SourcePreview = {
@@ -612,7 +642,7 @@ export default function CommitmentsPage() {
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
   const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
-  const [conflictAnalysis, setConflictAnalysis] = useState<AIConflictAnalysis | undefined>();
+  const [conflictAnalysis, setConflictAnalysis] = useState<AIConflictAnalysis | undefined>(defaultConflictAnalysis);
   const aiPlanRequestStarted = useRef(false);
 
   const unresolvedCount = commitments.filter(

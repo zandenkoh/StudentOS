@@ -188,9 +188,13 @@ export default function InputPage() {
   }, [inputText]);
 
   useEffect(() => {
-    const savedGoal = window.localStorage.getItem("studentos_manual_goal")?.trim();
+    const goalFromUrl = new URLSearchParams(window.location.search).get("goal")?.trim();
+    const savedGoal = goalFromUrl || window.localStorage.getItem("studentos_manual_goal")?.trim();
 
     if (!savedGoal) return;
+    if (goalFromUrl) {
+      window.localStorage.setItem("studentos_manual_goal", goalFromUrl);
+    }
 
     setSources([
       {

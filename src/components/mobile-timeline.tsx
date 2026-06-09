@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { ChevronRight } from "lucide-react";
 import { SourceChip } from "@/components/source-chip";
 import type { TimelineEvent } from "@/lib/demo-data";
+import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { cn } from "@/lib/utils";
 
 export function TimelineEventBlock({
@@ -62,12 +63,18 @@ function TimelineRow({
 }
 
 function groupTimelineEvents(events: TimelineEvent[], resolved: boolean) {
+  const validation = resolved
+    ? { events, groups: [] }
+    : validateTimelineConflicts(events);
+  const overlapLabels = new Map(
+    validation.groups.map((group) => [group.id, group.overlapLabel])
+  );
   const groups: Array<
     | { type: "single"; event: TimelineEvent }
-    | { type: "conflict"; id: string; events: TimelineEvent[] }
+    | { type: "conflict"; id: string; events: TimelineEvent[]; overlapLabel: string }
   > = [];
 
-  events.forEach((event) => {
+  validation.events.forEach((event) => {
     if (resolved || !event.conflictGroupId) {
       groups.push({ type: "single", event });
       return;
@@ -85,7 +92,8 @@ function groupTimelineEvents(events: TimelineEvent[], resolved: boolean) {
     groups.push({
       type: "conflict",
       id: event.conflictGroupId,
-      events: [event]
+      events: [event],
+      overlapLabel: overlapLabels.get(event.conflictGroupId) ?? "Overlap detected"
     });
   });
 
@@ -124,7 +132,7 @@ export function MobileTimeline({
               className="relative rounded-[24px] border border-red-200 bg-red-50/70 p-3 pt-9 shadow-[0_12px_35px_rgba(239,68,68,0.08)]"
             >
               <span className="absolute right-3 top-3 rounded-full border border-red-200 bg-white/85 px-3 py-1 text-xs font-semibold text-red-700">
-                45 min overlap
+                {group.overlapLabel} overlap
               </span>
               <div className="space-y-3">
                 {group.events.map((event) => (

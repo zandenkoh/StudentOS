@@ -68,7 +68,7 @@ export function ConflictSummaryCard({
         </div>
         <div className="rounded-2xl bg-white/75 p-3">
           <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>Overlap</p>
-          <p className="mt-1 font-semibold">{resolved ? "Handled" : conflict?.overlapLabel ?? "45 min"}</p>
+          <p className="mt-1 font-semibold">{resolved ? "Handled" : conflict?.overlapLabel ?? "Not confirmed"}</p>
         </div>
         <div className="rounded-2xl bg-white/75 p-3">
           <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>Impact</p>

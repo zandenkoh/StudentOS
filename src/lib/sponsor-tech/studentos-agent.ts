@@ -4,6 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
 import type { StudentOSAgentFootprint, CapturedSourceForAI } from "@/lib/studentos-ai-types";
 
 const SourceSchema = z.object({
@@ -699,6 +700,32 @@ function normalizeAgentLog(log: GeneratedAgentLog) {
   };
 }
 
+function normalizeConflictAnalysis(
+  conflict: GeneratedCore["conflict"],
+  groups: ConfirmedConflictGroup[],
+) {
+  const firstConfirmedGroup = groups[0];
+
+  if (firstConfirmedGroup) {
+    return {
+      ...conflict,
+      overlapLabel: firstConfirmedGroup.overlapLabel,
+    };
+  }
+
+  return {
+    ...conflict,
+    title: "Potential timing conflict needs confirmation",
+    unresolvedSummary: "No confirmed overlap was found from the supplied start and end times.",
+    resolvedTitle: "Timing reviewed",
+    resolvedSummary: "StudentOS removed the conflict flag until exact overlapping times are confirmed.",
+    overlapLabel: "Not confirmed",
+    impactLabel: "Confirm times",
+    resolvedImpactLabel: "No conflict flagged",
+    recommendationSummary: "Confirm exact start and end times before treating these tasks as a calendar conflict.",
+  };
+}
+
 function buildFootprintFromCore({
   core,
   input,
@@ -713,6 +740,8 @@ function buildFootprintFromCore({
   sponsorTrace: StudentOSAgentFootprint["sponsorTrace"];
 }): StudentOSAgentFootprint {
   const sources = input.sources.length ? input.sources : defaultSources;
+  const timelineValidation = validateTimelineConflicts(core.timelineEvents.map(normalizeTimelineEvent));
+  const resolvedTimelineValidation = validateTimelineConflicts(core.resolvedTimelineEvents.map(normalizeTimelineEvent));
   const footprint: StudentOSAgentFootprint = {
     createdAt: new Date().toISOString(),
     currentDate: input.currentDate,
@@ -723,9 +752,9 @@ function buildFootprintFromCore({
     sources,
     commitments: core.commitments,
     clarificationQuestions: core.clarificationQuestions.map(normalizeClarificationQuestion),
-    timelineEvents: core.timelineEvents.map(normalizeTimelineEvent),
-    resolvedTimelineEvents: core.resolvedTimelineEvents.map(normalizeTimelineEvent),
-    conflict: core.conflict,
+    timelineEvents: timelineValidation.events,
+    resolvedTimelineEvents: resolvedTimelineValidation.events,
+    conflict: normalizeConflictAnalysis(core.conflict, timelineValidation.groups),
     planTasks: core.planTasks.map(normalizePlanTask),
     roadmapSteps: core.roadmapSteps.map(normalizeRoadmapStep),
     rationale: core.rationale,
@@ -766,6 +795,8 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "If one source contains multiple worksheets or actionable messages, split them into separate commitments only when the evidence identifies distinct actions.",
           "Mark broad goals or tentative items with clarification questions.",
           "Create a conflict timeline and a resolved timeline.",
+          "Only set conflictGroupId for two or more confirmed events whose explicit start-end time ranges overlap. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
+          "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
           "For every scheduled task and timeline event, include scheduleRationale: one concise user-facing agent rationale for why that exact time slot or date is a good assignment for that task.",
           "Create roadmap steps for any broad goal, using Exa context when provided.",
