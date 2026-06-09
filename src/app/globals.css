@@ -63,4 +63,25 @@ textarea {
   .safe-bottom-padding {
     padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
   }
+
+  @media (min-width: 1024px) {
+    .fixed-bottom-action {
+      position: static;
+      left: auto;
+      bottom: auto;
+      z-index: auto;
+      width: 100%;
+      max-width: none;
+      transform: none;
+      border-top: 0;
+      background: transparent;
+      padding: 0;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+
+    .safe-bottom-padding {
+      padding-bottom: 2rem;
+    }
+  }
 }

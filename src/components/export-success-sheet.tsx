@@ -8,22 +8,22 @@ import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 export function ExportSuccessSheet({
   open,
   onClose,
-  includeChemistry,
+  includeAddedTask,
   includeRoadmap,
   onSaved
 }: {
   open: boolean;
   onClose: () => void;
-  includeChemistry?: boolean;
+  includeAddedTask?: boolean;
   includeRoadmap?: boolean;
   onSaved?: () => void;
 }) {
   const [saved, setSaved] = useState(false);
   const previewItems = [
-    "Physics worksheet focus block",
-    ...(includeChemistry ? ["Chemistry worksheet before 8 PM"] : []),
-    "CCA briefing handled",
-    includeChemistry ? "Coding practice moved later" : "Coding practice weekly block",
+    "Current focus block",
+    ...(includeAddedTask ? ["Added task block"] : []),
+    "Conflict follow-up if needed",
+    "Flexible work block",
     ...(includeRoadmap ? ["Roadmap tasks scheduled across future days"] : [])
   ];
 
@@ -45,7 +45,7 @@ export function ExportSuccessSheet({
       <div className="space-y-4">
         <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
-            {saved ? <CheckCircle2 className="size-4 text-emerald-700" /> : <CalendarDays className="size-4" />}
+            {saved ? <CheckCircle2 className="size-4 text-neutral-700" /> : <CalendarDays className="size-4" />}
             <span>{saved ? "Saved demo items" : "Calendar preview"}</span>
           </div>
           <div className="space-y-2">
@@ -59,7 +59,7 @@ export function ExportSuccessSheet({
         </div>
 
         {saved ? (
-          <div className="flex items-center gap-3 rounded-[22px] border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+          <div className="flex items-center gap-3 rounded-[22px] border border-neutral-200 bg-neutral-50 p-4 text-neutral-700">
             <CheckCircle2 className="size-5" />
             <p className="text-sm font-semibold">Saved to calendar</p>
           </div>

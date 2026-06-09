@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowUp,
-  AudioLines,
   CheckCircle2,
   ChevronRight,
-  FileText,
-  Globe2,
   Image as ImageIcon,
   Paperclip,
   Pencil,
@@ -58,24 +55,46 @@ import {
   appendAgentRunTrace,
   completeAgentRun,
   createAgentEvent,
-  createAgentRun,
   diffCommitments,
   diffPlanTasks,
-  loadAgentRuns,
-  saveAgentRuns,
-  upsertAgentRun,
-  type AgentActivityRun,
   type AgentActivityStreamEvent,
   type AgentRunStatus,
 } from "@/lib/agent-activity";
 import type {
   AIConflictAnalysis,
   AIClarificationQuestion,
-  CapturedSourceForAI,
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
-import { ensureTaskTimeRange, ensureTaskTimeRanges, scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
+import { ensureTaskTimeRange } from "@/lib/time-scheduling";
+import {
+  addDaysToDateId,
+  baseTaskTitle,
+  canMoveTaskDate,
+  canUseScheduleDate,
+  commitmentsWithAddedCommitment,
+  completionToastForTask,
+  enrichPlanTasksWithRationales,
+  fallbackPlanBullets,
+  fallbackPlanSummary,
+  formatScheduleDateLabel,
+  interpretAddedSource,
+  nextDayForTask,
+  planTasksWithAddedTask,
+  scheduleLabelForTask,
+  scheduleRationaleForEvent,
+  sortSubsequentDayTasks,
+  todayDateId,
+  upsertClarifiedCommitmentTask,
+  type AddedCommitmentInterpretation,
+  type PlanDisplaySection,
+} from "@/app/commitments/commitment-helpers";
+import {
+  CommitmentSourcePreview,
+  resolveCommitmentSourcePreview,
+  type SourcePreview,
+} from "@/app/commitments/source-preview";
+import { useAgentRuns, type ReplanTrigger } from "@/app/commitments/use-agent-runs";
 
 type CommitmentsStep = "commitments" | "conflict" | "plan";
 
@@ -91,64 +110,51 @@ const progressMap: Record<CommitmentsStep, number> = {
   plan: 1.0
 };
 
+const defaultConflictValidation = validateTimelineConflicts(timelineEvents);
+const defaultConflictGroup = defaultConflictValidation.groups[0];
+const defaultConflictEvents = defaultConflictGroup
+  ? timelineEvents.filter((event) => defaultConflictGroup.eventIds.includes(event.id))
+  : [];
+const defaultFixedEvent = defaultConflictEvents[0];
+const defaultConflictingEvent = defaultConflictEvents[1];
+const defaultConflictTitle = defaultFixedEvent && defaultConflictingEvent
+  ? `${defaultFixedEvent.title} overlaps with ${defaultConflictingEvent.title}`
+  : "Schedule conflict";
+
 const defaultConflictAnalysis: AIConflictAnalysis = {
-  title: "CCA briefing overlaps with tuition",
-  unresolvedSummary: "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule.",
+  title: defaultConflictTitle,
+  unresolvedSummary: defaultConflictGroup
+    ? `${defaultConflictTitle}. StudentOS found a cleaner schedule.`
+    : "StudentOS reviewed the schedule for fixed-time overlaps.",
   resolvedTitle: "Conflict resolved",
-  resolvedSummary: "StudentOS keeps tuition fixed and handles CCA with a notes request.",
-  fixedEventTitle: "Tuition",
-  fixedEventTime: "4:30-6:30 PM",
-  conflictingEventTitle: "CCA briefing",
-  conflictingEventTime: "5:30-6:15 PM",
-  overlapLabel: validateTimelineConflicts(timelineEvents).groups[0]?.overlapLabel ?? "Not confirmed",
+  resolvedSummary: "StudentOS kept fixed commitments explicit and moved flexible work first.",
+  fixedEventTitle: defaultFixedEvent?.title ?? "Fixed item",
+  fixedEventTime: defaultFixedEvent?.duration ?? defaultFixedEvent?.time ?? "Time reviewed",
+  conflictingEventTitle: defaultConflictingEvent?.title ?? "Other item",
+  conflictingEventTime: defaultConflictingEvent?.duration ?? defaultConflictingEvent?.time ?? "Not confirmed",
+  overlapLabel: defaultConflictGroup?.overlapLabel ?? "Not confirmed",
   impactLabel: "Decision needed",
   resolvedImpactLabel: "Plan ready",
   recommendationSummary:
-    "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner. Physics stays first because it is due tomorrow morning.",
+    "Keep fixed commitments stable, move flexible work first, and ask for clarification if exact timing is missing.",
   recommendedActions: [
-    "Keep tuition at 4:30 PM",
-    "Ask CCA lead for briefing notes",
-    "Move revision after dinner",
-    "Start Physics at 8:00 PM",
-    "Keep coding practice as a weekly goal block",
+    "Keep fixed-time items explicit",
+    "Move flexible work around confirmed overlaps",
+    "Confirm missing times before locking the plan",
+    "Update the timeline after each instruction",
   ],
   manualActions: [
-    "Record Physics extension to 16 June",
-    "Reschedule tuition away from CCA briefing",
-    "Keep CCA briefing as fixed",
-    "Protect coding practice as a weekly goal block",
+    "Apply the manual instruction as the priority constraint",
+    "Mark any changed task as updated",
+    "Recheck fixed-time overlaps",
+    "Ask for clarification if timing is still missing",
   ],
-};
-
-type SourcePreview = {
-  title: string;
-  source: string;
-  fileSize: string;
-  fileType: "image" | "text" | "link" | "audio";
-  snippet: string;
-  filePath?: string;
-  durationSeconds?: number;
-  provider?: string;
-  sponsorStatus?: string;
-  sourceSummary?: string;
-  extractedTasks?: string[];
-  extractedEvidence?: string[];
-  sourceConfidence?: number;
-  languageNotes?: string;
-  needsClarification?: boolean;
-  clarificationPrompt?: string;
 };
 
 type EditDraft = {
   title: string;
   type: Commitment["type"];
   estimatedDuration: string;
-};
-
-type PlanDisplaySection = {
-  title: string;
-  section: PlanTaskSection;
-  items: DemoPlanTask[];
 };
 
 type ResolutionMode = "recommended" | "manual" | null;
@@ -167,8 +173,7 @@ type ClarificationAnswerRecord = {
   answeredAt: string;
 };
 
-const MANUAL_CONFLICT_INSTRUCTION =
-  "Physics teacher has granted extension for worksheet deadline to 16 June. Reschedule tuition accordingly, so that it no longer clashes with CCA briefing.";
+const MANUAL_CONFLICT_INSTRUCTION = "";
 
 type SponsorTraceItem = {
   provider: string;
@@ -204,13 +209,6 @@ type ProcessTextSourceResponse = {
   trace?: SponsorTraceItem[];
 };
 
-type AddedCommitmentInterpretation = {
-  commitment: Commitment;
-  task: DemoPlanTask;
-  impactItems: string[];
-  clarificationQuestion?: AIClarificationQuestion;
-};
-
 type PlanDayResponse = {
   provider: "vercel-ai-gateway" | "fallback";
   status: "success" | "fallback" | "error";
@@ -224,8 +222,6 @@ type PlanDayResponse = {
   };
   trace?: SponsorTraceItem[];
 };
-
-type ReplanTrigger = "clarification" | "manual_conflict" | "add_task";
 
 type ReplanAgentResponse = {
   provider: "vercel-ai-gateway" | "fallback";
@@ -250,50 +246,7 @@ const planSectionOrder: Array<{ title: string; section: PlanTaskSection }> = [
   { title: "Subsequent days", section: "subsequent_days" }
 ];
 
-const commitmentSourcePreviews: Record<string, SourcePreview> = {
-  physics: {
-    title: "Screenshot 2026-06-09 121842.jpg",
-    source: "Desktop Screenshot",
-    fileSize: "324 KB",
-    fileType: "image",
-    snippet: "Physics assignment portal and due details",
-    filePath: "/Screenshot%202026-06-09%20121842.jpg"
-  },
-  cca: {
-    title: "Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
-    source: "Mobile Screenshot",
-    fileSize: "492 KB",
-    fileType: "image",
-    snippet: "CCA notification chat announcement",
-    filePath: "/Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg"
-  },
-  competition: {
-    title: "National Coding Challenge 2026 - Submissions",
-    source: "Web Link",
-    fileSize: "18 KB",
-    fileType: "link",
-    snippet: "Ensure all repository links, walkthrough recordings, and PDFs of design specifications are uploaded before the cutoff window."
-  },
-  coding: {
-    title: "goalDemo.txt",
-    source: "Assets File",
-    fileSize: "1 KB",
-    fileType: "text",
-    snippet: "I currently have zero experience coding with python. I want to be proficient in data-handling Python libraries by the end of this year."
-  },
-  team: {
-    title: "Team voice note",
-    source: "Voice note",
-    fileSize: "1:24",
-    fileType: "audio",
-    snippet: "Hey, about the project meeting tonight, Sarah mentioned she has a CCA briefing at 5:30 PM and tuition before that, so we might need to reschedule. Can we push to tomorrow morning?"
-  }
-};
-
 const commitmentTypes: Commitment["type"][] = ["task", "event", "deadline", "goal", "conflict"];
-
-const fallbackPlanReasoning =
-  "StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept fixed commitments stable, handled the CCA clash, moved flexible revision later, and scheduled your coding roadmap across future days.";
 
 const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
 const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
@@ -301,270 +254,8 @@ const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
 const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
 const USER_DECIDED_SCHEDULE_RATIONALE = "This was a user-decided schedule";
 
-const commitmentSourceKeywords: Record<string, RegExp> = {
-  physics: /physics|homework|worksheet|chapter|teacher/i,
-  cca: /cca|briefing|announcement/i,
-  competition: /competition|submission|portal|web/i,
-  coding: /coding|python|goal|data-handling/i,
-  team: /voice|teammate|team|project|whatsapp/i,
-};
-
 function capitalize(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
-}
-
-function normalizeSearchText(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
-function sourceTextForMatch(source: CapturedSourceForAI) {
-  return normalizeSearchText(
-    [
-      source.id,
-      source.title,
-      source.source,
-      source.snippet,
-      source.sourceSummary,
-      source.ocrText,
-      source.textractText,
-      source.extractedTasks?.join(" "),
-      source.extractedEvidence?.join(" "),
-      source.languageNotes,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  );
-}
-
-function previewFromCapturedSource(source: CapturedSourceForAI): SourcePreview {
-  const rawFileType = source.fileType?.toLowerCase();
-  const isImage =
-    rawFileType === "image" || /\.(png|jpe?g|webp|gif|heic)$/i.test(source.title);
-  const isAudio = rawFileType === "audio";
-  const isLink = rawFileType === "link" || /^https?:\/\//i.test(source.source);
-  const snippet =
-    source.sourceSummary ||
-    source.snippet ||
-    source.ocrText ||
-    source.textractText ||
-    "Original source";
-
-  return {
-    title: source.title,
-    source: source.source,
-    fileSize: source.fileSize ?? (source.s3Key ? "AWS source" : "Source"),
-    fileType: isImage ? "image" : isAudio ? "audio" : isLink ? "link" : "text",
-    snippet,
-    filePath: source.filePath,
-    durationSeconds: source.durationSeconds,
-    provider: source.provider,
-    sponsorStatus: source.sponsorStatus,
-    sourceSummary: source.sourceSummary,
-    extractedTasks: source.extractedTasks,
-    extractedEvidence: source.extractedEvidence,
-    sourceConfidence: source.sourceConfidence,
-    languageNotes: source.languageNotes,
-    needsClarification: source.needsClarification,
-    clarificationPrompt: source.clarificationPrompt,
-  };
-}
-
-function resolveCommitmentSourcePreview(
-  commitment: Commitment,
-  footprint?: StudentOSAgentFootprint | null,
-) {
-  const staticPreview = commitmentSourcePreviews[commitment.id];
-  const sources = footprint?.sources ?? [];
-
-  if (sources.length === 0) return staticPreview ?? null;
-
-  const commitmentText = normalizeSearchText(
-    [commitment.id, commitment.title, commitment.source, commitment.explanation].join(" "),
-  );
-  const sourceLabel = normalizeSearchText(commitment.source);
-  const keywordMatcher = commitmentSourceKeywords[commitment.id];
-
-  const rankedSources = sources
-    .map((source) => {
-      const searchable = sourceTextForMatch(source);
-      let score = 0;
-
-      if (source.id === commitment.id) score += 12;
-      if (source.id.includes(commitment.id) || commitment.id.includes(source.id)) score += 8;
-      if (sourceLabel && searchable.includes(sourceLabel)) score += 5;
-      if (keywordMatcher?.test(searchable)) score += 5;
-
-      for (const token of commitmentText.split(" ").filter((token) => token.length > 3)) {
-        if (searchable.includes(token)) score += 1;
-      }
-
-      return { source, score };
-    })
-    .sort((a, b) => b.score - a.score);
-
-  const matchedSource = rankedSources.find((item) => item.score >= 5)?.source;
-
-  if (!matchedSource) return staticPreview ?? null;
-
-  const matchedPreview = previewFromCapturedSource(matchedSource);
-
-  if (
-    staticPreview?.fileType === "image" &&
-    matchedPreview.fileType !== "image" &&
-    !matchedPreview.filePath
-  ) {
-    return staticPreview;
-  }
-
-  return matchedPreview;
-}
-
-function EvidenceMetadata({ preview }: { preview: SourcePreview }) {
-  if (
-    !preview.provider &&
-    !preview.sourceSummary &&
-    !preview.extractedTasks?.length &&
-    !preview.extractedEvidence?.length &&
-    !preview.languageNotes &&
-    !preview.clarificationPrompt
-  ) {
-    return null;
-  }
-
-  return (
-    <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-emerald-700">
-        <span>Interpreted evidence</span>
-        {preview.provider ? <span>{preview.provider}</span> : null}
-        {preview.sponsorStatus ? <span>{preview.sponsorStatus}</span> : null}
-        {typeof preview.sourceConfidence === "number" ? (
-          <span>{Math.round(preview.sourceConfidence * 100)}% confidence</span>
-        ) : null}
-      </div>
-      {preview.sourceSummary ? <p>{preview.sourceSummary}</p> : null}
-      {preview.extractedTasks?.length ? (
-        <div className="mt-2 rounded-lg border border-emerald-200/70 bg-white/60 p-2">
-          <p className="mb-1 text-[10px] uppercase tracking-wider text-emerald-700">
-            Extracted commitments
-          </p>
-          <ul className="space-y-1">
-            {preview.extractedTasks.slice(0, 4).map((task) => (
-              <li key={task} className="leading-snug">- {task}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {preview.extractedEvidence?.length ? (
-        <p className="mt-2 border-l-2 border-emerald-200 pl-2 text-emerald-800">
-          Evidence: {preview.extractedEvidence.slice(0, 2).join(" | ")}
-        </p>
-      ) : null}
-      {preview.languageNotes ? <p className="mt-2 text-emerald-800">{preview.languageNotes}</p> : null}
-      {preview.needsClarification && preview.clarificationPrompt ? (
-        <p className="mt-2 text-amber-800">Uncertainty: {preview.clarificationPrompt}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
-  if (preview.fileType === "image") {
-    return (
-      <div className="w-full pb-4">
-        <EvidenceMetadata preview={preview} />
-        {preview.filePath ? (
-          <div className="flex items-center justify-center overflow-hidden rounded-xl border border-neutral-100 bg-[#FAFAFA] p-2 shadow-sm">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={preview.filePath}
-              className="max-h-[50vh] w-auto rounded-lg object-contain shadow-sm"
-              alt={preview.title}
-            />
-          </div>
-        ) : (
-          <div className="rounded-xl border border-neutral-100 bg-[#FAFAFA] p-4 text-sm font-semibold text-neutral-600">
-            {preview.snippet}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (preview.fileType === "link") {
-    return (
-      <div className="w-full pb-4">
-        <EvidenceMetadata preview={preview} />
-        <div className="rounded-xl border border-neutral-100 bg-white p-4 shadow-sm">
-          <div className="mb-2 flex items-center gap-1.5 text-xs text-neutral-400">
-            <Globe2 className="size-3.5" />
-            <span className="font-mono">https://nationalcomp2026.org/portal</span>
-          </div>
-          <h4 className="mb-1 text-sm font-bold leading-snug text-ink">
-            National Coding Challenge 2026 - Submissions
-          </h4>
-          <p className="mb-3 text-xs leading-normal text-neutral-500">{preview.snippet}</p>
-          <div className="rounded-lg border border-red-100 bg-red-50 p-2.5 text-xs font-semibold text-red-800">
-            Deadline: 11 June, 12:00 AM
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (preview.fileType === "audio") {
-    const formatAudioDuration = (secs?: number) => {
-      if (!secs) return "1:24";
-      const minutes = Math.floor(secs / 60);
-      const seconds = secs % 60;
-      return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-    };
-
-    return (
-      <div className="w-full pb-4">
-        <EvidenceMetadata preview={preview} />
-        <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
-          <div className="mb-4 flex items-center gap-3">
-            <span className="flex size-11 items-center justify-center rounded-full bg-ink text-white">
-              <AudioLines className="size-5" />
-            </span>
-            <div>
-              <p className="text-sm font-bold text-ink">{preview.title}</p>
-              <p className="text-xs font-semibold text-neutral-400">
-                Transcript summary · {preview.durationSeconds ? formatAudioDuration(preview.durationSeconds) : preview.fileSize || "1:24"}
-              </p>
-            </div>
-          </div>
-          <div className="rounded-xl border border-neutral-200 bg-white p-3.5 shadow-sm">
-            <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-              Transcript summary
-            </p>
-            <p className="text-xs font-semibold italic leading-relaxed text-neutral-600">
-              &quot;{preview.snippet}&quot;
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-full pb-4">
-      <EvidenceMetadata preview={preview} />
-      <div className="space-y-3 rounded-xl border border-neutral-100 bg-neutral-50 p-4 font-mono text-xs text-neutral-700">
-        <div className="flex justify-between border-b border-neutral-200 pb-2 font-sans text-[10px] font-semibold uppercase text-neutral-400">
-          <span>{preview.title}</span>
-          <span>Text Document</span>
-        </div>
-        <div className="flex items-center gap-2 font-sans text-sm font-bold text-ink">
-          <FileText className="size-4" />
-          Original text
-        </div>
-        <p className="whitespace-pre-wrap font-sans text-sm font-semibold leading-relaxed text-ink">
-          {preview.snippet}
-        </p>
-      </div>
-    </div>
-  );
 }
 
 function AddSourceButton({
@@ -646,254 +337,13 @@ function GoalCandidateCard({
       </div>
       <p
         className={`mt-3 text-xs font-semibold ${
-          needsDirection ? "text-red-700" : "text-emerald-700"
+          needsDirection ? "text-red-700" : "text-neutral-600"
         }`}
       >
         {needsDirection ? "Tap to clarify roadmap" : "Roadmap ready"}
       </p>
     </motion.div>
   );
-}
-
-function dateIdFromDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function todayDateId() {
-  return dateIdFromDate(new Date());
-}
-
-function addDaysToDateId(dateId: string, days: number) {
-  const date = dateFromDateId(dateId);
-  if (!date) return "";
-  date.setDate(date.getDate() + days);
-  return dateIdFromDate(date);
-}
-
-function formatScheduleDateLabel(dateId: string) {
-  const date = dateFromDateId(dateId);
-  if (!date) return dateId;
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "long",
-  }).format(date);
-}
-
-function validRescheduleBounds(task: DemoPlanTask | null) {
-  if (!task || task.section !== "subsequent_days") return null;
-  const min = addDaysToDateId(todayDateId(), 1);
-  const max = task.deadlineDateId ? addDaysToDateId(task.deadlineDateId, -1) : undefined;
-  return { min, max };
-}
-
-function canUseScheduleDate(task: DemoPlanTask | null, dateId: string) {
-  const bounds = validRescheduleBounds(task);
-  if (!bounds || !dateId) return false;
-  if (dateId < bounds.min) return false;
-  if (bounds.max && dateId > bounds.max) return false;
-  return true;
-}
-
-function canMoveTaskDate(task: DemoPlanTask | null, direction: -1 | 1) {
-  if (!task?.scheduledDateId) return false;
-  return canUseScheduleDate(task, addDaysToDateId(task.scheduledDateId, direction));
-}
-
-function nextDayForTask(task: DemoPlanTask) {
-  const dateId = task.scheduledDateId ?? todayDateId();
-  return addDaysToDateId(dateId, 1);
-}
-
-function baseTaskTitle(title: string) {
-  return title.replace(/\s+— Session \d+$/, "");
-}
-
-function scheduleLabelForTask(task: DemoPlanTask) {
-  return scheduleLabelWithTimeRange(task) ?? "the selected slot";
-}
-
-const monthOrder: Record<string, number> = {
-  january: 1,
-  february: 2,
-  march: 3,
-  april: 4,
-  may: 5,
-  june: 6,
-  july: 7,
-  august: 8,
-  september: 9,
-  october: 10,
-  november: 11,
-  december: 12,
-};
-
-function dateSortValue(task: DemoPlanTask) {
-  if (task.scheduledDateId) {
-    const timestamp = Date.parse(`${task.scheduledDateId}T00:00:00`);
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-
-  const label = task.scheduledDate ?? task.scheduledDateRange;
-  if (!label) return Number.POSITIVE_INFINITY;
-
-  const normalized = label.toLowerCase();
-  const monthMatch = normalized.match(
-    /january|february|march|april|may|june|july|august|september|october|november|december/,
-  );
-  if (!monthMatch) return Number.POSITIVE_INFINITY;
-
-  const dayMatch = normalized.match(/\b\d{1,2}\b/);
-  const month = monthOrder[monthMatch[0]];
-  const day = dayMatch ? Number(dayMatch[0]) : 1;
-  return Date.UTC(2026, month - 1, day);
-}
-
-function sortSubsequentDayTasks(tasks: DemoPlanTask[]) {
-  return tasks
-    .map((task, index) => ({ task, index }))
-    .sort((a, b) => {
-      const byDate = dateSortValue(a.task) - dateSortValue(b.task);
-      return byDate || a.index - b.index;
-    })
-    .map(({ task }) => task);
-}
-
-const defaultScheduleRationales: Record<string, string> = {
-  "physics-focus":
-    "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.",
-  "message-teammate":
-    "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.",
-  "cca-notes":
-    "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.",
-  tuition:
-    "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.",
-  revision:
-    "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.",
-  "coding-practice":
-    "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.",
-  "coding-fundamentals-session-1":
-    "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.",
-  "mini-project-brief":
-    "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.",
-  "physics-circuits":
-    "Circuits revision is scheduled on 16 June to create a buffer before the Friday deadline while avoiding the overloaded conflict day.",
-  "project-meeting-prep":
-    "Project meeting prep lands on 18 June because it is close enough to the 19 June discussion to stay relevant without competing with immediate homework.",
-};
-
-function defaultScheduleRationale(task: DemoPlanTask) {
-  const baseId = task.id.replace(/-session-\d+$/, "");
-  if (defaultScheduleRationales[task.id]) return defaultScheduleRationales[task.id];
-  if (defaultScheduleRationales[baseId]) return defaultScheduleRationales[baseId];
-  return `StudentOS placed ${baseTaskTitle(task.title)} at ${scheduleLabelForTask(task)} because that slot best balances urgency, fixed events, and the student's likely energy.`;
-}
-
-function enrichPlanTasksWithRationales(tasks: DemoPlanTask[]) {
-  return ensureTaskTimeRanges(tasks).map((task) => ({
-    ...task,
-    scheduleRationale: task.scheduleRationale ?? defaultScheduleRationale(task),
-  }));
-}
-
-function scheduleRationaleForTask(task: DemoPlanTask) {
-  return task.scheduleRationale ?? defaultScheduleRationale(task);
-}
-
-function taskForTimelineEvent(event: TimelineEvent | null, tasks: DemoPlanTask[]) {
-  if (!event) return undefined;
-
-  const aliases: Record<string, string[]> = {
-    coding: ["coding-practice"],
-    notes: ["cca-notes"],
-    physics: ["physics-focus"],
-  };
-  const candidates = [event.id, ...(aliases[event.id] ?? [])];
-  return tasks.find((task) => candidates.includes(task.id));
-}
-
-function scheduleRationaleForEvent(event: TimelineEvent | null, tasks: DemoPlanTask[]) {
-  if (!event) return "";
-  const matchingTask = taskForTimelineEvent(event, tasks);
-  return matchingTask ? scheduleRationaleForTask(matchingTask) : event.scheduleRationale ?? "StudentOS placed this block around fixed events, urgency, and the student’s remaining focus for the day.";
-}
-
-function dateFromDateId(dateId: string) {
-  const [year, month, day] = dateId.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
-}
-
-function calendarDayDiff(from: Date, to: Date) {
-  const fromDay = new Date(from.getFullYear(), from.getMonth(), from.getDate()).getTime();
-  const toDay = new Date(to.getFullYear(), to.getMonth(), to.getDate()).getTime();
-  return Math.round((toDay - fromDay) / 86400000);
-}
-
-function formatDayDistance(days: number) {
-  if (days === 0) return "today";
-  if (days === 1) return "tomorrow";
-  return `in ${days} days`;
-}
-
-function parseDeadlineTime(task: DemoPlanTask, date: Date) {
-  const match = task.deadline?.match(/(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
-  if (!match) return null;
-
-  let hours = Number(match[1]);
-  const minutes = match[2] ? Number(match[2]) : 0;
-  const ampm = match[3].toUpperCase();
-  if (ampm === "PM" && hours < 12) hours += 12;
-  if (ampm === "AM" && hours === 12) hours = 0;
-
-  const deadline = new Date(date);
-  deadline.setHours(hours, minutes, 0, 0);
-  return deadline;
-}
-
-function completionToastForTask(task: DemoPlanTask, now: Date) {
-  if (task.deadlineDateId) {
-    const deadlineDate = dateFromDateId(task.deadlineDateId);
-
-    if (deadlineDate) {
-      const daysUntilDeadline = calendarDayDiff(now, deadlineDate);
-
-      if (daysUntilDeadline > 0) {
-        return `Completed. Deadline is ${formatDayDistance(daysUntilDeadline)}.`;
-      }
-
-      if (daysUntilDeadline === 0) {
-        const deadlineTime = parseDeadlineTime(task, deadlineDate);
-        if (!deadlineTime) return "Completed before today's deadline.";
-
-        const minutesUntilDeadline = Math.round((deadlineTime.getTime() - now.getTime()) / 60000);
-        if (minutesUntilDeadline >= 0) {
-          const hours = Math.floor(minutesUntilDeadline / 60);
-          const mins = minutesUntilDeadline % 60;
-          const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
-          return `Completed ${timeStr} before the deadline.`;
-        }
-
-        return "Completed after the deadline.";
-      }
-
-      return "Completed after the deadline.";
-    }
-  }
-
-  if (task.scheduledDateId) {
-    const scheduledDate = dateFromDateId(task.scheduledDateId);
-    if (scheduledDate) {
-      const daysUntilScheduled = calendarDayDiff(now, scheduledDate);
-      if (daysUntilScheduled > 0) {
-        return `Completed early. This was scheduled ${formatDayDistance(daysUntilScheduled)}.`;
-      }
-    }
-  }
-
-  return "Completed. Plan updated.";
 }
 
 function looksLikeAssignmentDetailsQuestion(question: string) {
@@ -951,233 +401,6 @@ function questionsForSheet(questions: AIClarificationQuestion[]): ClarificationQ
   }));
 }
 
-function estimatedMinutesFromDuration(value: string, type: Commitment["type"]) {
-  const hourMatch = value.match(/(\d+(?:\.\d+)?)\s*h/i);
-  if (hourMatch) return Math.max(15, Math.round(Number(hourMatch[1]) * 60));
-
-  const minuteMatch = value.match(/(\d+)\s*m/i);
-  if (minuteMatch) return Math.max(1, Number(minuteMatch[1]));
-
-  if (type === "event") return 30;
-  if (type === "goal") return 30;
-  return 25;
-}
-
-function slugFromText(value: string) {
-  return normalizeSearchText(value).split(" ").slice(0, 5).join("-") || "added-task";
-}
-
-function titleFromAddedText(text: string) {
-  const withoutDeadline = text
-    .replace(/\b(due|by|before)\b.+$/i, "")
-    .replace(/\b(today|tonight|tomorrow|tmr)\b/gi, "")
-    .trim();
-  const title = withoutDeadline || text.trim();
-
-  return title.length > 70 ? `${title.slice(0, 67).trim()}...` : title;
-}
-
-function deadlineFromAddedText(text: string) {
-  const timeMatch = text.match(/\b(?:due|by|before)\s+((?:\d{1,2})(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i);
-  const dayMatch = text.match(/\b(today|tonight|tomorrow|tmr)\b/i);
-  const rawTime = timeMatch?.[1]?.replace(/\./g, "").replace(/\s+/g, " ").trim();
-
-  if (!rawTime && !dayMatch) return null;
-
-  const timeLabel = rawTime ? rawTime.toUpperCase().replace(/([0-9])([AP]M)$/i, "$1 $2") : "";
-  const dayLabel = dayMatch?.[1]?.toLowerCase();
-  const isTomorrow = dayLabel === "tomorrow" || dayLabel === "tmr";
-
-  return {
-    label: [timeLabel, dayLabel && !isTomorrow ? "tonight" : isTomorrow ? "tomorrow" : ""]
-      .filter(Boolean)
-      .join(" "),
-    dateId: isTomorrow ? "2026-06-10" : "2026-06-09",
-    timeLabel: timeLabel ? `Before ${timeLabel}` : "After current focus",
-  };
-}
-
-function typeFromAddedText(text: string): Commitment["type"] {
-  if (/\b(goal|learn|improve|practice|become|proficient)\b/i.test(text)) return "goal";
-  if (/\b(meet|meeting|tuition|briefing|training|class|lesson|event)\b/i.test(text)) return "event";
-  if (/\b(due|deadline|submit|submission|by|before)\b/i.test(text)) return "deadline";
-  return "task";
-}
-
-function interpretAddedSource(text: string): AddedCommitmentInterpretation {
-  const normalized = text.trim();
-  const isUnclear = normalized.length < 8 || !/[a-z0-9]/i.test(normalized);
-  const title = isUnclear ? "Clarify added task" : titleFromAddedText(normalized);
-  const type = isUnclear ? "task" : typeFromAddedText(normalized);
-  const deadline = isUnclear ? null : deadlineFromAddedText(normalized);
-  const id = `added-${slugFromText(normalized)}`;
-  const estimatedDuration = type === "event" ? "30min" : type === "goal" ? "30min/session" : "30min";
-  const commitment: Commitment = {
-    id,
-    title: capitalize(title),
-    type,
-    state: isUnclear ? "needs_clarification" : "confirmed",
-    confidence: isUnclear ? 45 : deadline ? 88 : 76,
-    source: "Added task",
-    estimatedDuration,
-    explanation: isUnclear
-      ? "The added text did not include enough detail to schedule confidently."
-      : `Interpreted from added input: "${normalized}".`,
-  };
-  const task: DemoPlanTask = {
-    id,
-    title: type === "goal" ? `Plan next step for ${commitment.title}` : commitment.title,
-    section: "do_next",
-    estimatedMinutes: estimatedMinutesFromDuration(estimatedDuration, type),
-    timeLabel: deadline?.timeLabel ?? "After current focus",
-    deadline: deadline?.label,
-    deadlineDateId: deadline?.dateId,
-    reason: deadline ? "New commitment inserted before its deadline" : "New commitment added mid-plan",
-    scheduleRationale: deadline
-      ? `StudentOS schedules ${commitment.title} before ${deadline.label} because that deadline came from the added input.`
-      : `StudentOS adds ${commitment.title} after the current focus because the added input did not include a fixed deadline.`,
-    source: "Added task",
-    goalId: type === "goal" ? id : undefined,
-    isRoadmapTask: type === "goal" ? true : undefined,
-    updated: true,
-  };
-  const impactItems = [
-    isUnclear ? "Ask for details before scheduling" : `Add ${commitment.title}`,
-    deadline ? `Schedule before ${deadline.label}` : "Place after current focus",
-    "Keep existing fixed commitments stable",
-  ];
-
-  return {
-    commitment,
-    task: ensureTaskTimeRange(task),
-    impactItems,
-    clarificationQuestion: isUnclear
-      ? {
-          id: `${id}-clarification`,
-          commitmentId: id,
-          kind: "general",
-          title: "Clarify added task",
-          subtitle: "Choose the closest type so StudentOS can ask for only the missing details.",
-          question: "What kind of item should this become?",
-          options: [
-            { label: "School task", recommended: true },
-            { label: "Deadline" },
-            { label: "Fixed event" },
-            { label: "Personal goal" },
-          ],
-          customPlaceholder: "Type details, like 'Chemistry worksheet due tonight by 8 PM'",
-          resolvedCommitment: {
-            title: "Clarified added task",
-            state: "confirmed",
-            confidence: 82,
-            estimatedDuration: "30min",
-            explanation: "Clarified from the user's added task details.",
-          },
-        }
-      : undefined,
-  };
-}
-
-function commitmentHasScheduledTask(commitment: Commitment, tasks: DemoPlanTask[]) {
-  const title = normalizeSearchText(commitment.title);
-  return tasks.some((task) => {
-    const taskTitle = normalizeSearchText(task.title);
-    return (
-      task.id === commitment.id ||
-      task.id === `clarified-${commitment.id}` ||
-      task.goalId === commitment.id ||
-      taskTitle.includes(title) ||
-      title.includes(taskTitle)
-    );
-  });
-}
-
-function taskFromClarifiedCommitment(
-  commitment: Commitment,
-  clarificationSummary: string,
-): DemoPlanTask {
-  const title =
-    commitment.type === "goal"
-      ? `Plan next step for ${commitment.title}`
-      : commitment.title;
-
-  return ensureTaskTimeRange({
-    id: `clarified-${commitment.id}`,
-    title,
-    section: "do_next",
-    estimatedMinutes: estimatedMinutesFromDuration(commitment.estimatedDuration, commitment.type),
-    timeLabel: "After current focus",
-    reason: "Added after user clarification resolved the missing context",
-    scheduleRationale: `StudentOS schedules this because the earlier ambiguity was resolved by the user's clarification: ${clarificationSummary}.`,
-    source: commitment.source,
-    goalId: commitment.type === "goal" ? commitment.id : undefined,
-    isRoadmapTask: commitment.type === "goal" ? true : undefined,
-    updated: true,
-  });
-}
-
-function upsertClarifiedCommitmentTask(
-  tasks: DemoPlanTask[],
-  commitment: Commitment,
-  clarificationSummary: string,
-) {
-  if (commitmentHasScheduledTask(commitment, tasks)) return tasks;
-
-  const task = taskFromClarifiedCommitment(commitment, clarificationSummary);
-  const futureIndex = tasks.findIndex((item) => item.section === "subsequent_days");
-  if (futureIndex < 0) return [...tasks, task];
-
-  return [...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)];
-}
-
-function commitmentsWithAddedCommitment(current: Commitment[], commitment: Commitment) {
-  if (current.some((item) => item.id === commitment.id)) return current;
-  return [...current, commitment];
-}
-
-function planTasksWithAddedTask(
-  current: DemoPlanTask[],
-  commitment: Commitment,
-  task: DemoPlanTask,
-) {
-  if (current.some((item) => item.id === task.id) || commitment.state === "needs_clarification") {
-    return current;
-  }
-
-  const updatedTasks = current.map((item) =>
-    item.id === "coding-practice"
-      ? {
-          ...item,
-          timeLabel: "9:45-10:45 PM",
-          reason: `Moved later after ${commitment.title}`,
-          scheduleRationale:
-            `Coding practice moves to 9:45 PM because ${commitment.title} now needs the earlier flexible slot.`,
-          updated: true,
-        }
-      : item,
-  );
-  const codingIndex = updatedTasks.findIndex((item) => item.id === "coding-practice");
-
-  if (codingIndex < 0) {
-    const firstFutureIndex = updatedTasks.findIndex(
-      (item) => item.section === "subsequent_days",
-    );
-    if (firstFutureIndex < 0) return [...updatedTasks, task];
-
-    return [
-      ...updatedTasks.slice(0, firstFutureIndex),
-      task,
-      ...updatedTasks.slice(firstFutureIndex),
-    ];
-  }
-
-  return [
-    ...updatedTasks.slice(0, codingIndex),
-    task,
-    ...updatedTasks.slice(codingIndex),
-  ];
-}
-
 function persistCommitments(commitments: Commitment[]) {
   window.localStorage.setItem(SAVED_COMMITMENTS_KEY, JSON.stringify(commitments));
 }
@@ -1215,6 +438,7 @@ function persistFlowState(state: {
   conflictResolved?: boolean;
   resolutionMode?: ResolutionMode;
   roadmapAdded?: boolean;
+  addedTaskApplied?: boolean;
   chemistryAdded?: boolean;
 }) {
   const existing = window.localStorage.getItem(SAVED_FLOW_STATE_KEY);
@@ -1261,7 +485,7 @@ export default function CommitmentsPage() {
   const [addedInterpretation, setAddedInterpretation] =
     useState<AddedCommitmentInterpretation | null>(null);
   const [impactOpen, setImpactOpen] = useState(false);
-  const [chemistryAdded, setChemistryAdded] = useState(false);
+  const [addedTaskApplied, setAddedTaskApplied] = useState(false);
   const [roadmapAdded, setRoadmapAdded] = useState(true);
   const [planHydrated, setPlanHydrated] = useState(false);
   const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(() =>
@@ -1273,7 +497,7 @@ export default function CommitmentsPage() {
   const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
   const [replanLoading, setReplanLoading] = useState(false);
-  const [agentRuns, setAgentRuns] = useState<AgentActivityRun[]>([]);
+  const { agentRuns, beginAgentRun, updateAgentRun } = useAgentRuns();
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
   const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
@@ -1320,8 +544,8 @@ export default function CommitmentsPage() {
   );
   const canScheduleEarlier = canMoveTaskDate(selectedTask, -1);
   const canScheduleLater = canMoveTaskDate(selectedTask, 1);
-  const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanReasoning;
-  const aiPlanBullets = aiPlan?.rationale.bullets ?? [];
+  const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanSummary(commitments, planTasks);
+  const aiPlanBullets = aiPlan?.rationale.bullets ?? fallbackPlanBullets(commitments, planTasks);
   const activeClarification = clarifying
     ? aiFootprint?.clarificationQuestions.find(
         (question) => question.commitmentId === clarifying.commitmentId,
@@ -1335,11 +559,14 @@ export default function CommitmentsPage() {
   const focusTask = planTasks.find((task) => task.section === "do_now") ?? planTasks[0];
   const roadmapGoal = goalItems[0];
   const nextRoadmapTask = planTasks.find((task) => task.isRoadmapTask);
+  const roadmapTaskCount = aiFootprint?.roadmapSteps.length ?? planTasks.filter((task) => task.isRoadmapTask).length;
   const roadmapSummaryLines = [
-    `${aiFootprint?.roadmapSteps.length ?? 6} steps scheduled across Jun-Dec.`,
+    `${roadmapTaskCount || 0} roadmap step${roadmapTaskCount === 1 ? "" : "s"} scheduled.`,
     nextRoadmapTask
       ? `Next action: ${nextRoadmapTask.estimatedMinutes ? `${nextRoadmapTask.estimatedMinutes} min ` : ""}${nextRoadmapTask.title}.`
-      : "Next action: 30 min coding fundamentals.",
+      : roadmapGoal
+        ? `Next action: clarify ${roadmapGoal.title}.`
+        : "Next action: no roadmap task yet.",
     aiFootprint?.goalResearch
       ? "Grounded with Exa goal research."
       : "Risk: consistency, not deadline proximity.",
@@ -1354,8 +581,6 @@ export default function CommitmentsPage() {
 
   useEffect(() => {
     try {
-      setAgentRuns(loadAgentRuns());
-
       let persistedTrace: SponsorTraceItem[] = [];
       const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
       if (rawTrace) {
@@ -1427,7 +652,7 @@ export default function CommitmentsPage() {
       }
 
       if (window.localStorage.getItem("studentos_extra_source_added")) {
-        setChemistryAdded(true);
+        setAddedTaskApplied(true);
       }
 
       window.localStorage.setItem("studentos_roadmap_added", "true");
@@ -1440,6 +665,7 @@ export default function CommitmentsPage() {
           conflictResolved?: boolean;
           resolutionMode?: ResolutionMode;
           roadmapAdded?: boolean;
+          addedTaskApplied?: boolean;
           chemistryAdded?: boolean;
         };
 
@@ -1463,8 +689,10 @@ export default function CommitmentsPage() {
         if (typeof parsedFlowState.roadmapAdded === "boolean") {
           setRoadmapAdded(parsedFlowState.roadmapAdded);
         }
-        if (typeof parsedFlowState.chemistryAdded === "boolean") {
-          setChemistryAdded(parsedFlowState.chemistryAdded);
+        if (typeof parsedFlowState.addedTaskApplied === "boolean") {
+          setAddedTaskApplied(parsedFlowState.addedTaskApplied);
+        } else if (typeof parsedFlowState.chemistryAdded === "boolean") {
+          setAddedTaskApplied(parsedFlowState.chemistryAdded);
         }
       }
 
@@ -1484,62 +712,6 @@ export default function CommitmentsPage() {
       setPlanHydrated(true);
     }
   }, []);
-
-  const commitAgentRuns = useCallback((updater: (runs: AgentActivityRun[]) => AgentActivityRun[]) => {
-    setAgentRuns((current) => {
-      const next = updater(current);
-      saveAgentRuns(next);
-      return next;
-    });
-  }, []);
-
-  function updateAgentRun(runId: string, updater: (run: AgentActivityRun) => AgentActivityRun) {
-    commitAgentRuns((runs) => {
-      const existing = runs.find((run) => run.runId === runId);
-      if (!existing) return runs;
-      return upsertAgentRun(runs, updater(existing));
-    });
-  }
-
-  function beginAgentRun(trigger: ReplanTrigger) {
-    const meta: Record<ReplanTrigger, { agentName: string; title: string; body: string }> = {
-      add_task: {
-        agentName: "Add-task agent",
-        title: "Add-task agent started",
-        body: "StudentOS is reading the added task and preparing to update commitments and plan tasks.",
-      },
-      manual_conflict: {
-        agentName: "Manual conflict replanning agent",
-        title: "Manual instruction received",
-        body: "StudentOS is treating the custom prompt as a high-priority scheduling constraint.",
-      },
-      clarification: {
-        agentName: "Clarification replanning agent",
-        title: "Clarification agent started",
-        body: "StudentOS is applying the clarified answer before rebuilding the affected plan items.",
-      },
-    };
-    const selected = meta[trigger];
-    const run = createAgentRun({
-      agentName: selected.agentName,
-      trigger,
-      currentStep: selected.title,
-    });
-    const startedRun = appendAgentRunEvent(
-      run,
-      createAgentEvent({
-        id: `${run.runId}-started`,
-        kind: "observed",
-        title: selected.title,
-        body: selected.body,
-        provider: "StudentOS",
-        status: "running",
-      }),
-    );
-
-    commitAgentRuns((runs) => upsertAgentRun(runs, startedRun));
-    return startedRun;
-  }
 
   const addSponsorTrace = useCallback((item: SponsorTraceItem) => {
     const existing = window.localStorage.getItem("studentos_sponsor_trace");
@@ -1649,7 +821,7 @@ export default function CommitmentsPage() {
         },
         body: JSON.stringify({
           trigger,
-          currentDate: "2026-06-09",
+          currentDate: todayDateId(),
           commitments: nextCommitments,
           planTasks: nextPlanTasks,
           timelineEvents: baseTimeline,
@@ -1747,6 +919,15 @@ export default function CommitmentsPage() {
       const fallbackReason = result.trace?.find((item) => item.status === "fallback")?.detail;
 
       applyReplanResult(result);
+      if (trigger === "manual_conflict") {
+        const stillHasConflict = validateTimelineConflicts(result.resolvedTimelineEvents).groups.length > 0;
+        setConflictResolved(!stillHasConflict);
+        setResolutionMode("manual");
+        persistFlowState({
+          conflictResolved: !stillHasConflict,
+          resolutionMode: "manual",
+        });
+      }
       updateAgentRun(activeRunId, (run) =>
         completeAgentRun(run, {
           status: runStatus,
@@ -1872,7 +1053,7 @@ export default function CommitmentsPage() {
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
           body: JSON.stringify({
-            currentDate: "2026-06-09",
+            currentDate: todayDateId(),
             commitments: commitments.map((item) => ({
               id: item.id,
               title: item.title,
@@ -1921,21 +1102,16 @@ export default function CommitmentsPage() {
       } catch (error) {
         if (controller.signal.aborted) return;
 
-        const fallback: PlanDayResponse = {
-          provider: "fallback",
-          status: "fallback",
-          rationale: {
-            summary: fallbackPlanReasoning,
-            bullets: [
-              "Physics is due tomorrow morning.",
-              "Fixed events stay protected.",
-              "Flexible work moves around the conflict.",
-              "The coding goal remains a scheduled roadmap.",
-            ],
-          },
-          dailyPlan: {
-            focus: "Finish Physics worksheet",
-          },
+          const fallback: PlanDayResponse = {
+            provider: "fallback",
+            status: "fallback",
+            rationale: {
+              summary: fallbackPlanSummary(commitments, planTasks),
+              bullets: fallbackPlanBullets(commitments, planTasks),
+            },
+            dailyPlan: {
+              focus: focusTask?.title ?? planTasks[0]?.title ?? "Review current plan",
+            },
           trace: [
             {
               provider: "Vercel AI Gateway",
@@ -1962,11 +1138,13 @@ export default function CommitmentsPage() {
     addedSourceText,
     aiPlan,
     addedInterpretation,
-    chemistryAdded,
+    addedTaskApplied,
     clarificationAnswerRecords,
     commitments,
+    focusTask?.title,
     goalItems,
     planHydrated,
+    planTasks,
     resolutionMode,
     replanLoading,
     step,
@@ -2154,10 +1332,9 @@ export default function CommitmentsPage() {
       return;
     }
 
-    setConflictResolved(true);
     setResolutionMode("manual");
     setManualConflictOpen(false);
-    persistFlowState({ conflictResolved: true, resolutionMode: "manual" });
+    persistFlowState({ resolutionMode: "manual" });
     showToast("Manual instruction sent to agent");
     void runAgentReplan({
       trigger: "manual_conflict",
@@ -2265,7 +1442,7 @@ export default function CommitmentsPage() {
         if (!current) {
           return {
             createdAt: new Date().toISOString(),
-            currentDate: "2026-06-09",
+            currentDate: todayDateId(),
             provider: "fallback",
             status: "fallback",
             sourceSummary: {
@@ -2302,11 +1479,11 @@ export default function CommitmentsPage() {
       });
     }
 
-    setChemistryAdded(true);
+    setAddedTaskApplied(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
     window.localStorage.setItem("studentos_extra_source_added", commitment.id);
-    persistFlowState({ chemistryAdded: true });
+    persistFlowState({ addedTaskApplied: true });
 
     void runAgentReplan({
       trigger: "add_task",
@@ -2328,13 +1505,13 @@ export default function CommitmentsPage() {
     });
   }
 
-  function updatePlanWithChemistry() {
+  function updatePlanWithAddedTask() {
     if (!addedInterpretation) {
       setImpactOpen(false);
       return;
     }
 
-    if (chemistryAdded) {
+    if (addedTaskApplied) {
       setImpactOpen(false);
       showToast("Already in plan");
       return;
@@ -2360,7 +1537,7 @@ export default function CommitmentsPage() {
         if (!current) {
           return {
             createdAt: new Date().toISOString(),
-            currentDate: "2026-06-09",
+            currentDate: todayDateId(),
             provider: "fallback",
             status: "fallback",
             sourceSummary: {
@@ -2398,55 +1575,15 @@ export default function CommitmentsPage() {
     }
 
     setPlanTasks((current) => {
-      if (current.some((item) => item.id === task.id) || commitment.state === "needs_clarification") {
-        return current;
-      }
-
-      const updatedTasks = current.map((task) =>
-        task.id === "coding-practice"
-          ? {
-              ...task,
-              timeLabel: "9:45-10:45 PM",
-              reason: `Moved later after ${commitment.title}`,
-              scheduleRationale:
-                `Coding practice moves to 9:45 PM because ${commitment.title} now needs the earlier flexible slot.`,
-              updated: true
-            }
-          : task
-      );
-      const codingIndex = updatedTasks.findIndex((task) => task.id === "coding-practice");
-
-      if (codingIndex < 0) {
-        const firstFutureIndex = updatedTasks.findIndex(
-          (task) => task.section === "subsequent_days"
-        );
-        if (firstFutureIndex < 0) {
-          const updated = [...updatedTasks, task];
-          persistPlanTasks(updated);
-          return updated;
-        }
-        const updated = [
-          ...updatedTasks.slice(0, firstFutureIndex),
-          task,
-          ...updatedTasks.slice(firstFutureIndex)
-        ];
-        persistPlanTasks(updated);
-        return updated;
-      }
-
-      const updated = [
-        ...updatedTasks.slice(0, codingIndex),
-        task,
-        ...updatedTasks.slice(codingIndex)
-      ];
+      const updated = planTasksWithAddedTask(current, commitment, task);
       persistPlanTasks(updated);
       return updated;
     });
-    setChemistryAdded(true);
+    setAddedTaskApplied(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
     window.localStorage.setItem("studentos_extra_source_added", commitment.id);
-    persistFlowState({ chemistryAdded: true });
+    persistFlowState({ addedTaskApplied: true });
     setImpactOpen(false);
     if (commitment.state === "needs_clarification") {
       setClarifying({ kind: "general", commitmentId: commitment.id });
@@ -2713,7 +1850,7 @@ export default function CommitmentsPage() {
                     ? resolutionMode === "manual"
                       ? "StudentOS used your instruction and rebuilt the clash."
                       : conflictAnalysis?.resolvedSummary ?? "StudentOS updated the day without moving fixed commitments."
-                    : conflictAnalysis?.unresolvedSummary ?? "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
+                    : conflictAnalysis?.unresolvedSummary ?? "StudentOS found a fixed-time overlap and a cleaner schedule."
                 }
               />
               <div className="lg:hidden">
@@ -2791,10 +1928,14 @@ export default function CommitmentsPage() {
       </div>
 
       <AgentActivityPanel runs={agentRuns} mobileRaised={step === "plan"} />
-      <AddSourceButton onClick={openAddSource} raised={step === "plan"} />
+      {step !== "plan" ? <AddSourceButton onClick={openAddSource} raised={false} /> : null}
 
       {step === "plan" ? (
-        <BottomActionBar onExport={() => setExportOpen(true)} onReasoning={() => setReasoningOpen(true)} />
+        <BottomActionBar
+          onExport={() => setExportOpen(true)}
+          onReasoning={() => setReasoningOpen(true)}
+          onAddTask={openAddSource}
+        />
       ) : null}
 
       <ClarificationBottomSheet
@@ -2943,7 +2084,7 @@ export default function CommitmentsPage() {
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Goal roadmap"].map((chip) => (
+            {["Urgency", "Fixed events", "Energy", "Deadline", ...(addedTaskApplied ? ["Updated"] : []), "Goal roadmap"].map((chip) => (
               <SourceChip key={chip}>{chip}</SourceChip>
             ))}
           </div>
@@ -3002,9 +2143,9 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={impactOpen}
         onClose={() => setImpactOpen(false)}
-        title={chemistryAdded ? "Already in your plan" : "1 new commitment found"}
+        title={addedTaskApplied ? "Already in your plan" : "1 new commitment found"}
         subtitle={
-          chemistryAdded
+          addedTaskApplied
             ? `${addedInterpretation?.commitment.title ?? "This item"} is already in your plan.`
             : addedInterpretation?.commitment.state === "needs_clarification"
               ? "StudentOS needs one detail before scheduling it."
@@ -3037,11 +2178,11 @@ export default function CommitmentsPage() {
             </div>
           </div>
 
-          {chemistryAdded ? (
+          {addedTaskApplied ? (
             <PrimaryButton onClick={() => setImpactOpen(false)}>Done</PrimaryButton>
           ) : (
             <div className="grid grid-cols-2 gap-3">
-              <PrimaryButton onClick={updatePlanWithChemistry}>Update plan</PrimaryButton>
+              <PrimaryButton onClick={updatePlanWithAddedTask}>Update plan</PrimaryButton>
               <button
                 type="button"
                 onClick={() => setImpactOpen(false)}
@@ -3077,7 +2218,7 @@ export default function CommitmentsPage() {
       <ExportSuccessSheet
         open={exportOpen}
         onClose={() => setExportOpen(false)}
-        includeChemistry={chemistryAdded}
+        includeAddedTask={addedTaskApplied}
         includeRoadmap={roadmapAdded}
         onSaved={() => {
           window.localStorage.setItem("studentos_calendar_saved", "true");

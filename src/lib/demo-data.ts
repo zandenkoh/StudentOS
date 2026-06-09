@@ -60,6 +60,15 @@ export type InputSource = {
   snippet: string;
 };
 
+export type DemoSourcePreview = {
+  title: string;
+  source: string;
+  fileSize: string;
+  fileType: "image" | "text" | "link" | "audio";
+  snippet: string;
+  filePath?: string;
+};
+
 export type Commitment = {
   id: string;
   title: string;
@@ -118,6 +127,46 @@ export type DemoPlanTask = {
 export type DemoScheduleDateOption = {
   id: string;
   label: string;
+};
+
+export const commitmentDemoSourcePreviews: Record<string, DemoSourcePreview> = {
+  physics: {
+    title: "Screenshot 2026-06-09 121842.jpg",
+    source: "Desktop Screenshot",
+    fileSize: "324 KB",
+    fileType: "image",
+    snippet: "Physics assignment portal and due details",
+    filePath: "/Screenshot%202026-06-09%20121842.jpg",
+  },
+  cca: {
+    title: "Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
+    source: "Mobile Screenshot",
+    fileSize: "492 KB",
+    fileType: "image",
+    snippet: "CCA notification chat announcement",
+    filePath: "/Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
+  },
+  competition: {
+    title: "National Coding Challenge 2026 - Submissions",
+    source: "Web Link",
+    fileSize: "18 KB",
+    fileType: "link",
+    snippet: "Ensure all repository links, walkthrough recordings, and PDFs of design specifications are uploaded before the cutoff window.",
+  },
+  coding: {
+    title: "goalDemo.txt",
+    source: "Assets File",
+    fileSize: "1 KB",
+    fileType: "text",
+    snippet: "I currently have zero experience coding with python. I want to be proficient in data-handling Python libraries by the end of this year.",
+  },
+  team: {
+    title: "Team voice note",
+    source: "Voice note",
+    fileSize: "1:24",
+    fileType: "audio",
+    snippet: "Hey, about the project meeting tonight, Sarah mentioned she has a CCA briefing at 5:30 PM and tuition before that, so we might need to reschedule. Can we push to tomorrow morning?",
+  },
 };
 
 export type DemoGoalRoadmapStep = {

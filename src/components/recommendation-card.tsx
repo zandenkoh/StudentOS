@@ -5,18 +5,17 @@ import { SecondaryButton } from "@/components/buttons";
 import type { AIConflictAnalysis } from "@/lib/studentos-ai-types";
 
 const actions = [
-  "Keep tuition at 4:30 PM",
-  "Ask CCA lead for briefing notes",
-  "Move revision after dinner",
-  "Start Physics at 8:00 PM",
-  "Keep coding practice as a weekly goal block"
+  "Keep fixed-time items explicit",
+  "Move flexible work around confirmed overlaps",
+  "Confirm missing times before locking the plan",
+  "Update the timeline after each instruction",
 ];
 
 const manualActions = [
-  "Record Physics extension to 16 June",
-  "Reschedule tuition away from CCA briefing",
-  "Keep CCA briefing as fixed",
-  "Protect coding practice as a weekly goal block"
+  "Apply the manual instruction as the priority constraint",
+  "Mark any changed task as updated",
+  "Recheck fixed-time overlaps",
+  "Ask for clarification if timing is still missing",
 ];
 
 export function RecommendationCard({
@@ -52,9 +51,9 @@ export function RecommendationCard({
       </div>
       <p className="text-[14px] leading-6 text-neutral-700">
         {usingManual
-          ? "Physics now has an extension to 16 June, and tuition no longer clashes with the CCA briefing."
+          ? conflict?.resolvedSummary ?? "StudentOS applied the manual instruction and rebuilt the conflict state."
           : conflict?.recommendationSummary ??
-            "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner. Physics stays first because it is due tomorrow morning."}
+            "Keep fixed commitments stable, move flexible work first, and ask for clarification if exact timing is missing."}
       </p>
       <div className="mt-4 space-y-2">
         {visibleActions.map((action) => (

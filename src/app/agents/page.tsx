@@ -52,6 +52,10 @@ const loadingMessages = [
   "Validating the final footprint",
 ];
 
+function todayDateId() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 const kindIcon: Record<LogKind, LucideIcon> = {
   thought: BrainCircuit,
   analysis: FileSearch,
@@ -307,7 +311,7 @@ export default function AgentsThinkingPage() {
           },
           signal: controller.signal,
           body: JSON.stringify({
-            currentDate: "2026-06-09",
+            currentDate: todayDateId(),
             sources: capturedSources,
           }),
         });

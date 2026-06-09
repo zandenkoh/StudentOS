@@ -38,13 +38,17 @@ const SourceSchema = z.object({
   durationSeconds: z.number().optional(),
 });
 
+const DurationLabelSchema = z.union([z.string(), z.number()]).transform((value) =>
+  typeof value === "number" ? `${value}min` : value,
+);
+
 const CommitmentSchema = z.object({
   id: z.string(),
   title: z.string(),
   type: z.enum(["task", "event", "deadline", "goal", "conflict"]),
   source: z.string(),
   confidence: z.number().int().min(0).max(100),
-  estimatedDuration: z.string(),
+  estimatedDuration: DurationLabelSchema,
   state: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
   explanation: z.string(),
 });
@@ -107,7 +111,7 @@ const ClarificationQuestionSchema = z.object({
     title: z.string().optional(),
     state: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]).optional(),
     confidence: z.number().int().min(0).max(100).optional(),
-    estimatedDuration: z.string().optional(),
+    estimatedDuration: DurationLabelSchema.optional(),
     explanation: z.string().optional(),
   }),
 });
@@ -215,7 +219,7 @@ const GeneratedClarificationQuestionSchema = z.object({
     title: z.string(),
     state: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
     confidence: z.number().int().min(0).max(100),
-    estimatedDuration: z.string(),
+    estimatedDuration: DurationLabelSchema,
     explanation: z.string(),
   }),
 });
@@ -273,7 +277,7 @@ const FootprintSchema = z.object({
 });
 
 export const AnalyseStudentChaosRequestSchema = z.object({
-  currentDate: z.string().default("2026-06-09"),
+  currentDate: z.string().default(() => new Date().toISOString().slice(0, 10)),
   sources: z.array(SourceSchema).default([]),
   sourceContext: z.unknown().optional(),
   strictJudgeMode: z.boolean().optional(),
@@ -883,30 +887,6 @@ function defaultObservableLogs(
   ];
 }
 
-const demoPacketSourceIds = new Set([
-  "whatsapp-screenshot",
-  "physics-homework-pdf",
-  "team-voice-note",
-  "calendar-conflict",
-  "cca-screenshot",
-  "coding-goal",
-  "team-project-message",
-]);
-
-function looksLikeDemoPacket(sources: CapturedSourceForAI[]) {
-  const knownIdCount = sources.filter((source) => demoPacketSourceIds.has(source.id)).length;
-  const demoText = sources.map(sourceText).join("\n");
-  const knownTopicCount = [
-    /physics worksheet/i,
-    /cca briefing/i,
-    /tuition/i,
-    /goalDemo\.txt/i,
-    /python data-handling|coding by december/i,
-  ].filter((pattern) => pattern.test(demoText)).length;
-
-  return knownIdCount >= 3 || (sources.length >= 4 && knownTopicCount >= 3);
-}
-
 function compactFallbackCopy(value: string, maxLength: number) {
   const text = value.replace(/\s+/g, " ").trim();
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...` : text;
@@ -1245,228 +1225,7 @@ function fallbackFootprint(
   goalResearch?: StudentOSAgentFootprint["goalResearch"],
   agentLogs?: AIAgentLog[],
 ): StudentOSAgentFootprint {
-  const sources = input.sources;
-
-  if (!looksLikeDemoPacket(sources)) {
-    return sourceDrivenFallbackFootprint(input, reason, goalResearch, agentLogs);
-  }
-
-  const trace: StudentOSAgentFootprint["sponsorTrace"] = [
-    {
-      provider: "Vercel AI Gateway",
-      action: "Generated student chaos analysis fallback",
-      status: "fallback" as const,
-      detail: reason,
-    },
-  ];
-
-  if (goalResearch) {
-    trace.unshift({
-      provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
-      action: "Deep researched planning context",
-      status: "success" as const,
-      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered for ${goalResearch.query}.`,
-    });
-  }
-
-  return {
-    createdAt: new Date().toISOString(),
-    currentDate: input.currentDate,
-    provider: "fallback",
-    status: "fallback",
-    sourceSummary: sourceStats(sources),
-    sources,
-    commitments: [
-      {
-        id: "physics",
-        title: "Physics worksheet due tomorrow 8 AM",
-        type: "task",
-        source: "AWS Textract",
-        confidence: 94,
-        estimatedDuration: "35min",
-        state: "confirmed",
-        explanation: "Detected from the uploaded homework source.",
-      },
-      {
-        id: "cca",
-        title: "CCA briefing at 5:30 PM",
-        type: "event",
-        source: "CCA announcement",
-        confidence: 91,
-        estimatedDuration: "45min",
-        state: "confirmed",
-        explanation: "Fixed event extracted from the CCA source.",
-      },
-      {
-        id: "competition",
-        title: "Competition submission: 11 June, 12 AM",
-        type: "deadline",
-        source: "Web link",
-        confidence: 92,
-        estimatedDuration: "30min",
-        state: "confirmed",
-        explanation: "Deadline item with near-term urgency.",
-      },
-      {
-        id: "coding",
-        title: "Learn Python data handling by December",
-        type: "goal",
-        source: goalResearch ? "Exa research + goal note" : "Written note",
-        confidence: 84,
-        estimatedDuration: "5hr/week",
-        state: "needs_clarification",
-        explanation: "Broad goal needs target outcome, cadence, and starting point.",
-      },
-      {
-        id: "team",
-        title: "Team meeting may need reschedule",
-        type: "event",
-        source: "Voice note",
-        confidence: 66,
-        estimatedDuration: "3min",
-        state: "unsure",
-        explanation: "The source is tentative, so StudentOS asks before scheduling it as fixed.",
-      },
-    ],
-    clarificationQuestions: [
-      {
-        id: "clarify-coding",
-        commitmentId: "coding",
-        kind: "goal",
-        title: "Clarify coding goal",
-        subtitle: "StudentOS needs a few quick details to plan this properly.",
-        question: "What does success look like?",
-        options: [
-          { label: "Build a small app", recommended: true },
-          { label: "Portfolio readiness" },
-          { label: "Competition prep" },
-        ],
-        customPlaceholder: "Type your target outcome...",
-        resolvedCommitment: {
-          state: "confirmed",
-          confidence: 92,
-          estimatedDuration: "2 sessions/week",
-          explanation: "Roadmap ready from AI + Exa context: 6 steps scheduled across Jun-Dec.",
-        },
-      },
-      {
-        id: "clarify-team",
-        commitmentId: "team",
-        kind: "team",
-        title: "Clarify team meeting",
-        subtitle: "Resolve the uncertainty before StudentOS builds the day.",
-        question: "Is this a confirmed meeting or a possible one?",
-        options: [
-          { label: "Confirmed" },
-          { label: "Possible" },
-          { label: "Cancelled" },
-          { label: "Ask teammate first", recommended: true },
-        ],
-        customPlaceholder: "Type what this should become...",
-        resolvedCommitment: {
-          title: "Ask teammate first",
-          state: "confirmed",
-          confidence: 88,
-          estimatedDuration: "3min",
-          explanation: "Converted tentative voice note into a 3 minute action.",
-        },
-      },
-    ],
-    timelineEvents: [
-      { id: "revision", time: "3:30 PM", title: "Revision block", chip: "Flexible" },
-      { id: "tuition", time: "4:30 PM", title: "Tuition", duration: "4:30-6:30 PM", chip: "Fixed", conflictGroupId: "tuition-cca" },
-      { id: "cca", time: "5:30 PM", title: "CCA briefing", duration: "5:30-6:15 PM", chip: "Needs decision", tone: "conflict", conflictGroupId: "tuition-cca" },
-      { id: "dinner", time: "7:00 PM", title: "Dinner", chip: "Fixed" },
-      { id: "physics", time: "8:00 PM", title: "Physics worksheet", chip: "High priority", tone: "priority" },
-      { id: "coding", time: "9:00 PM", title: "Coding practice", chip: "Weekly goal" },
-    ],
-    resolvedTimelineEvents: [
-      { id: "tuition", time: "4:30 PM", title: "Tuition", duration: "4:30-6:30 PM", chip: "Fixed" },
-      { id: "notes", time: "6:40 PM", title: "Get CCA briefing notes", chip: "Handled", tone: "success" },
-      { id: "dinner", time: "7:00 PM", title: "Dinner", chip: "Fixed" },
-      { id: "revision", time: "7:45 PM", title: "Revision block", chip: "Moved" },
-      { id: "physics", time: "8:00 PM", title: "Physics worksheet", chip: "High priority", tone: "priority" },
-      { id: "coding", time: "9:00 PM", title: "Coding practice", chip: "Weekly goal" },
-    ],
-    conflict: {
-      title: "CCA briefing overlaps with tuition",
-      unresolvedSummary: "You cannot attend both fully.",
-      resolvedTitle: "Conflict resolved",
-      resolvedSummary: "StudentOS keeps tuition fixed and handles CCA with a notes request.",
-      fixedEventTitle: "Tuition",
-      fixedEventTime: "4:30-6:30 PM",
-      conflictingEventTitle: "CCA briefing",
-      conflictingEventTime: "5:30-6:15 PM",
-      overlapLabel: "45 min",
-      impactLabel: "Decision needed",
-      resolvedImpactLabel: "Plan ready",
-      recommendationSummary: "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner.",
-      recommendedActions: [
-        "Keep tuition at 4:30 PM",
-        "Ask CCA lead for briefing notes",
-        "Move revision after dinner",
-        "Start Physics at 8:00 PM",
-        "Keep coding practice as a weekly goal block",
-      ],
-      manualActions: [
-        "Record Physics extension to 16 June",
-        "Reschedule tuition away from CCA briefing",
-        "Keep CCA briefing as fixed",
-        "Protect coding practice as a weekly goal block",
-      ],
-    },
-    planTasks: splitLongStudyTasks([
-      { id: "physics-focus", title: "Finish Physics worksheet", section: "do_now" as const, estimatedMinutes: 35, timeLabel: "3:30-4:05 PM", deadline: "tomorrow 8 AM", deadlineDateId: "2026-06-10", reason: "Submit before school", scheduleRationale: "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.", source: "AWS Textract" },
-      { id: "message-teammate", title: "Message teammate", section: "do_next" as const, estimatedMinutes: 3, timeLabel: "4:10-4:13 PM", reason: "Clarifies the tentative team meeting", scheduleRationale: "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.", source: "Voice note" },
-      { id: "cca-notes", title: "Ask CCA lead for briefing notes", section: "do_next" as const, estimatedMinutes: 5, timeLabel: "5:20-5:25 PM", reason: "Resolves the CCA and tuition clash", scheduleRationale: "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.", source: "CCA announcement" },
-      { id: "tuition", title: "Tuition", section: "do_next" as const, timeLabel: "4:30-6:30 PM", reason: "Fixed calendar block", scheduleRationale: "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.", source: "Calendar" },
-      { id: "revision", title: "Revision block", section: "do_next" as const, estimatedMinutes: 45, timeLabel: "7:45-8:30 PM", reason: "Moved after dinner", scheduleRationale: "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.", source: "Plan" },
-      { id: "coding-practice", title: "Python data-handling practice", section: "do_next" as const, estimatedMinutes: 60, timeLabel: "9:00-10:00 PM", deadline: "December", deadlineDateId: "2026-12-31", reason: "Exa-grounded goal roadmap started", scheduleRationale: "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.", source: "Exa + Goal", goalId: "learn-coding", isRoadmapTask: true },
-      { id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days" as const, estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", reason: "First scheduled step for the coding goal", scheduleRationale: "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
-      { id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days" as const, estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", reason: "Turns the broad goal into a concrete build", scheduleRationale: "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.", source: "Goal roadmap", goalId: "learn-coding", isRoadmapTask: true },
-    ]),
-    roadmapSteps: [
-      {
-        id: "define-outcome",
-        goalId: "learn-coding",
-        title: "Define target outcome",
-        scheduledDate: "16 June",
-        description: "Choose whether success means an app, portfolio readiness, or competition prep.",
-        status: "scheduled",
-        tasks: splitLongStudyTasks([{ id: "define-coding-outcome", title: "Define coding target outcome", section: "subsequent_days" as const, estimatedMinutes: 20, scheduledDate: "16 June", scheduledDateId: "2026-06-16", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
-      },
-      {
-        id: "fundamentals",
-        goalId: "learn-coding",
-        title: "Python fundamentals sprint",
-        scheduledDateRange: "17-30 June",
-        description: "Build syntax confidence before moving into data handling.",
-        status: "in_progress",
-        tasks: splitLongStudyTasks([{ id: "coding-fundamentals-session-1", title: "Coding fundamentals - Session 1", section: "subsequent_days" as const, estimatedMinutes: 30, scheduledDate: "17 June", scheduledDateId: "2026-06-17", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
-      },
-      {
-        id: "data-handling-project",
-        goalId: "learn-coding",
-        title: "Data-handling mini project",
-        scheduledDateRange: "July-August",
-        description: "Use pandas or similar tooling on a real CSV so the goal becomes demonstrable.",
-        status: "upcoming",
-        tasks: splitLongStudyTasks([{ id: "mini-project-brief", title: "Build mini project brief", section: "subsequent_days" as const, estimatedMinutes: 45, scheduledDate: "24 June", scheduledDateId: "2026-06-24", deadline: "December", deadlineDateId: "2026-12-31", goalId: "learn-coding", isRoadmapTask: true }]),
-      },
-    ],
-    rationale: {
-      summary: "StudentOS extracted real commitments, researched the broad coding goal, kept fixed events stable, resolved the CCA clash, and turned the evening into a realistic execution plan.",
-      bullets: [
-        "Physics stays first because it has the nearest hard deadline.",
-        "Tuition is treated as fixed, so CCA gets a lightweight notes request.",
-        "The broad coding goal becomes scheduled roadmap work instead of a vague intention.",
-        "Flexible revision moves after dinner to avoid crowding the deadline task.",
-      ],
-    },
-    goalResearch,
-    agentLogs: agentLogs?.length ? agentLogs : defaultObservableLogs(sources, reason, goalResearch),
-    sponsorTrace: trace,
-  };
+  return sourceDrivenFallbackFootprint(input, reason, goalResearch, agentLogs);
 }
 
 function mergeSponsorTrace(

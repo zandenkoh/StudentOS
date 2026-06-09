@@ -287,25 +287,34 @@ function RunChanges({ run }: { run: AgentActivityRun }) {
   if (!hasChanges && !run.fallbackReason && !run.error) return null;
 
   return (
-    <details className="mt-2 rounded-[8px] border border-neutral-100 bg-white px-2.5 py-2 text-[11px]">
-      <summary className="cursor-pointer list-none font-semibold text-neutral-500 outline-none focus-visible:ring-2 focus-visible:ring-neutral-300">
-        Run details
-      </summary>
-      <div className="mt-2 space-y-2">
-        <ChangeList title="Commitments changed" changes={run.changedCommitments} />
-        <ChangeList title="Plan changed" changes={run.changedPlanTasks} />
-        {run.fallbackReason ? (
-          <p className="break-words rounded-[7px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-amber-800">
-            Fallback: {run.fallbackReason}
-          </p>
+    <div className="mt-2 space-y-2 rounded-[8px] border border-neutral-100 bg-white px-2.5 py-2 text-[11px]">
+      {hasChanges ? (
+        <div className="space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">What changed</p>
+          <ChangeList title="Commitments changed" changes={run.changedCommitments} />
+          <ChangeList title="Plan changed" changes={run.changedPlanTasks} />
+        </div>
+      ) : null}
+      {run.fallbackReason || run.error ? (
+        <details>
+          <summary className="cursor-pointer list-none font-semibold text-neutral-500 outline-none focus-visible:ring-2 focus-visible:ring-neutral-300">
+            Technical details
+          </summary>
+          <div className="mt-2 space-y-2">
+          {run.fallbackReason ? (
+            <p className="break-words rounded-[7px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-amber-800">
+              Fallback: {run.fallbackReason}
+            </p>
         ) : null}
         {run.error ? (
           <p className="break-words rounded-[7px] border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-red-800">
-            Error: {run.error}
-          </p>
-        ) : null}
-      </div>
-    </details>
+              Error: {run.error}
+            </p>
+          ) : null}
+          </div>
+        </details>
+      ) : null}
+    </div>
   );
 }
 
@@ -491,7 +500,7 @@ export function AgentActivityPanel({
 
   useEffect(() => {
     if (mobileTouched) return;
-    setMobileOpen(activeCount > 0);
+    if (activeCount > 0) setMobileOpen(true);
   }, [activeCount, mobileTouched]);
 
   const setDesktopPreference = useCallback((collapsed: boolean) => {
@@ -522,7 +531,7 @@ export function AgentActivityPanel({
     <>
       <aside
         className={cn(
-          "fixed top-24 z-10 hidden xl:block",
+          "fixed top-24 z-10 hidden lg:block",
           desktopCollapsed
             ? "right-[max(24px,calc(50%_-_303px))] w-16"
             : "right-[max(24px,calc(50%_-_539px))] w-[300px]",
@@ -561,49 +570,51 @@ export function AgentActivityPanel({
         )}
       </aside>
 
-      <div
-        className={cn(
-          "fixed z-30 xl:hidden",
-          mobileRaised
-            ? "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+13.75rem)]"
-            : "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+8.75rem)]",
-          mobileOpen
-            ? "left-1/2 w-[calc(100%-2rem)] max-w-[430px] -translate-x-1/2"
-            : "left-4 w-[min(10rem,calc(100%-2rem))]",
-        )}
-      >
-        {mobileOpen ? (
-          <PanelSurface
-            orderedRuns={orderedRuns}
-            headline={headline}
-            activeCount={activeCount}
-            expandedRunIds={expandedRunIds}
-            onToggleRunHistory={toggleRunHistory}
-            onCollapse={openMobile}
-            mobile
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={openMobile}
-            aria-label={`Open agent activity. ${headline}.`}
-            aria-expanded={false}
-            className="inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 text-left shadow-[0_12px_35px_rgba(0,0,0,0.12)] outline-none hover:bg-neutral-50 focus-visible:ring-2 focus-visible:ring-neutral-300"
-          >
-            <span className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-ink text-white">
-              {activeCount ? <Loader2 className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
-                Agents
+      {activeCount > 0 || mobileOpen ? (
+        <div
+          className={cn(
+            "fixed z-30 lg:hidden",
+            mobileRaised
+              ? "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+13.75rem)]"
+              : "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+8.75rem)]",
+            mobileOpen
+              ? "left-1/2 w-[calc(100%-2rem)] max-w-[430px] -translate-x-1/2"
+              : "left-4 w-[min(10rem,calc(100%-2rem))]",
+          )}
+        >
+          {mobileOpen ? (
+            <PanelSurface
+              orderedRuns={orderedRuns}
+              headline={headline}
+              activeCount={activeCount}
+              expandedRunIds={expandedRunIds}
+              onToggleRunHistory={toggleRunHistory}
+              onCollapse={openMobile}
+              mobile
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={openMobile}
+              aria-label={`Open agent activity. ${headline}.`}
+              aria-expanded={false}
+              className="inline-flex min-h-11 max-w-full items-center gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 text-left shadow-[0_12px_35px_rgba(0,0,0,0.12)] outline-none hover:bg-neutral-50 focus-visible:ring-2 focus-visible:ring-neutral-300"
+            >
+              <span className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-ink text-white">
+                {activeCount ? <Loader2 className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
               </span>
-              <span className="block truncate text-[11px] font-semibold text-ink">
-                {activeCount ? `${activeCount} working` : statusLabel[latestStatus]}
+              <span className="min-w-0">
+                <span className="block truncate text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+                  Agents
+                </span>
+                <span className="block truncate text-[11px] font-semibold text-ink">
+                  {activeCount ? `${activeCount} working` : statusLabel[latestStatus]}
+                </span>
               </span>
-            </span>
-          </button>
-        )}
-      </div>
+            </button>
+          )}
+        </div>
+      ) : null}
     </>
   );
 }

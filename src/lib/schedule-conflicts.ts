@@ -19,10 +19,14 @@ type TimeInterval = {
   endMinutes: number;
 };
 
+function cleanMeridiem(value: string) {
+  return value.replace(/\./g, "").toUpperCase();
+}
+
 function parseClockTime(hourText: string, minuteText: string | undefined, meridiemText: string) {
   let hour = Number(hourText);
   const minute = minuteText ? Number(minuteText) : 0;
-  const meridiem = meridiemText.toUpperCase();
+  const meridiem = cleanMeridiem(meridiemText);
 
   if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 1 || hour > 12 || minute < 0 || minute > 59) {
     return null;
@@ -38,7 +42,7 @@ export function parseTimeInterval(label?: string): TimeInterval | null {
   if (!label) return null;
 
   const rangeMatch = label.match(
-    /\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*[-]\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i,
+    /\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM|A\.M\.|P\.M\.)?\s*(?:-|–|—|to)\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM|A\.M\.|P\.M\.)\b/i,
   );
 
   if (!rangeMatch) return null;
@@ -60,11 +64,15 @@ function overlapMinutes(first: TimeInterval, second: TimeInterval) {
   return Math.max(0, Math.min(first.endMinutes, second.endMinutes) - Math.max(first.startMinutes, second.startMinutes));
 }
 
-function isFixedTimeConflictCandidate(event: SchedulableTimelineEvent) {
-  const chip = event.chip?.toLowerCase() ?? "";
-  return !["flexible", "moved", "weekly goal", "high priority", "priority", "handled"].some((label) =>
-    chip.includes(label),
+function isMovableLabel(value: string) {
+  return ["flexible", "moved", "weekly goal", "high priority", "priority", "handled", "review", "unscheduled"].some((label) =>
+    value.includes(label),
   );
+}
+
+export function isFixedTimeConflictCandidate(event: SchedulableTimelineEvent) {
+  const chip = event.chip?.toLowerCase() ?? "";
+  return !isMovableLabel(chip) && Boolean(parseTimeInterval(event.duration ?? event.time));
 }
 
 export function formatOverlapLabel(minutes: number) {

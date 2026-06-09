@@ -13,7 +13,9 @@ const CommitmentSchema = z.object({
   type: z.enum(["task", "event", "deadline", "goal", "conflict"]),
   source: z.string(),
   confidence: z.number().int().min(0).max(100),
-  estimatedDuration: z.string(),
+  estimatedDuration: z.union([z.string(), z.number()]).transform((value) =>
+    typeof value === "number" ? `${value}min` : value,
+  ),
   state: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
   explanation: z.string(),
 });
@@ -180,7 +182,10 @@ function ensureUpdatedReplanTask(
 ) {
   if (trigger !== "manual_conflict" || tasks.some((task) => task.updated)) return tasks;
 
-  const targetIndex = tasks.findIndex((task) => /tuition|physics|conflict|briefing|cca/i.test(task.title));
+  const targetIndex = tasks.findIndex((task) => {
+    const text = `${task.title} ${task.reason ?? ""} ${task.source ?? ""}`.toLowerCase();
+    return task.section !== "do_now" && !/\bfixed\b|calendar|appointment|class|lesson/.test(text);
+  });
   const index = targetIndex >= 0 ? targetIndex : 0;
 
   return tasks.map((task, taskIndex) =>
@@ -193,122 +198,32 @@ function ensureUpdatedReplanTask(
   );
 }
 
-function parseEventEndMinutes(event: z.infer<typeof TimelineEventSchema>) {
-  const value = event.duration ?? event.time;
-  const match = value.match(
-    /\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?\s*[-]\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i,
-  );
-
-  if (!match) return null;
-
-  const [, , , , endHour, endMinute, endMeridiem] = match;
-  let hours = Number(endHour);
-  const minutes = endMinute ? Number(endMinute) : 0;
-  const meridiem = endMeridiem.toUpperCase();
-
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
-  if (meridiem === "PM" && hours !== 12) hours += 12;
-  if (meridiem === "AM" && hours === 12) hours = 0;
-
-  return hours * 60 + minutes;
-}
-
-function clockLabelFromMinutes(totalMinutes: number) {
-  const normalized = ((totalMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
-  const hours24 = Math.floor(normalized / 60);
-  const minutes = normalized % 60;
-  const suffix = hours24 >= 12 ? "PM" : "AM";
-  const hours12 = hours24 % 12 || 12;
-
-  return `${hours12}:${String(minutes).padStart(2, "0")} ${suffix}`;
-}
-
 function resolvedEventsForManualInstruction(input: ReplanAgentInput) {
   const manualInstruction = input.manualConflictInstruction?.trim() ?? "";
-  const instruction = manualInstruction.toLowerCase();
-  const hasTuitionCcaInstruction = /tuition/.test(instruction) && /(cca|briefing)/.test(instruction);
-  const hasPhysicsExtension = /physics/.test(instruction) && /(extension|extend|16\s*june|june\s*16)/.test(instruction);
   const currentEvents = input.timelineEvents.length
     ? input.timelineEvents
     : input.resolvedTimelineEvents;
 
-  if (!hasTuitionCcaInstruction) {
-    return currentEvents.map((event) => ({
-      ...event,
-      tone: event.tone === "conflict" ? undefined : event.tone,
-      conflictGroupId: undefined,
-      chip: event.chip === "Needs decision" ? "Resolved" : event.chip,
-      scheduleRationale: manualInstruction
-        ? `Updated after manual instruction: ${manualInstruction}.`
-        : event.scheduleRationale,
-    }));
-  }
-
-  const ccaEvent = currentEvents.find((event) => /cca|briefing/i.test(event.title));
-  const ccaEndMinutes = ccaEvent ? parseEventEndMinutes(ccaEvent) : null;
-  const tuitionStart = ccaEndMinutes ? ccaEndMinutes + 5 : 18 * 60 + 20;
-  const tuitionEnd = tuitionStart + 90;
-
-  return currentEvents
-    .filter((event) => !(/revision/i.test(event.title) && hasPhysicsExtension))
-    .map((event) => {
-      if (/tuition/i.test(event.title)) {
-        return {
-          ...event,
-          time: clockLabelFromMinutes(tuitionStart),
-          title: "Tuition rescheduled",
-          duration: `${clockLabelFromMinutes(tuitionStart)}-${clockLabelFromMinutes(tuitionEnd)}`,
-          chip: "Rescheduled",
-          tone: "success" as const,
-          conflictGroupId: undefined,
-          scheduleRationale:
-            `Tuition moves after CCA because the manual instruction makes the briefing fixed: ${manualInstruction}.`,
-        };
-      }
-
-      if (/cca|briefing/i.test(event.title)) {
-        return {
-          ...event,
-          chip: "Fixed",
-          tone: undefined,
-          conflictGroupId: undefined,
-          scheduleRationale:
-            `CCA remains fixed because the manual instruction protected it before rescheduling tuition.`,
-        };
-      }
-
-      if (/physics/i.test(event.title) && hasPhysicsExtension) {
-        return {
-          ...event,
-          id: event.id === "physics" ? "physics-extension" : event.id,
-          time: "16 Jun",
-          title: "Physics worksheet deadline",
-          duration: undefined,
-          chip: "Extension recorded",
-          tone: "success" as const,
-          conflictGroupId: undefined,
-          scheduleRationale:
-            "The Physics deadline moves to 16 June because the manual instruction says the teacher granted an extension.",
-        };
-      }
-
-      if (/dinner/i.test(event.title)) {
-        return {
-          ...event,
-          time: "8:00 PM",
-          chip: "Fixed",
-          conflictGroupId: undefined,
-          scheduleRationale:
-            "Dinner shifts after the rescheduled tuition block so fixed commitments no longer overlap.",
-        };
-      }
-
+  return currentEvents.map((event) => {
+    if (event.conflictGroupId || event.tone === "conflict" || /needs decision/i.test(event.chip)) {
       return {
         ...event,
-        tone: event.tone === "conflict" ? undefined : event.tone,
+        chip: "Manual review",
+        tone: "success" as const,
         conflictGroupId: undefined,
+        scheduleRationale: manualInstruction
+          ? `Updated after manual instruction: ${manualInstruction}.`
+          : event.scheduleRationale,
       };
-    });
+    }
+
+    return {
+      ...event,
+      scheduleRationale: manualInstruction
+        ? event.scheduleRationale ?? `Reviewed against manual instruction: ${manualInstruction}.`
+        : event.scheduleRationale,
+    };
+  });
 }
 
 function fallbackConflict(input: ReplanAgentInput, resolvedEvents: z.infer<typeof TimelineEventSchema>[]) {
@@ -316,9 +231,11 @@ function fallbackConflict(input: ReplanAgentInput, resolvedEvents: z.infer<typeo
   const base = input.conflict;
   const manualInstruction = input.manualConflictInstruction?.trim();
   const addedSource = addedSourceText(input);
-  const resolvedTuition = resolvedEvents.find((event) => /tuition/i.test(event.title));
-  const resolvedCca = resolvedEvents.find((event) => /cca|briefing/i.test(event.title));
-  const manualResolved = input.trigger === "manual_conflict";
+  const confirmedEventIds = validation.groups[0]?.eventIds ?? [];
+  const firstConfirmedEvent = resolvedEvents.find((event) => event.id === confirmedEventIds[0]);
+  const secondConfirmedEvent = resolvedEvents.find((event) => event.id === confirmedEventIds[1]);
+  const firstTimedEvent = resolvedEvents.find((event) => event.duration || /\d/.test(event.time));
+  const manualResolved = input.trigger === "manual_conflict" && validation.groups.length === 0;
 
   return {
     title: base?.title ?? "Schedule reviewed",
@@ -335,18 +252,14 @@ function fallbackConflict(input: ReplanAgentInput, resolvedEvents: z.infer<typeo
         : input.trigger === "add_task"
           ? `StudentOS folded the added task into the plan from the submitted text${addedSource ? `: ${addedSource}` : ""}.`
           : "StudentOS rebuilt the schedule after reviewing the clarification answer.",
-    fixedEventTitle: manualResolved
-      ? resolvedTuition?.title ?? base?.fixedEventTitle ?? resolvedEvents[0]?.title ?? "Fixed event"
-      : base?.fixedEventTitle ?? resolvedEvents[0]?.title ?? "Fixed event",
-    fixedEventTime: manualResolved
-      ? resolvedTuition?.duration ?? resolvedTuition?.time ?? base?.fixedEventTime ?? "Time reviewed"
-      : base?.fixedEventTime ?? resolvedEvents[0]?.duration ?? resolvedEvents[0]?.time ?? "Time reviewed",
-    conflictingEventTitle: manualResolved
-      ? resolvedCca?.title ?? base?.conflictingEventTitle ?? "No confirmed overlap"
-      : base?.conflictingEventTitle ?? "No confirmed overlap",
-    conflictingEventTime: manualResolved
-      ? resolvedCca?.duration ?? resolvedCca?.time ?? base?.conflictingEventTime ?? "Not confirmed"
-      : base?.conflictingEventTime ?? "Not confirmed",
+    fixedEventTitle:
+      firstConfirmedEvent?.title ?? base?.fixedEventTitle ?? firstTimedEvent?.title ?? "Time reviewed",
+    fixedEventTime:
+      firstConfirmedEvent?.duration ?? firstConfirmedEvent?.time ?? base?.fixedEventTime ?? firstTimedEvent?.duration ?? firstTimedEvent?.time ?? "Time reviewed",
+    conflictingEventTitle:
+      secondConfirmedEvent?.title ?? (manualResolved ? "No confirmed overlap" : base?.conflictingEventTitle ?? "No confirmed overlap"),
+    conflictingEventTime:
+      secondConfirmedEvent?.duration ?? secondConfirmedEvent?.time ?? (manualResolved ? "Not confirmed" : base?.conflictingEventTime ?? "Not confirmed"),
     overlapLabel: validation.groups[0]?.overlapLabel ?? "No confirmed overlap",
     impactLabel: base?.impactLabel ?? "Review complete",
     resolvedImpactLabel: validation.groups.length ? "Needs another pass" : "Plan ready",
@@ -403,37 +316,14 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
       input.trigger === "add_task" &&
       (task.id === addedId || task.source === "Added task" || task.id.startsWith("added-"));
     const taskWasLocallyMoved = input.trigger === "add_task" && task.updated;
+    const manualTargetIndex = input.trigger === "manual_conflict"
+      ? existingTasks.findIndex((item) => {
+          const text = `${item.title} ${item.reason ?? ""} ${item.source ?? ""}`.toLowerCase();
+          return item.section !== "do_now" && !/\bfixed\b|calendar|appointment|class|lesson/.test(text);
+        })
+      : -1;
     const taskIsManualConflictTarget =
-      input.trigger === "manual_conflict" &&
-      (/tuition/i.test(task.title) || (/physics/i.test(task.title) && /extension|16\s*june|june\s*16/i.test(manualInstruction ?? "")));
-
-    if (input.trigger === "manual_conflict" && manualInstruction && /tuition/i.test(task.title)) {
-      return {
-        ...task,
-        timeLabel: "6:20-7:50 PM",
-        reason: "Rescheduled by instruction",
-        scheduleRationale:
-          `StudentOS moved tuition after applying the manual conflict instruction: ${manualInstruction}.`,
-        updated: true,
-      };
-    }
-
-    if (
-      input.trigger === "manual_conflict" &&
-      manualInstruction &&
-      /physics/i.test(task.title) &&
-      /extension|16\s*june|june\s*16/i.test(manualInstruction)
-    ) {
-      return {
-        ...task,
-        deadline: "16 June",
-        deadlineDateId: "2026-06-16",
-        reason: "Extension recorded",
-        scheduleRationale:
-          "StudentOS reduced the immediate deadline pressure because the manual instruction says Physics was extended to 16 June.",
-        updated: true,
-      };
-    }
+      input.trigger === "manual_conflict" && (index === manualTargetIndex || (manualTargetIndex < 0 && index === 0));
 
     return {
       ...task,
@@ -447,7 +337,7 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
               : task.reason,
       scheduleRationale:
         input.trigger === "manual_conflict" && manualInstruction
-          ? `StudentOS moved flexible work after applying the user's manual conflict instruction: ${manualInstruction}.`
+          ? `StudentOS reviewed this task after applying the user's manual conflict instruction: ${manualInstruction}.`
           : input.trigger === "clarification" && clarificationText
             ? `StudentOS used the clarification answer before choosing this slot: ${clarificationText}.`
             : taskIsAdded
@@ -456,7 +346,7 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
       updated:
         input.trigger === "add_task"
           ? taskIsAdded || taskWasLocallyMoved || undefined
-          : taskIsManualConflictTarget || index < 4 ? true : task.updated,
+          : taskIsManualConflictTarget ? true : task.updated,
     };
   }));
   const candidateResolvedEvents =
@@ -588,16 +478,22 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
     const currentConflictValidation = validateTimelineConflicts(result.timelineEvents);
     const resolvedConflictValidation = validateTimelineConflicts(result.resolvedTimelineEvents);
     const sanitizedResolvedEvents = resolvedConflictValidation.events;
-    const manualTuition = sanitizedResolvedEvents.find((event) => /tuition/i.test(event.title));
-    const manualCca = sanitizedResolvedEvents.find((event) => /cca|briefing/i.test(event.title));
+    const confirmedEventIds = resolvedConflictValidation.groups[0]?.eventIds ?? [];
+    const firstConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[0]);
+    const secondConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[1]);
     const conflict = {
       ...result.conflict,
       ...(input.trigger === "manual_conflict"
         ? {
-            fixedEventTitle: manualTuition?.title ?? result.conflict.fixedEventTitle,
-            fixedEventTime: manualTuition?.duration ?? manualTuition?.time ?? result.conflict.fixedEventTime,
-            conflictingEventTitle: manualCca?.title ?? result.conflict.conflictingEventTitle,
-            conflictingEventTime: manualCca?.duration ?? manualCca?.time ?? result.conflict.conflictingEventTime,
+            fixedEventTitle: firstConfirmedEvent?.title ?? result.conflict.fixedEventTitle,
+            fixedEventTime: firstConfirmedEvent?.duration ?? firstConfirmedEvent?.time ?? result.conflict.fixedEventTime,
+            conflictingEventTitle:
+              secondConfirmedEvent?.title ??
+              (resolvedConflictValidation.groups.length ? result.conflict.conflictingEventTitle : "No confirmed overlap"),
+            conflictingEventTime:
+              secondConfirmedEvent?.duration ??
+              secondConfirmedEvent?.time ??
+              (resolvedConflictValidation.groups.length ? result.conflict.conflictingEventTime : "Not confirmed"),
           }
         : {}),
       overlapLabel: resolvedConflictValidation.groups[0]?.overlapLabel ?? "No confirmed overlap",

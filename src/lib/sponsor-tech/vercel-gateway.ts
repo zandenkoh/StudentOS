@@ -131,49 +131,43 @@ export async function gatewayHealthTrace(timeoutMs = 5000): Promise<AISponsorTra
 
 const fallbackPlan: GatewayPlanResult = {
   summary:
-    "StudentOS kept the plan stable: finish the urgent Physics work first, protect fixed tuition, handle the CCA clash with a quick delegation, then use the remaining evening for revision and the coding roadmap.",
+    "StudentOS kept the fallback plan grounded in the submitted sources and avoided adding commitments that were not provided.",
   bullets: [
-    "Physics stays first because it is due tomorrow morning.",
-    "Tuition remains fixed, so the CCA conflict is handled with briefing notes.",
-    "Flexible revision moves later after dinner.",
-    "The coding goal becomes a scheduled roadmap block instead of a vague intention.",
+    "Fallback planning only used available commitments, goals, fixed events, and clarifications.",
+    "Missing timing or duration stays explicit instead of becoming a fabricated conflict.",
+    "The plan starts with review and clarification before deeper scheduling.",
+    "No demo commitments were substituted into the result.",
   ],
   dailyPlan: {
-    focus: "Finish Physics worksheet",
+    focus: "Review submitted commitments",
     doNow: [
       {
-        title: "Finish Physics worksheet",
-        timeLabel: "3:30-4:05 PM",
-        estimatedMinutes: 35,
-        reason: "Due tomorrow at 8 AM and needs uninterrupted focus.",
+        title: "Review submitted commitments",
+        timeLabel: "Next focused block",
+        estimatedMinutes: 20,
+        reason: "Confirms what is known before scheduling around uncertain details.",
       },
     ],
     doNext: [
       {
-        title: "Message teammate",
-        timeLabel: "4:10-4:13 PM",
-        estimatedMinutes: 3,
-        reason: "Clarifies the project meeting before the evening fills up.",
+        title: "Clarify missing timing or duration",
+        timeLabel: "After review",
+        estimatedMinutes: 10,
+        reason: "Prevents the fallback planner from inventing exact deadlines or conflicts.",
       },
       {
-        title: "Ask CCA lead for briefing notes",
-        timeLabel: "5:20-5:25 PM",
-        estimatedMinutes: 5,
-        reason: "Preserves tuition while still covering the CCA commitment.",
-      },
-      {
-        title: "Coding practice",
-        timeLabel: "9:00-10:00 PM",
-        estimatedMinutes: 60,
-        reason: "Starts the Python roadmap without crowding urgent work.",
+        title: "Schedule the clearest confirmed item",
+        timeLabel: "Next available slot",
+        estimatedMinutes: 25,
+        reason: "Moves the plan forward while keeping uncertain items separate.",
       },
     ],
     later: [
       {
-        title: "Coding fundamentals session",
-        timeLabel: "4:30-5:00 PM",
+        title: "Continue remaining confirmed work",
+        timeLabel: "Later today",
         estimatedMinutes: 30,
-        reason: "Keeps the December goal moving through smaller scheduled steps.",
+        reason: "Keeps momentum without substituting unrelated demo tasks.",
       },
     ],
   },
