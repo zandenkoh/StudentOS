@@ -11,6 +11,7 @@ import {
   FileSearch,
   Image,
   ListChecks,
+  Server,
   Sparkles,
   type LucideIcon
 } from "lucide-react";
@@ -36,6 +37,13 @@ type AgentLog = {
 };
 
 const FINISH_AT = 10000;
+
+type SponsorTraceItem = {
+  provider: string;
+  action: string;
+  status: "success" | "fallback" | "error";
+  detail: string;
+};
 
 const logs: AgentLog[] = [
   {
@@ -198,15 +206,56 @@ function AgentLogItem({
 export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
   const logViewportRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    const trace = window.localStorage.getItem("studentos_sponsor_trace");
+    if (!trace) return;
+
+    try {
+      setSponsorTrace(JSON.parse(trace) as SponsorTraceItem[]);
+    } catch {
+      setSponsorTrace([]);
+    }
+  }, []);
+
+  const allLogs = useMemo<AgentLog[]>(() => {
+    const sponsorLogs = sponsorTrace
+      .slice()
+      .reverse()
+      .map((trace, index) => ({
+        id: `sponsor-${index}-${trace.action}`,
+        at: 900 + index * 900,
+        kind: "tool" as const,
+        title: trace.action,
+        body:
+          trace.status === "success"
+            ? `${trace.provider} completed a real sponsor-tech step for this source.`
+            : `${trace.provider} returned a ${trace.status} state, so StudentOS kept the demo flow resilient.`,
+        tool: {
+          name: trace.provider,
+          icon: Server,
+          color:
+            trace.status === "success"
+              ? "text-sky-700"
+              : trace.status === "error"
+                ? "text-red-600"
+                : "text-amber-600",
+          result: trace.detail,
+        },
+      }));
+
+    return [...logs.slice(0, 1), ...sponsorLogs, ...logs.slice(1)].sort((a, b) => a.at - b.at);
+  }, [sponsorTrace]);
+
   const visibleLogs = useMemo(
-    () => logs.filter((log) => elapsedMs >= log.at),
-    [elapsedMs]
+    () => allLogs.filter((log) => elapsedMs >= log.at),
+    [allLogs, elapsedMs]
   );
-  const activeLog = visibleLogs[visibleLogs.length - 1] ?? logs[0];
+  const activeLog = visibleLogs[visibleLogs.length - 1] ?? allLogs[0];
   const progress = Math.min(0.62, 0.36 + (elapsedMs / FINISH_AT) * 0.26);
-  const done = elapsedMs >= logs[logs.length - 1].at;
+  const done = elapsedMs >= allLogs[allLogs.length - 1].at;
 
   useEffect(() => {
     const viewport = logViewportRef.current;
@@ -285,7 +334,7 @@ export default function AgentsThinkingPage() {
 
           <div className="mt-4 grid grid-cols-3 gap-2">
             {[
-              ["Sources", "7"],
+              ["Sources", sponsorTrace.length > 0 ? "Real" : "7"],
               ["Found", "5"],
               ["Open", "2"]
             ].map(([label, value]) => (

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   AudioLines, CalendarDays, FileText, Image, Globe2, MessageSquare,
-  Paperclip, ArrowUp, X, Play, Pause, Volume2, Sparkles, ChevronRight,
+  Paperclip, ArrowUp, X, Play, Pause, Volume2, Sparkles, ChevronRight, Cloud,
   type LucideIcon
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -20,6 +20,37 @@ type InputSource = {
   fileSize?: string;
   fileType?: "pdf" | "image" | "audio" | "text" | "link" | "email";
   filePath?: string;
+  s3Key?: string;
+  provider?: string;
+  ocrText?: string;
+  sponsorStatus?: "uploaded" | "extracted" | "fallback" | "error";
+};
+
+type SponsorTraceItem = {
+  provider: string;
+  action: string;
+  status: "success" | "fallback" | "error";
+  detail: string;
+};
+
+type AwsUploadResponse = {
+  provider: string;
+  warning?: string;
+  error?: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  bucket?: string;
+  key?: string;
+  readUrl?: string;
+};
+
+type AwsExtractResponse = {
+  provider: string;
+  warning?: string;
+  error?: string;
+  text?: string;
+  blockCount?: number;
 };
 
 const exampleSources: InputSource[] = [
@@ -97,6 +128,7 @@ export default function InputPage() {
   const [sources, setSources] = useState<InputSource[]>([]);
   const [inputText, setInputText] = useState("");
   const [isInjecting, setIsInjecting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [previewSource, setPreviewSource] = useState<InputSource | null>(null);
   
   // Audio player state
@@ -104,6 +136,7 @@ export default function InputPage() {
   const [audioTime, setAudioTime] = useState(0);
   const audioIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const injectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-grow textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -169,31 +202,177 @@ export default function InputPage() {
     setInputText("");
   };
 
-  // Trigger file upload simulation
-  const handleSimulateUpload = () => {
-    const mockFiles: InputSource[] = [
-      {
-        id: `uploaded-img-${Date.now()}`,
-        icon: Image,
-        title: "schedule_screenshot.png",
-        source: "Upload",
-        snippet: "Timetable schedule and tuition slots",
-        fileSize: "320 KB",
-        fileType: "image"
-      },
-      {
-        id: `uploaded-pdf-${Date.now()}`,
-        icon: FileText,
-        title: "syllabus_draft.pdf",
-        source: "Upload",
-        snippet: "Syllabus goals and reading milestones",
-        fileSize: "2.1 MB",
-        fileType: "pdf"
+  const addSponsorTrace = (item: SponsorTraceItem) => {
+    if (typeof window === "undefined") return;
+
+    const existing = window.localStorage.getItem("studentos_sponsor_trace");
+    let trace: SponsorTraceItem[] = [];
+
+    if (existing) {
+      try {
+        trace = JSON.parse(existing) as SponsorTraceItem[];
+      } catch {
+        trace = [];
       }
-    ];
-    // Add one randomly
-    const randomFile = mockFiles[Math.floor(Math.random() * mockFiles.length)];
-    setSources((prev) => [randomFile, ...prev]);
+    }
+
+    window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
+  };
+
+  const formatFileSize = (size: number) => {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const inferFileType = (file: File): InputSource["fileType"] => {
+    if (file.type.startsWith("image/")) return "image";
+    if (file.type === "application/pdf") return "pdf";
+    if (file.type.startsWith("audio/")) return "audio";
+    return "text";
+  };
+
+  const iconForFileType = (fileType: InputSource["fileType"]) => {
+    if (fileType === "image") return Image;
+    if (fileType === "audio") return AudioLines;
+    return FileText;
+  };
+
+  const fallbackSnippetForFile = (file: File) => {
+    if (file.type.startsWith("image/")) return "Uploaded image queued for commitment extraction.";
+    if (file.type === "application/pdf") return "Uploaded PDF queued for commitment extraction.";
+    return "Uploaded file queued for source processing.";
+  };
+
+  const handleFileSelected = async (file: File | undefined) => {
+    if (!file || isUploading) return;
+
+    const fileType = inferFileType(file);
+    const localPreviewUrl = fileType === "image" ? URL.createObjectURL(file) : undefined;
+    const pendingSource: InputSource = {
+      id: `upload-${Date.now()}`,
+      icon: iconForFileType(fileType),
+      title: file.name,
+      source: "Upload",
+      snippet: "Uploading to AWS S3...",
+      fileSize: formatFileSize(file.size),
+      fileType,
+      filePath: localPreviewUrl,
+      provider: "aws-s3",
+      sponsorStatus: "uploaded",
+    };
+
+    setIsUploading(true);
+    setSources((prev) => [pendingSource, ...prev]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadResponse = await fetch("/api/sponsor/aws/upload-source", {
+        method: "POST",
+        body: formData,
+      });
+      const upload = (await uploadResponse.json()) as AwsUploadResponse;
+
+      if (upload.provider !== "aws-s3" || !upload.key) {
+        addSponsorTrace({
+          provider: "AWS",
+          action: "Stored source packet in S3",
+          status: "fallback",
+          detail: upload.warning || "S3 upload skipped; demo fallback source kept.",
+        });
+        setSources((prev) =>
+          prev.map((source) =>
+            source.id === pendingSource.id
+              ? {
+                  ...source,
+                  snippet: fallbackSnippetForFile(file),
+                  provider: upload.provider,
+                  sponsorStatus: "fallback",
+                }
+              : source,
+          ),
+        );
+        return;
+      }
+
+      addSponsorTrace({
+        provider: "AWS",
+        action: "Stored source packet in S3",
+        status: "success",
+        detail: `${file.name} -> ${upload.key}`,
+      });
+
+      let snippet = fallbackSnippetForFile(file);
+      let ocrText = "";
+      let sponsorStatus: InputSource["sponsorStatus"] = "uploaded";
+
+      if (fileType === "image" || fileType === "pdf") {
+        const extractResponse = await fetch("/api/sponsor/aws/extract-source", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: upload.key }),
+        });
+        const extraction = (await extractResponse.json()) as AwsExtractResponse;
+
+        if (extraction.provider === "aws-textract" && extraction.text) {
+          ocrText = extraction.text;
+          snippet = extraction.text.split("\n").find(Boolean)?.slice(0, 110) || snippet;
+          sponsorStatus = "extracted";
+          addSponsorTrace({
+            provider: "AWS",
+            action: "Extracted worksheet text with Textract",
+            status: "success",
+            detail: `${extraction.blockCount || 0} Textract blocks returned.`,
+          });
+        } else {
+          addSponsorTrace({
+            provider: "AWS",
+            action: "Extracted worksheet text with Textract",
+            status: "fallback",
+            detail: extraction.warning || extraction.error || "Textract returned no text.",
+          });
+        }
+      }
+
+      setSources((prev) =>
+        prev.map((source) =>
+          source.id === pendingSource.id
+            ? {
+                ...source,
+                source: sponsorStatus === "extracted" ? "AWS Textract" : "AWS S3",
+                snippet,
+                s3Key: upload.key,
+                provider: upload.provider,
+                ocrText,
+                sponsorStatus,
+              }
+            : source,
+        ),
+      );
+    } catch (error) {
+      addSponsorTrace({
+        provider: "AWS",
+        action: "Processed uploaded source",
+        status: "error",
+        detail: error instanceof Error ? error.message : "Upload failed.",
+      });
+      setSources((prev) =>
+        prev.map((source) =>
+          source.id === pendingSource.id
+            ? {
+                ...source,
+                snippet: fallbackSnippetForFile(file),
+                sponsorStatus: "error",
+              }
+            : source,
+        ),
+      );
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   // Inject example sources one by one
@@ -279,12 +458,20 @@ export default function InputPage() {
           />
           
           <div className="mt-2 flex items-center justify-between border-t border-neutral-100 pt-2.5">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf,text/plain,audio/*"
+              className="hidden"
+              onChange={(event) => handleFileSelected(event.target.files?.[0])}
+            />
             <button
-              onClick={handleSimulateUpload}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
               className="flex size-9 items-center justify-center rounded-full bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-ink transition-colors"
               title="Upload file"
             >
-              <Paperclip className="size-4.5" />
+              {isUploading ? <Cloud className="size-4.5 animate-pulse" /> : <Paperclip className="size-4.5" />}
             </button>
 
             <button
@@ -375,6 +562,11 @@ export default function InputPage() {
                       </div>
                       
                       <div className="flex items-center gap-1">
+                        {source.sponsorStatus && (
+                          <span className="hidden sm:inline-flex rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">
+                            {source.sponsorStatus === "extracted" ? "Textract" : source.sponsorStatus === "uploaded" ? "S3" : "Fallback"}
+                          </span>
+                        )}
                         <span className="hidden sm:inline-flex rounded-full bg-[#FAFAFA] border border-neutral-100 px-2 py-0.5 text-[9px] font-bold text-neutral-500">
                           {source.source}
                         </span>
@@ -419,6 +611,13 @@ export default function InputPage() {
         onClose={() => setPreviewSource(null)}
       >
         <div className="w-full pb-4">
+          {previewSource?.s3Key && (
+            <div className="mb-3 rounded-xl border border-sky-100 bg-sky-50 p-3 text-[11px] font-semibold text-sky-800">
+              AWS S3 stored this source at <span className="font-mono">{previewSource.s3Key}</span>
+              {previewSource.ocrText ? " and Textract extracted text below." : "."}
+            </div>
+          )}
+
           {previewSource?.fileType === "pdf" && (
             <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4 font-mono text-xs text-neutral-700 space-y-3">
               <div className="border-b border-neutral-200 pb-2 flex justify-between font-sans font-semibold text-[10px] uppercase text-neutral-400">
@@ -556,6 +755,17 @@ export default function InputPage() {
                 </p>
               </div>
             )
+          )}
+
+          {previewSource?.ocrText && (
+            <div className="mt-3 rounded-xl border border-neutral-100 bg-white p-4 shadow-sm">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                AWS Textract OCR
+              </p>
+              <p className="whitespace-pre-wrap text-xs font-semibold leading-relaxed text-neutral-700">
+                {previewSource.ocrText}
+              </p>
+            </div>
           )}
 
           {previewSource?.fileType === "link" && (
