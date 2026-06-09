@@ -1,3 +1,5 @@
+import { intervalsOverlap, parseTimeInterval, type TimeInterval } from "@/lib/schedule-conflicts";
+
 type ClockWindowTask = {
   id?: string;
   title: string;
@@ -9,6 +11,11 @@ type ClockWindowTask = {
   scheduledDateRange?: string;
   goalId?: string;
   isRoadmapTask?: boolean;
+};
+
+export type BusyTimeBlock = {
+  label: string;
+  dateKey?: string;
 };
 
 const DEFAULT_BLOCK_MINUTES = 30;
@@ -70,6 +77,61 @@ function rangeFromStart(startLabel: string, estimatedMinutes?: number) {
   return `${startWithoutMeridiem}-${end}`;
 }
 
+function rangeFromStartMinutes(startMinutes: number, estimatedMinutes?: number) {
+  const duration = Math.max(1, estimatedMinutes ?? DEFAULT_BLOCK_MINUTES);
+  const start = formatClock(startMinutes);
+  const end = formatClock(startMinutes + duration);
+  const startWithoutMeridiem = start.endsWith(end.slice(-2)) ? start.replace(/\s[AP]M$/, "") : start;
+
+  return `${startWithoutMeridiem}-${end}`;
+}
+
+function intervalFromStartMinutes(startMinutes: number, estimatedMinutes?: number): TimeInterval {
+  return {
+    startMinutes,
+    endMinutes: startMinutes + Math.max(1, estimatedMinutes ?? DEFAULT_BLOCK_MINUTES),
+  };
+}
+
+function normalizedDateKey(value?: string) {
+  return value?.trim().toLowerCase().replace(/\s+/g, " ") || "";
+}
+
+function dateKeyForTask(task: ClockWindowTask) {
+  const explicitKey = normalizedDateKey(task.scheduledDateId ?? task.scheduledDate ?? task.scheduledDateRange);
+  if (explicitKey) return explicitKey;
+  return task.section === "subsequent_days" ? "future" : "today";
+}
+
+function intervalsConflictOnDate(
+  first: { interval: TimeInterval; dateKey: string },
+  second: { interval: TimeInterval; dateKey: string },
+) {
+  return first.dateKey === second.dateKey && intervalsOverlap(first.interval, second.interval);
+}
+
+function hasBusyOverlap(
+  interval: TimeInterval,
+  dateKey: string,
+  busyIntervals: { interval: TimeInterval; dateKey: string }[],
+) {
+  return busyIntervals.some((busy) => intervalsConflictOnDate({ interval, dateKey }, busy));
+}
+
+function busyIntervalsFromBlocks(blocks: BusyTimeBlock[]) {
+  return blocks
+    .map((block) => {
+      const interval = parseTimeInterval(block.label);
+      if (!interval) return null;
+
+      return {
+        interval,
+        dateKey: normalizedDateKey(block.dateKey) || "today",
+      };
+    })
+    .filter((block): block is { interval: TimeInterval; dateKey: string } => Boolean(block));
+}
+
 export function hasClockRange(label?: string) {
   return Boolean(label && CLOCK_RANGE_PATTERN.test(label));
 }
@@ -105,8 +167,48 @@ export function ensureTaskTimeRange<T extends ClockWindowTask>(task: T, index = 
   };
 }
 
-export function ensureTaskTimeRanges<T extends ClockWindowTask>(tasks: T[]) {
-  return tasks.map((task, index) => ensureTaskTimeRange(task, index));
+export function ensureTaskTimeRanges<T extends ClockWindowTask>(tasks: T[], busyBlocks: BusyTimeBlock[] = []) {
+  const reservedIntervals = busyIntervalsFromBlocks(busyBlocks);
+
+  return tasks.map((task, index) => {
+    const rangedTask = ensureTaskTimeRange(task, index);
+    const dateKey = dateKeyForTask(rangedTask);
+    const existingInterval = parseTimeInterval(rangedTask.timeLabel);
+
+    if (existingInterval && !hasBusyOverlap(existingInterval, dateKey, reservedIntervals)) {
+      reservedIntervals.push({ interval: existingInterval, dateKey });
+      return rangedTask;
+    }
+
+    const defaultInterval = parseTimeInterval(defaultTimeRangeForTask(rangedTask, index));
+    const preferredStart = defaultInterval?.startMinutes ?? 15 * 60;
+    const duration = Math.max(1, rangedTask.estimatedMinutes ?? DEFAULT_BLOCK_MINUTES);
+    const searchStarts = [
+      ...Array.from({ length: Math.max(0, Math.floor((23 * 60 - preferredStart - duration) / 15) + 1) }, (_, slot) =>
+        preferredStart + slot * 15,
+      ),
+      ...Array.from({ length: Math.max(0, Math.floor((preferredStart - 6 * 60) / 15)) }, (_, slot) => 6 * 60 + slot * 15),
+    ];
+    const availableStart = searchStarts.find((startMinutes) =>
+      !hasBusyOverlap(intervalFromStartMinutes(startMinutes, duration), dateKey, reservedIntervals),
+    );
+
+    if (availableStart === undefined) {
+      if (existingInterval) reservedIntervals.push({ interval: existingInterval, dateKey });
+      return rangedTask;
+    }
+
+    const nextTask = {
+      ...rangedTask,
+      timeLabel: rangeFromStartMinutes(availableStart, duration),
+    };
+    reservedIntervals.push({
+      interval: intervalFromStartMinutes(availableStart, duration),
+      dateKey,
+    });
+
+    return nextTask;
+  });
 }
 
 export function scheduleLabelWithTimeRange(task: ClockWindowTask) {

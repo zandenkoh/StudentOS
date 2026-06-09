@@ -2,8 +2,8 @@ import "server-only";
 
 import { generateText } from "ai";
 import { z } from "zod";
-import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
-import { ensureTaskTimeRanges } from "@/lib/time-scheduling";
+import { isFixedTimeConflictCandidate, validateTimelineConflicts } from "@/lib/schedule-conflicts";
+import { ensureTaskTimeRanges, type BusyTimeBlock } from "@/lib/time-scheduling";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 
@@ -194,8 +194,16 @@ function estimatedMinutesFromDuration(value: string, fallback = 30) {
   return fallback;
 }
 
-function normalizeTasks(tasks: z.infer<typeof PlanTaskSchema>[]) {
-  return ensureTaskTimeRanges(tasks).map((task) => ({
+function busyBlocksFromTimeline(events: z.infer<typeof TimelineEventSchema>[]): BusyTimeBlock[] {
+  return events
+    .filter(isFixedTimeConflictCandidate)
+    .map((event) => ({
+      label: event.duration ?? event.time,
+    }));
+}
+
+function normalizeTasks(tasks: z.infer<typeof PlanTaskSchema>[], busyBlocks: BusyTimeBlock[] = []) {
+  return ensureTaskTimeRanges(tasks, busyBlocks).map((task) => ({
     ...task,
     updated: task.updated || undefined,
   }));
@@ -373,7 +381,7 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
           ? taskIsAdded || taskWasLocallyMoved || undefined
           : taskIsManualConflictTarget ? true : task.updated,
     };
-  }));
+  }), busyBlocksFromTimeline(input.timelineEvents.length ? input.timelineEvents : input.resolvedTimelineEvents));
   const candidateResolvedEvents =
     input.trigger === "manual_conflict"
       ? resolvedEventsForManualInstruction(input)
@@ -510,6 +518,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Do not keep stale conflict text after a manual instruction resolves or changes the conflict.",
           "Do not replace the user's plan with Physics/CCA/demo data unless those exact items are in currentCommitments.",
           "Move flexible work before moving fixed events unless the manual instruction explicitly says a fixed event changed.",
+          "Never schedule an added, clarified, or moved task into a clock range that overlaps an existing task or event on the same day.",
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
           "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
           "Return only a JSON object with commitments, planTasks, timelineEvents, resolvedTimelineEvents, conflict, rationale, and dailyPlan.",
@@ -537,9 +546,12 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
 
   try {
     const result = await generateReplanWithModel(primaryModel, input);
-    const tasks = ensureUpdatedReplanTask(input.trigger, normalizeTasks(result.planTasks));
     const currentConflictValidation = validateTimelineConflicts(result.timelineEvents);
     const resolvedConflictValidation = validateTimelineConflicts(result.resolvedTimelineEvents);
+    const tasks = ensureUpdatedReplanTask(
+      input.trigger,
+      normalizeTasks(result.planTasks, busyBlocksFromTimeline(currentConflictValidation.events)),
+    );
     const sanitizedResolvedEvents = resolvedConflictValidation.events;
     const confirmedEventIds = resolvedConflictValidation.groups[0]?.eventIds ?? [];
     const firstConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[0]);
@@ -592,9 +604,12 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
     if (fallbackModel && fallbackModel !== primaryModel) {
       try {
         const result = await generateReplanWithModel(fallbackModel, input);
-        const tasks = ensureUpdatedReplanTask(input.trigger, normalizeTasks(result.planTasks));
         const currentConflictValidation = validateTimelineConflicts(result.timelineEvents);
         const resolvedConflictValidation = validateTimelineConflicts(result.resolvedTimelineEvents);
+        const tasks = ensureUpdatedReplanTask(
+          input.trigger,
+          normalizeTasks(result.planTasks, busyBlocksFromTimeline(currentConflictValidation.events)),
+        );
         const sanitizedResolvedEvents = resolvedConflictValidation.events;
         const confirmedEventIds = resolvedConflictValidation.groups[0]?.eventIds ?? [];
         const firstConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[0]);

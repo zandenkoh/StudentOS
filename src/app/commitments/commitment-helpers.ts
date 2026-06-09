@@ -468,9 +468,9 @@ export function upsertClarifiedCommitmentTask(
 
   const task = taskFromClarifiedCommitment(commitment, clarificationSummary);
   const futureIndex = tasks.findIndex((item) => item.section === "subsequent_days");
-  if (futureIndex < 0) return [...tasks, task];
+  if (futureIndex < 0) return ensureTaskTimeRanges([...tasks, task]);
 
-  return [...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)];
+  return ensureTaskTimeRanges([...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)]);
 }
 
 export function commitmentsWithAddedCommitment(current: Commitment[], commitment: Commitment) {
@@ -508,11 +508,11 @@ export function planTasksWithAddedTask(
       : item,
   );
 
-  return [
+  return ensureTaskTimeRanges([
     ...next.slice(0, insertionIndex),
     task,
     ...next.slice(insertionIndex),
-  ];
+  ]);
 }
 
 function taskMatchesCommitment(task: DemoPlanTask, commitment: Commitment) {
@@ -561,7 +561,7 @@ export function planTasksWithEditedCommitment(
     nextCommitment.type,
   );
 
-  return current.map((task) => {
+  return ensureTaskTimeRanges(current.map((task) => {
     if (!taskMatchesCommitment(task, previousCommitment)) return task;
 
     return ensureTaskTimeRange({
@@ -575,7 +575,7 @@ export function planTasksWithEditedCommitment(
       scheduleRationale: `StudentOS updated this scheduled task after the commitment was edited to "${nextCommitment.title}".`,
       updated: true,
     });
-  });
+  }));
 }
 
 export function planTasksWithoutCommitment(

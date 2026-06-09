@@ -14,7 +14,7 @@ export type ConfirmedConflictGroup = {
   overlapLabel: string;
 };
 
-type TimeInterval = {
+export type TimeInterval = {
   startMinutes: number;
   endMinutes: number;
 };
@@ -64,6 +64,10 @@ function overlapMinutes(first: TimeInterval, second: TimeInterval) {
   return Math.max(0, Math.min(first.endMinutes, second.endMinutes) - Math.max(first.startMinutes, second.startMinutes));
 }
 
+export function intervalsOverlap(first: TimeInterval, second: TimeInterval) {
+  return overlapMinutes(first, second) > 0;
+}
+
 function isMovableLabel(value: string) {
   return ["flexible", "moved", "weekly goal", "high priority", "priority", "handled", "review", "unscheduled"].some((label) =>
     value.includes(label),
@@ -92,7 +96,65 @@ export function validateTimelineConflicts<TEvent extends SchedulableTimelineEven
   const groupsById = new Map<string, TEvent[]>();
   const confirmedGroups: ConfirmedConflictGroup[] = [];
 
-  events.forEach((event) => {
+  sanitizedEvents.forEach((event) => {
+    if (event.conflictGroupId?.startsWith("detected-conflict-")) {
+      delete event.conflictGroupId;
+    }
+    if (!event.conflictGroupId && event.tone === "conflict") {
+      delete event.tone;
+    }
+  });
+
+  const fixedIntervals = sanitizedEvents
+    .filter(isFixedTimeConflictCandidate)
+    .map((event) => ({
+      event,
+      interval: parseTimeInterval(event.duration ?? event.time),
+    }))
+    .filter((item): item is { event: TEvent; interval: TimeInterval } => Boolean(item.interval));
+
+  let detectedGroupNumber = 0;
+
+  for (let firstIndex = 0; firstIndex < fixedIntervals.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < fixedIntervals.length; secondIndex += 1) {
+      const first = fixedIntervals[firstIndex];
+      const second = fixedIntervals[secondIndex];
+      const minutes = overlapMinutes(first.interval, second.interval);
+      if (minutes <= 0) continue;
+      if (first.event.conflictGroupId && second.event.conflictGroupId) continue;
+
+      const groupId = first.event.conflictGroupId ?? second.event.conflictGroupId ?? `detected-conflict-${detectedGroupNumber + 1}`;
+      if (!first.event.conflictGroupId && !second.event.conflictGroupId) detectedGroupNumber += 1;
+      first.event.conflictGroupId = groupId;
+      second.event.conflictGroupId = groupId;
+      first.event.tone = "conflict";
+      second.event.tone = "conflict";
+    }
+  }
+
+  let mergedDetectedGroup = true;
+  while (mergedDetectedGroup) {
+    mergedDetectedGroup = false;
+
+    for (let firstIndex = 0; firstIndex < fixedIntervals.length; firstIndex += 1) {
+      for (let secondIndex = firstIndex + 1; secondIndex < fixedIntervals.length; secondIndex += 1) {
+        const first = fixedIntervals[firstIndex];
+        const second = fixedIntervals[secondIndex];
+        if (!first.event.conflictGroupId || !second.event.conflictGroupId) continue;
+        if (first.event.conflictGroupId === second.event.conflictGroupId) continue;
+        if (!intervalsOverlap(first.interval, second.interval)) continue;
+
+        const targetGroupId = first.event.conflictGroupId;
+        const sourceGroupId = second.event.conflictGroupId;
+        sanitizedEvents.forEach((event) => {
+          if (event.conflictGroupId === sourceGroupId) event.conflictGroupId = targetGroupId;
+        });
+        mergedDetectedGroup = true;
+      }
+    }
+  }
+
+  sanitizedEvents.forEach((event) => {
     if (!event.conflictGroupId) return;
 
     const group = groupsById.get(event.conflictGroupId) ?? [];

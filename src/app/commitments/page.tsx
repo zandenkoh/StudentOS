@@ -67,7 +67,7 @@ import type {
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
-import { ensureTaskTimeRange } from "@/lib/time-scheduling";
+import { ensureTaskTimeRange, ensureTaskTimeRanges } from "@/lib/time-scheduling";
 import {
   addDaysToDateId,
   baseTaskTitle,
@@ -1272,9 +1272,10 @@ export default function CommitmentsPage() {
         });
       }
     }
-    setPlanTasks(updatedTasks);
+    const nextTasks = ensureTaskTimeRanges(updatedTasks);
+    setPlanTasks(nextTasks);
     persistCompletedTask(task.id);
-    persistPlanTasks(updatedTasks);
+    persistPlanTasks(nextTasks);
   }
 
   function clarify(target: NonNullable<ClarifyingState>, answers: ClarificationAnswers = {}) {

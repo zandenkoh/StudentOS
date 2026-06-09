@@ -5,8 +5,9 @@ import { z } from "zod";
 import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
-import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
+import { isFixedTimeConflictCandidate, validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
+import { ensureTaskTimeRanges, type BusyTimeBlock } from "@/lib/time-scheduling";
 import type {
   AIAgentLog,
   AISponsorTraceItem,
@@ -1357,6 +1358,14 @@ function normalizeConflictAnalysis(
   };
 }
 
+function busyBlocksFromTimeline(events: ReturnType<typeof normalizeTimelineEvent>[]): BusyTimeBlock[] {
+  return events
+    .filter(isFixedTimeConflictCandidate)
+    .map((event) => ({
+      label: event.duration ?? event.time,
+    }));
+}
+
 function buildFootprintFromCore({
   core,
   input,
@@ -1375,6 +1384,10 @@ function buildFootprintFromCore({
   const sources = input.sources;
   const timelineValidation = validateTimelineConflicts(core.timelineEvents.map(normalizeTimelineEvent));
   const resolvedTimelineValidation = validateTimelineConflicts(core.resolvedTimelineEvents.map(normalizeTimelineEvent));
+  const normalizedTasks = ensureTaskTimeRanges(
+    splitLongStudyTasks(core.planTasks.map(normalizePlanTask)),
+    busyBlocksFromTimeline(timelineValidation.events),
+  );
   const footprint: StudentOSAgentFootprint = {
     createdAt: new Date().toISOString(),
     currentDate: input.currentDate,
@@ -1388,7 +1401,7 @@ function buildFootprintFromCore({
     timelineEvents: timelineValidation.events,
     resolvedTimelineEvents: resolvedTimelineValidation.events,
     conflict: normalizeConflictAnalysis(core.conflict, timelineValidation.groups),
-    planTasks: splitLongStudyTasks(core.planTasks.map(normalizePlanTask)),
+    planTasks: normalizedTasks,
     roadmapSteps: core.roadmapSteps.map(normalizeRoadmapStep),
     rationale: core.rationale,
     goalResearch,
@@ -1447,6 +1460,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
           "Every plan task must include an exact clock range in timeLabel. This applies to task-only uploads, goal-only uploads, and mixed uploads. Goal roadmap tasks may also include scheduledDate or scheduledDateRange, but must still include a concrete work window such as '5:15-6:00 PM'.",
+          "Never schedule two plan tasks, timeline events, or a plan task and timeline event into overlapping clock ranges on the same day. Treat existing task and event ranges as busy unless the item is explicitly moved or resolved.",
           "For broad goals, schedule the next actionable sessions into specific time ranges instead of only assigning day intervals or month ranges.",
           `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
           `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
