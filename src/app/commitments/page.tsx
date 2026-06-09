@@ -131,6 +131,15 @@ type ClarifyingState = {
   commitmentId: string;
 } | null;
 
+type ClarificationAnswerRecord = {
+  commitmentId: string;
+  commitmentTitle: string;
+  kind: AIClarificationQuestion["kind"];
+  question: string;
+  answer: string;
+  answeredAt: string;
+};
+
 const MANUAL_CONFLICT_INSTRUCTION =
   "Physics teacher has granted extension for worksheet deadline to 16 June. Reschedule tuition accordingly, so that it no longer clashes with CCA briefing.";
 
@@ -591,16 +600,142 @@ function movedScheduleRationale(task: DemoPlanTask, schedule: string) {
   return `StudentOS moved ${baseTaskTitle(task.title)} to ${schedule} because it still fits${deadline} while reducing pressure on the original slot.`;
 }
 
-function questionForSheet(question?: AIClarificationQuestion): ClarificationQuestion[] | undefined {
-  if (!question) return undefined;
+interface CompletionTime {
+  hours: number;
+  minutes: number;
+}
 
-  return [
-    {
-      question: question.question,
-      options: question.options,
-      customPlaceholder: question.customPlaceholder,
-    },
-  ];
+const DEMO_COMPLETION_TIMES: Record<string, CompletionTime> = {
+  "physics-focus": { hours: 20, minutes: 35 },        // 8:35 PM
+  "message-teammate": { hours: 20, minutes: 38 },     // 8:38 PM
+  "cca-notes": { hours: 18, minutes: 45 },            // 6:45 PM
+  "tuition": { hours: 18, minutes: 30 },              // 6:30 PM
+  "revision": { hours: 20, minutes: 30 },             // 8:30 PM
+  "coding-practice": { hours: 22, minutes: 0 },       // 10:00 PM
+};
+
+function getScheduledCompletionTime(
+  task: DemoPlanTask,
+  timelineEvents: TimelineEvent[]
+): Date {
+  const now = new Date();
+  const scheduled = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  // 1. Check if ID exists in our map
+  const mapped = DEMO_COMPLETION_TIMES[task.id];
+  if (mapped) {
+    scheduled.setHours(mapped.hours, mapped.minutes, 0, 0);
+    return scheduled;
+  }
+
+  // 2. Otherwise try to parse start time from timeline event and add estimated minutes
+  const event = timelineEvents.find(e => {
+    if (e.id === task.id) return true;
+    if (e.id === "physics" && task.id === "physics-focus") return true;
+    if (e.id === "notes" && task.id === "cca-notes") return true;
+    if (e.id === "coding" && task.id === "coding-practice") return true;
+    return false;
+  });
+
+  let startTimeStr = event?.time || "";
+  if (!startTimeStr && task.timeLabel) {
+    const parts = task.timeLabel.split("-");
+    startTimeStr = parts[0];
+  }
+
+  if (startTimeStr) {
+    const match = startTimeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+    if (match) {
+      let hours = parseInt(match[1], 10);
+      const minutes = parseInt(match[2], 10);
+      const ampm = match[3].toUpperCase();
+      if (ampm === "PM" && hours < 12) hours += 12;
+      if (ampm === "AM" && hours === 12) hours = 0;
+      
+      scheduled.setHours(hours, minutes, 0, 0);
+      const duration = task.estimatedMinutes ?? (task.id === "tuition" ? 120 : 0);
+      scheduled.setMinutes(scheduled.getMinutes() + duration);
+      return scheduled;
+    }
+  }
+
+  // Fallback to task's estimated time from now
+  scheduled.setMinutes(scheduled.getMinutes() + (task.estimatedMinutes ?? 30));
+  return scheduled;
+}
+
+function questionsForSheet(questions: AIClarificationQuestion[]): ClarificationQuestion[] | undefined {
+  if (!questions.length) return undefined;
+
+  return questions.map((question) => ({
+    question: question.question,
+    options: question.options,
+    customPlaceholder: question.customPlaceholder,
+  }));
+}
+
+function estimatedMinutesFromDuration(value: string, type: Commitment["type"]) {
+  const hourMatch = value.match(/(\d+(?:\.\d+)?)\s*h/i);
+  if (hourMatch) return Math.max(15, Math.round(Number(hourMatch[1]) * 60));
+
+  const minuteMatch = value.match(/(\d+)\s*m/i);
+  if (minuteMatch) return Math.max(1, Number(minuteMatch[1]));
+
+  if (type === "event") return 30;
+  if (type === "goal") return 30;
+  return 25;
+}
+
+function commitmentHasScheduledTask(commitment: Commitment, tasks: DemoPlanTask[]) {
+  const title = normalizeSearchText(commitment.title);
+  return tasks.some((task) => {
+    const taskTitle = normalizeSearchText(task.title);
+    return (
+      task.id === commitment.id ||
+      task.id === `clarified-${commitment.id}` ||
+      task.goalId === commitment.id ||
+      taskTitle.includes(title) ||
+      title.includes(taskTitle)
+    );
+  });
+}
+
+function taskFromClarifiedCommitment(
+  commitment: Commitment,
+  clarificationSummary: string,
+): DemoPlanTask {
+  const title =
+    commitment.type === "goal"
+      ? `Plan next step for ${commitment.title}`
+      : commitment.title;
+
+  return {
+    id: `clarified-${commitment.id}`,
+    title,
+    section: "do_next",
+    estimatedMinutes: estimatedMinutesFromDuration(commitment.estimatedDuration, commitment.type),
+    timeLabel: "After current focus",
+    reason: "Added after user clarification resolved the missing context",
+    scheduleRationale: `StudentOS schedules this because the earlier ambiguity was resolved by the user's clarification: ${clarificationSummary}.`,
+    source: commitment.source,
+    goalId: commitment.type === "goal" ? commitment.id : undefined,
+    isRoadmapTask: commitment.type === "goal" ? true : undefined,
+    updated: true,
+  };
+}
+
+function upsertClarifiedCommitmentTask(
+  tasks: DemoPlanTask[],
+  commitment: Commitment,
+  clarificationSummary: string,
+) {
+  if (commitmentHasScheduledTask(commitment, tasks)) return tasks;
+
+  const task = taskFromClarifiedCommitment(commitment, clarificationSummary);
+  const futureIndex = tasks.findIndex((item) => item.section === "subsequent_days");
+  if (futureIndex < 0) return [...tasks, task];
+
+  return [...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)];
 }
 
 export default function CommitmentsPage() {
@@ -637,6 +772,7 @@ export default function CommitmentsPage() {
     enrichPlanTasksWithRationales(initialPlanTasks)
   );
   const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
+  const [clarificationAnswerRecords, setClarificationAnswerRecords] = useState<ClarificationAnswerRecord[]>([]);
   const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
@@ -688,6 +824,11 @@ export default function CommitmentsPage() {
         (question) => question.commitmentId === clarifying.commitmentId,
       )
     : undefined;
+  const activeClarifications = clarifying
+    ? aiFootprint?.clarificationQuestions.filter(
+        (question) => question.commitmentId === clarifying.commitmentId,
+      ) ?? []
+    : [];
   const focusTask = planTasks.find((task) => task.section === "do_now") ?? planTasks[0];
   const roadmapGoal = goalItems[0];
   const nextRoadmapTask = planTasks.find((task) => task.isRoadmapTask);
@@ -748,6 +889,14 @@ export default function CommitmentsPage() {
         }
       }
 
+      const savedClarifications = window.localStorage.getItem("studentos_clarification_answers");
+      if (savedClarifications) {
+        const parsedClarifications = JSON.parse(savedClarifications) as ClarificationAnswerRecord[];
+        if (Array.isArray(parsedClarifications)) {
+          setClarificationAnswerRecords(parsedClarifications);
+        }
+      }
+
       if (window.localStorage.getItem("studentos_extra_source_added")) {
         setChemistryAdded(true);
       }
@@ -788,11 +937,22 @@ export default function CommitmentsPage() {
   }, [planHydrated, planTasks]);
 
   useEffect(() => {
+    if (!planHydrated) return;
+    window.localStorage.setItem(
+      "studentos_clarification_answers",
+      JSON.stringify(clarificationAnswerRecords),
+    );
+  }, [clarificationAnswerRecords, planHydrated]);
+
+  useEffect(() => {
     if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current) return;
 
     aiPlanRequestStarted.current = true;
 
-    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${chemistryAdded ? "chemistry" : "standard"}`;
+    const clarificationSignature = clarificationAnswerRecords
+      .map((item) => `${item.commitmentId}:${item.question}:${item.answer}`)
+      .join("|");
+    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${chemistryAdded ? "chemistry" : "standard"}_${clarificationSignature.length}`;
     const cached = window.localStorage.getItem(cacheKey);
 
     if (cached) {
@@ -823,6 +983,7 @@ export default function CommitmentsPage() {
               state: item.state,
               estimatedDuration: item.estimatedDuration,
               source: item.source,
+              explanation: item.explanation,
             })),
             goals: goalItems.map((item) => ({
               id: item.id,
@@ -839,11 +1000,16 @@ export default function CommitmentsPage() {
                 duration: event.duration,
                 status: event.chip,
               })),
+            clarificationAnswers: clarificationAnswerRecords,
             sourceContext: {
               narrative: "AWS extracted messy screenshots, PDFs, and text sources before this Vercel planning step.",
               conflictResolution: resolutionMode ?? "recommended",
               addedSource: chemistryAdded ? "Chemistry worksheet due 8 PM" : undefined,
               addedSourceKey,
+              clarificationSummary:
+                clarificationAnswerRecords.length > 0
+                  ? clarificationAnswerRecords.map((item) => `${item.question}: ${item.answer}`)
+                  : undefined,
             },
           }),
         });
@@ -897,6 +1063,7 @@ export default function CommitmentsPage() {
     addedSourceKey,
     aiPlan,
     chemistryAdded,
+    clarificationAnswerRecords,
     commitments,
     goalItems,
     planHydrated,
@@ -910,55 +1077,141 @@ export default function CommitmentsPage() {
     window.setTimeout(() => setToastMessage(null), 1800);
   }
 
+  function handleCompleteTask(task: DemoPlanTask) {
+    const now = new Date();
+    const scheduled = getScheduledCompletionTime(task, visibleTimelineEvents);
+    const diffMs = now.getTime() - scheduled.getTime();
+    const diffMins = Math.round(diffMs / 60000);
+
+    let toastMsg = "";
+    if (diffMins < 0) {
+      const absMins = Math.abs(diffMins);
+      const hours = Math.floor(absMins / 60);
+      const mins = absMins % 60;
+      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+      toastMsg = `Completed! You are ${timeStr} ahead of schedule.`;
+    } else if (diffMins > 0) {
+      const hours = Math.floor(diffMins / 60);
+      const mins = diffMins % 60;
+      const timeStr = hours > 0 ? `${hours}h ${mins}m` : `${mins} min`;
+      toastMsg = `Completed! You are ${timeStr} behind schedule.`;
+    } else {
+      toastMsg = "Completed right on time!";
+    }
+
+    showToast(toastMsg);
+
+    const updatedTasks = planTasks.filter((t) => t.id !== task.id);
+    const firstDoNext = updatedTasks.find((t) => t.section === "do_next");
+    if (firstDoNext) {
+      const idx = updatedTasks.findIndex((t) => t.id === firstDoNext.id);
+      if (idx !== -1) {
+        updatedTasks[idx] = {
+          ...firstDoNext,
+          section: "do_now",
+          timeLabel: "Now",
+        };
+      }
+    }
+    setPlanTasks(updatedTasks);
+  }
+
   function clarify(target: NonNullable<ClarifyingState>, answers: ClarificationAnswers = {}) {
-    const question = aiFootprint?.clarificationQuestions.find(
-      (item) => item.commitmentId === target.commitmentId,
-    );
+    const matchingQuestions =
+      aiFootprint?.clarificationQuestions.filter(
+        (item) => item.commitmentId === target.commitmentId,
+      ) ?? [];
+    const question = matchingQuestions[0];
+    const currentCommitment = commitments.find((item) => item.id === target.commitmentId);
     const selectedAnswer = Object.values(answers).find((answer) => answer && answer !== "Skipped");
     const selectedOption = selectedAnswer
       ? question?.options.find((option) => option.label === selectedAnswer)
       : undefined;
     const resolved = question?.resolvedCommitment;
+    const answeredAt = new Date().toISOString();
+    const answeredRecords = Object.entries(answers)
+      .map(([index, answer]) => {
+        const cleanAnswer = answer.trim();
+        if (!cleanAnswer || cleanAnswer === "Skipped") return null;
+
+        const matchingQuestion = matchingQuestions[Number(index)];
+        return {
+          commitmentId: target.commitmentId,
+          commitmentTitle: currentCommitment?.title ?? target.commitmentId,
+          kind: target.kind,
+          question: matchingQuestion?.question ?? `Clarification ${Number(index) + 1}`,
+          answer: cleanAnswer,
+          answeredAt,
+        } satisfies ClarificationAnswerRecord;
+      })
+      .filter((item): item is ClarificationAnswerRecord => Boolean(item));
+    const clarificationSummary = answeredRecords.length
+      ? answeredRecords.map((item) => `${item.question} ${item.answer}`).join("; ")
+      : selectedAnswer ?? "confirmed";
+    let resolvedCommitmentForPlan: Commitment | undefined;
+
+    if (currentCommitment && resolved) {
+      const resolvedState =
+        resolved.state === "needs_clarification" || resolved.state === "unsure"
+          ? "resolved"
+          : resolved.state ?? "confirmed";
+
+      resolvedCommitmentForPlan = {
+        ...currentCommitment,
+        title: resolved.title ?? currentCommitment.title,
+        state: resolvedState,
+        confidence: resolved.confidence ?? currentCommitment.confidence,
+        estimatedDuration: resolved.estimatedDuration ?? currentCommitment.estimatedDuration,
+        explanation:
+          resolved.explanation ??
+          `Clarified from answer: ${selectedOption?.label ?? selectedAnswer ?? "confirmed"}.`,
+      };
+    } else if (currentCommitment && target.kind === "goal" && currentCommitment.id === "coding") {
+      resolvedCommitmentForPlan = {
+        ...currentCommitment,
+        state: "confirmed",
+        confidence: 92,
+        estimatedDuration: "2 sessions/week",
+        explanation: "Roadmap ready: 6 steps scheduled across Jun-Dec.",
+      };
+    } else if (currentCommitment && target.kind === "team" && currentCommitment.id === "team") {
+      resolvedCommitmentForPlan = {
+        ...currentCommitment,
+        state: "confirmed",
+        confidence: 88,
+        estimatedDuration: "3min",
+        title: "Ask teammate first",
+        explanation: "Converted tentative voice note into a 3 min action.",
+      };
+    } else if (currentCommitment) {
+      resolvedCommitmentForPlan = {
+        ...currentCommitment,
+        state: "confirmed",
+        confidence: Math.max(currentCommitment.confidence, 82),
+        explanation: `Clarified from answer: ${selectedAnswer ?? "confirmed"}.`,
+      };
+    }
 
     setCommitments((current) =>
-      current.map((item) => {
-        if (item.id === target.commitmentId && resolved) {
-          const resolvedState =
-            resolved.state === "needs_clarification" || resolved.state === "unsure"
-              ? "resolved"
-              : resolved.state ?? "confirmed";
-
-          return {
-            ...item,
-            ...resolved,
-            state: resolvedState,
-            explanation:
-              resolved.explanation ??
-              `Clarified from answer: ${selectedOption?.label ?? selectedAnswer ?? "confirmed"}.`,
-          };
-        }
-        if (target.kind === "goal" && item.id === "coding") {
-          return {
-            ...item,
-            state: "confirmed",
-            confidence: 92,
-            estimatedDuration: "2 sessions/week",
-            explanation: "Roadmap ready: 6 steps scheduled across Jun-Dec."
-          };
-        }
-        if (target.kind === "team" && item.id === "team") {
-          return {
-            ...item,
-            state: "confirmed",
-            confidence: 88,
-            estimatedDuration: "3min",
-            title: "Ask teammate first",
-            explanation: "Converted tentative voice note into a 3 min action."
-          };
-        }
-        return item;
-      })
+      current.map((item) =>
+        item.id === target.commitmentId && resolvedCommitmentForPlan
+          ? resolvedCommitmentForPlan
+          : item,
+      )
     );
+    if (answeredRecords.length > 0) {
+      setClarificationAnswerRecords((current) => [
+        ...current.filter((item) => item.commitmentId !== target.commitmentId),
+        ...answeredRecords,
+      ]);
+    }
+    if (resolvedCommitmentForPlan) {
+      setPlanTasks((current) =>
+        upsertClarifiedCommitmentTask(current, resolvedCommitmentForPlan, clarificationSummary),
+      );
+    }
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
     setClarifying(null);
   }
 
@@ -1419,7 +1672,11 @@ export default function CommitmentsPage() {
                   {aiPlanLoading ? "Generating a planning rationale through Vercel AI Gateway..." : aiPlanSummary}
                 </p>
               </section>
-              <FocusActionCard onExplain={() => setReasoningOpen(true)} task={focusTask} />
+              <FocusActionCard
+                onExplain={() => setReasoningOpen(true)}
+                onComplete={handleCompleteTask}
+                task={focusTask}
+              />
               <GoalRoadmapCard
                 onView={viewRoadmap}
                 roadmapAdded={roadmapAdded}
@@ -1452,7 +1709,7 @@ export default function CommitmentsPage() {
         kind={clarifying?.kind === "goal" ? "goal" : "team"}
         onClose={() => setClarifying(null)}
         onSubmit={(answers) => clarifying && clarify(clarifying, answers)}
-        questionsOverride={questionForSheet(activeClarification)}
+        questionsOverride={questionsForSheet(activeClarifications)}
         titleOverride={activeClarification?.title}
         subtitleOverride={activeClarification?.subtitle}
       />

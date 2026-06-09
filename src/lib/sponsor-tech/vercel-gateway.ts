@@ -29,6 +29,7 @@ export type PlanDayInput = {
   commitments: unknown[];
   goals: unknown[];
   fixedEvents: unknown[];
+  clarificationAnswers?: unknown[];
   sourceContext?: unknown;
 };
 
@@ -135,6 +136,7 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
         input,
         schemaNotes: [
           "Return every field in the schema.",
+          "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
           "Use an empty string for an unknown timeLabel.",
           "Use 0 for an unknown estimatedMinutes value.",
         ],

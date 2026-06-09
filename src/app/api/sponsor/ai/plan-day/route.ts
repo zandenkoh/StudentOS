@@ -9,6 +9,7 @@ const RequestSchema = z.object({
   commitments: z.array(z.unknown()).default([]),
   goals: z.array(z.unknown()).default([]),
   fixedEvents: z.array(z.unknown()).default([]),
+  clarificationAnswers: z.array(z.unknown()).default([]),
   sourceContext: z.unknown().optional(),
 });
 

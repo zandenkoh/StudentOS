@@ -229,7 +229,7 @@ const GeneratedAgentLogSchema = z.object({
 
 const GeneratedCoreSchema = z.object({
   commitments: z.array(CommitmentSchema).min(1).max(8),
-  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(4),
+  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(6),
   timelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   resolvedTimelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   conflict: ConflictSchema,
@@ -790,10 +790,10 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
           "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
-          "If OCR only shows an exam cover page, worksheet cover page, candidate instructions, names, class fields, or index-number boilerplate, do not invent the worksheet task. Create one unclear commitment and a clarification question asking which worksheet/page/question numbers the student wants handled.",
+          "If OCR only shows an exam cover page, worksheet cover page, candidate instructions, names, class fields, or index-number boilerplate, do not invent the worksheet task. Create one unclear commitment and ask enough clarification questions to schedule it later, including which worksheet/page/question numbers and when it is due if missing.",
           "If OCR appears to have dropped Chinese or other non-English text, use the interpreted summary when available; otherwise mark the source unclear and ask a review-page clarification.",
           "If one source contains multiple worksheets or actionable messages, split them into separate commitments only when the evidence identifies distinct actions.",
-          "Mark broad goals or tentative items with clarification questions.",
+          "Mark broad goals or tentative items with clarification questions. If a commitment is excluded from today's plan for lack of clarity, create 2-3 concrete clarification questions for that commitment rather than relying on a single generic question.",
           "Create a conflict timeline and a resolved timeline.",
           "Only set conflictGroupId for two or more confirmed events whose explicit start-end time ranges overlap. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
