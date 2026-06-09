@@ -216,9 +216,9 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
     ...task,
     reason:
       input.trigger === "manual_conflict" && manualInstruction
-        ? `Replanned after manual conflict instruction: ${manualInstruction}`
+        ? "Updated after your conflict instruction"
         : input.trigger === "clarification" && clarificationText
-          ? `Replanned after clarification: ${clarificationText}`
+          ? "Updated after clarification"
           : task.reason,
     scheduleRationale:
       input.trigger === "manual_conflict" && manualInstruction
@@ -296,7 +296,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           commitments:
             "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions.",
           planTasks:
-            "Return the updated visible plan tasks. Every task must include exact timeLabel clock ranges. Update scheduleRationale for changed tasks.",
+            "Return the updated visible plan tasks. Every task must include exact timeLabel clock ranges. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
           timelineEvents:
             "Return the unresolved/current timeline, preserving conflict flags if the conflict is not resolved.",
           resolvedTimelineEvents:
@@ -312,6 +312,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Do not replace the user's plan with Physics/CCA/demo data unless those exact items are in currentCommitments.",
           "Move flexible work before moving fixed events unless the manual instruction explicitly says a fixed event changed.",
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
+          "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
         ],
       },
       null,

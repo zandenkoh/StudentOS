@@ -75,6 +75,7 @@ function missingAwsEndpointError() {
 async function callAwsAgent(
   endpoint: string,
   input: AnalyseStudentChaosRequest,
+  extraTraces: AISponsorTraceItem[] = [],
 ): Promise<StudentOSAgentFootprint> {
   const response = await fetch(endpoint, {
     method: "POST",
@@ -102,6 +103,7 @@ async function callAwsAgent(
 
   return prependSponsorTraces(payload as StudentOSAgentFootprint, [
     awsComputeTrace(endpoint),
+    ...extraTraces,
     bedrockTextractTrace(input.sources),
   ]);
 }
@@ -124,11 +126,13 @@ async function analyseWithLocalFallback(
   input: AnalyseStudentChaosRequest,
   endpoint: string,
   error: unknown,
+  extraTraces: AISponsorTraceItem[] = [],
 ): Promise<StudentOSAgentFootprint> {
   const fallback = await analyseStudentChaos(input);
 
   return prependSponsorTraces(fallback, [
     awsFallbackTrace(endpoint, error),
+    ...extraTraces,
     bedrockTextractTrace(input.sources),
   ]);
 }
@@ -177,7 +181,19 @@ function streamAwsAgentRequest(
       send({ type: "trace", trace: bedrockTextractTrace(input.sources) });
 
       try {
-        const result = await callAwsAgent(endpoint, input);
+        const gatewayTrace = await gatewayHealthTrace(5000);
+
+        send({ type: "trace", trace: gatewayTrace });
+
+        if (strict && gatewayTrace.status !== "success") {
+          send({
+            type: "error",
+            error: gatewayTrace.detail,
+          });
+          return;
+        }
+
+        const result = await callAwsAgent(endpoint, input, [gatewayTrace]);
         send({ type: "footprint", footprint: result });
       } catch (error) {
         if (strict || !allowLocalAgentFallback()) {
@@ -190,8 +206,10 @@ function streamAwsAgentRequest(
 
         const trace = awsFallbackTrace(endpoint, error);
         const sourceTrace = bedrockTextractTrace(input.sources);
+        const gatewayTrace = await gatewayHealthTrace(5000);
 
         send({ type: "trace", trace });
+        send({ type: "trace", trace: gatewayTrace });
         send({
           type: "log",
           log: {
@@ -210,7 +228,7 @@ function streamAwsAgentRequest(
 
         send({
           type: "footprint",
-          footprint: prependSponsorTraces(fallback, [trace, sourceTrace]),
+          footprint: prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
         });
       } finally {
         controller.close();
@@ -258,7 +276,13 @@ export async function POST(req: Request) {
   if (!wantsStream) {
     if (awsAgentEndpoint) {
       try {
-        const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
+        const gatewayTrace = await gatewayHealthTrace(5000);
+
+        if (strict && gatewayTrace.status !== "success") {
+          return strictJudgeErrorResponse(new Error(gatewayTrace.detail));
+        }
+
+        const result = await callAwsAgent(awsAgentEndpoint, parsed.data, [gatewayTrace]);
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
@@ -273,7 +297,8 @@ export async function POST(req: Request) {
         }
 
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
-        const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error);
+        const gatewayTrace = await gatewayHealthTrace(5000);
+        const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error, [gatewayTrace]);
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "local-fallback" },

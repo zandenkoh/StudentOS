@@ -6,6 +6,21 @@ import { PrimaryButton } from "@/components/buttons";
 import { SourceChip } from "@/components/source-chip";
 import type { DemoPlanTask } from "@/lib/demo-data";
 
+function conciseReasonForTask(task: DemoPlanTask) {
+  const reason = task.reason?.trim();
+  if (!reason) return "High priority";
+
+  const containsClarificationTranscript =
+    /^Replanned after clarification:/i.test(reason) ||
+    /^Replanned after manual conflict instruction:/i.test(reason) ||
+    reason.split(";").length > 2;
+
+  if (!containsClarificationTranscript) return reason;
+  if (task.deadline) return "Deadline priority";
+  if (task.isRoadmapTask) return "Roadmap step";
+  return "Updated after clarification";
+}
+
 export function FocusActionCard({
   conflictResolved = false,
   onComplete,
@@ -38,7 +53,7 @@ export function FocusActionCard({
   const title = task.title;
   const duration = task.estimatedMinutes ? `${task.estimatedMinutes} min` : "35 min";
   const deadline = task.deadline ? `Due ${task.deadline}` : "Due tomorrow 8 AM";
-  const priority = task.reason ?? "High priority";
+  const priority = conciseReasonForTask(task);
   const showStatusChip = isCompleting || conflictResolved;
 
   const handleComplete = () => {

@@ -239,7 +239,7 @@ export default function AgentsThinkingPage() {
     let timedOut = false;
     const timeout = window.setTimeout(() => {
       timedOut = true;
-      controller.abort("analysis-timeout");
+      controller.abort();
     }, ANALYSIS_TIMEOUT_MS);
     const requestStartedAt = Date.now();
     let cancelled = false;
@@ -432,7 +432,7 @@ export default function AgentsThinkingPage() {
       cancelled = true;
       window.clearTimeout(timeout);
       if (!controller.signal.aborted) {
-        controller.abort("agents-page-cleanup");
+        controller.abort();
       }
       analysisStartedRef.current = false;
     };

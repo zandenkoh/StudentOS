@@ -213,7 +213,7 @@ async function verifyLambdaLive() {
         },
         body: JSON.stringify({ healthCheck: true, strictJudgeMode: true }),
       }),
-      12000,
+      25000,
       "AWS Lambda live health check",
     );
     const payload = await response.json().catch(() => ({}));
