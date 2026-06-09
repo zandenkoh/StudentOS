@@ -227,6 +227,10 @@ const commitmentTypes: Commitment["type"][] = ["task", "event", "deadline", "goa
 const fallbackPlanReasoning =
   "StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept fixed commitments stable, handled the CCA clash, moved flexible revision later, and scheduled your coding roadmap across future days.";
 
+const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
+const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
+const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
+
 const commitmentSourceKeywords: Record<string, RegExp> = {
   physics: /physics|homework|worksheet|chapter|teacher/i,
   cca: /cca|briefing|announcement/i,
@@ -737,6 +741,35 @@ function upsertClarifiedCommitmentTask(
   return [...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)];
 }
 
+function persistCommitments(commitments: Commitment[]) {
+  window.localStorage.setItem(SAVED_COMMITMENTS_KEY, JSON.stringify(commitments));
+}
+
+function persistPlanTasks(tasks: DemoPlanTask[]) {
+  window.localStorage.setItem(SAVED_PLAN_TASKS_KEY, JSON.stringify(tasks));
+}
+
+function persistFlowState(state: {
+  step?: CommitmentsStep;
+  conflictResolved?: boolean;
+  resolutionMode?: ResolutionMode;
+  roadmapAdded?: boolean;
+  chemistryAdded?: boolean;
+}) {
+  const existing = window.localStorage.getItem(SAVED_FLOW_STATE_KEY);
+  let current: Record<string, unknown> = {};
+
+  if (existing) {
+    try {
+      current = JSON.parse(existing) as Record<string, unknown>;
+    } catch {
+      current = {};
+    }
+  }
+
+  window.localStorage.setItem(SAVED_FLOW_STATE_KEY, JSON.stringify({ ...current, ...state }));
+}
+
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
@@ -845,7 +878,6 @@ export default function CommitmentsPage() {
       const rawFootprint =
         window.localStorage.getItem("studentos_ai_footprint") ??
         window.localStorage.getItem("studentos_commitment_footprint");
-      let loadedFootprint = false;
 
       if (rawFootprint) {
         const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
@@ -855,7 +887,6 @@ export default function CommitmentsPage() {
           Array.isArray(parsedFootprint.planTasks) &&
           parsedFootprint.rationale
         ) {
-          loadedFootprint = true;
           setAiFootprint(parsedFootprint);
           setCommitments(parsedFootprint.commitments);
           setPlanTasks(enrichPlanTasksWithRationales(parsedFootprint.planTasks));
@@ -879,8 +910,16 @@ export default function CommitmentsPage() {
         }
       }
 
-      const savedPlan = window.localStorage.getItem("studentos_plan_overrides");
-      if (!loadedFootprint && savedPlan) {
+      const savedCommitments = window.localStorage.getItem(SAVED_COMMITMENTS_KEY);
+      if (savedCommitments) {
+        const parsedCommitments = JSON.parse(savedCommitments) as Commitment[];
+        if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0) {
+          setCommitments(parsedCommitments);
+        }
+      }
+
+      const savedPlan = window.localStorage.getItem(SAVED_PLAN_TASKS_KEY);
+      if (savedPlan) {
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
         if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
           setPlanTasks(enrichPlanTasksWithRationales(parsedPlan));
@@ -902,10 +941,50 @@ export default function CommitmentsPage() {
       window.localStorage.setItem("studentos_roadmap_added", "true");
       setRoadmapAdded(true);
 
+      const savedFlowState = window.localStorage.getItem(SAVED_FLOW_STATE_KEY);
+      if (savedFlowState) {
+        const parsedFlowState = JSON.parse(savedFlowState) as {
+          step?: CommitmentsStep;
+          conflictResolved?: boolean;
+          resolutionMode?: ResolutionMode;
+          roadmapAdded?: boolean;
+          chemistryAdded?: boolean;
+        };
+
+        if (
+          parsedFlowState.step === "commitments" ||
+          parsedFlowState.step === "conflict" ||
+          parsedFlowState.step === "plan"
+        ) {
+          setStep(parsedFlowState.step);
+        }
+        if (typeof parsedFlowState.conflictResolved === "boolean") {
+          setConflictResolved(parsedFlowState.conflictResolved);
+        }
+        if (
+          parsedFlowState.resolutionMode === "recommended" ||
+          parsedFlowState.resolutionMode === "manual" ||
+          parsedFlowState.resolutionMode === null
+        ) {
+          setResolutionMode(parsedFlowState.resolutionMode);
+        }
+        if (typeof parsedFlowState.roadmapAdded === "boolean") {
+          setRoadmapAdded(parsedFlowState.roadmapAdded);
+        }
+        if (typeof parsedFlowState.chemistryAdded === "boolean") {
+          setChemistryAdded(parsedFlowState.chemistryAdded);
+        }
+      }
+
       if (window.localStorage.getItem("studentos_resume_step") === "plan") {
         setStep("plan");
         setConflictResolved(true);
         setResolutionMode("recommended");
+        persistFlowState({
+          step: "plan",
+          conflictResolved: true,
+          resolutionMode: "recommended",
+        });
       }
     } catch {
       setPlanTasks(enrichPlanTasksWithRationales(initialPlanTasks));
@@ -931,8 +1010,13 @@ export default function CommitmentsPage() {
 
   useEffect(() => {
     if (!planHydrated) return;
-    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
+    persistPlanTasks(planTasks);
   }, [planHydrated, planTasks]);
+
+  useEffect(() => {
+    if (!planHydrated) return;
+    persistCommitments(commitments);
+  }, [commitments, planHydrated]);
 
   useEffect(() => {
     if (!planHydrated) return;
@@ -947,6 +1031,11 @@ export default function CommitmentsPage() {
       setConflictResolved(true);
       setResolutionMode("recommended");
       setStep("plan");
+      persistFlowState({
+        step: "plan",
+        conflictResolved: true,
+        resolutionMode: "recommended",
+      });
     }
   }, [hasConfirmedConflict, planHydrated, step]);
 
@@ -1120,6 +1209,7 @@ export default function CommitmentsPage() {
       }
     }
     setPlanTasks(updatedTasks);
+    persistPlanTasks(updatedTasks);
   }
 
   function clarify(target: NonNullable<ClarifyingState>, answers: ClarificationAnswers = {}) {
@@ -1198,13 +1288,15 @@ export default function CommitmentsPage() {
       };
     }
 
-    setCommitments((current) =>
-      current.map((item) =>
+    setCommitments((current) => {
+      const updated = current.map((item) =>
         item.id === target.commitmentId && resolvedCommitmentForPlan
           ? resolvedCommitmentForPlan
           : item,
-      )
-    );
+      );
+      persistCommitments(updated);
+      return updated;
+    });
     if (answeredRecords.length > 0) {
       setClarificationAnswerRecords((current) => [
         ...current.filter((item) => item.commitmentId !== target.commitmentId),
@@ -1212,9 +1304,15 @@ export default function CommitmentsPage() {
       ]);
     }
     if (resolvedCommitmentForPlan) {
-      setPlanTasks((current) =>
-        upsertClarifiedCommitmentTask(current, resolvedCommitmentForPlan, clarificationSummary),
-      );
+      setPlanTasks((current) => {
+        const updated = upsertClarifiedCommitmentTask(
+          current,
+          resolvedCommitmentForPlan,
+          clarificationSummary,
+        );
+        persistPlanTasks(updated);
+        return updated;
+      });
     }
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
@@ -1246,11 +1344,13 @@ export default function CommitmentsPage() {
     if (!conflictResolved) {
       setConflictResolved(true);
       setResolutionMode("recommended");
+      persistFlowState({ conflictResolved: true, resolutionMode: "recommended" });
       showToast("Suggested deconflict applied");
     }
 
     if (continueToPlan) {
       setStep("plan");
+      persistFlowState({ step: "plan" });
     }
   }
 
@@ -1258,6 +1358,7 @@ export default function CommitmentsPage() {
     setConflictResolved(true);
     setResolutionMode("manual");
     setManualConflictOpen(false);
+    persistFlowState({ conflictResolved: true, resolutionMode: "manual" });
     showToast("Manual instruction applied");
   }
 
@@ -1267,6 +1368,7 @@ export default function CommitmentsPage() {
       return;
     }
     setStep("plan");
+    persistFlowState({ step: "plan" });
   }
 
   function reset() {
@@ -1357,24 +1459,33 @@ export default function CommitmentsPage() {
         const firstFutureIndex = updatedTasks.findIndex(
           (task) => task.section === "subsequent_days"
         );
-        if (firstFutureIndex < 0) return [...updatedTasks, chemistryTask];
-        return [
+        if (firstFutureIndex < 0) {
+          const updated = [...updatedTasks, chemistryTask];
+          persistPlanTasks(updated);
+          return updated;
+        }
+        const updated = [
           ...updatedTasks.slice(0, firstFutureIndex),
           chemistryTask,
           ...updatedTasks.slice(firstFutureIndex)
         ];
+        persistPlanTasks(updated);
+        return updated;
       }
 
-      return [
+      const updated = [
         ...updatedTasks.slice(0, codingIndex),
         chemistryTask,
         ...updatedTasks.slice(codingIndex)
       ];
+      persistPlanTasks(updated);
+      return updated;
     });
     setChemistryAdded(true);
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
     window.localStorage.setItem("studentos_extra_source_added", "chemistry_worksheet_due_8pm");
+    persistFlowState({ chemistryAdded: true });
     setImpactOpen(false);
     showToast("Plan updated");
   }
@@ -1384,8 +1495,8 @@ export default function CommitmentsPage() {
     const date = dateOptionFor(dateId);
     if (!date) return;
 
-    setPlanTasks((current) =>
-      current.map((task) =>
+    setPlanTasks((current) => {
+      const updated = current.map((task) =>
         task.id === selectedTask.id
           ? {
               ...task,
@@ -1396,8 +1507,10 @@ export default function CommitmentsPage() {
               updated: true
             }
           : task
-      )
-    );
+      );
+      persistPlanTasks(updated);
+      return updated;
+    });
     showToast("Schedule updated");
   }
 
@@ -1452,9 +1565,13 @@ export default function CommitmentsPage() {
       updated: true
     };
 
-    setPlanTasks((current) =>
-      current.flatMap((task) => (task.id === selectedTask.id ? [sessionOne, sessionTwo] : [task]))
-    );
+    setPlanTasks((current) => {
+      const updated = current.flatMap((task) =>
+        task.id === selectedTask.id ? [sessionOne, sessionTwo] : [task],
+      );
+      persistPlanTasks(updated);
+      return updated;
+    });
     setSelectedTaskForEdit(null);
     showToast("Task split into 2 sessions");
   }
@@ -1462,7 +1579,8 @@ export default function CommitmentsPage() {
   function viewRoadmap() {
     window.localStorage.setItem("studentos_roadmap_added", "true");
     window.localStorage.setItem("studentos_resume_step", "plan");
-    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
+    persistPlanTasks(planTasks);
+    persistFlowState({ step: "plan", roadmapAdded: true });
     setRoadmapAdded(true);
     router.push("/roadmap");
   }
@@ -1495,8 +1613,8 @@ export default function CommitmentsPage() {
 
   function saveEdit() {
     if (!editing) return;
-    setCommitments((current) =>
-      current.map((item) =>
+    setCommitments((current) => {
+      const updated = current.map((item) =>
         item.id === editing.id
           ? {
               ...item,
@@ -1505,14 +1623,20 @@ export default function CommitmentsPage() {
               estimatedDuration: editDraft.estimatedDuration.trim() || item.estimatedDuration
             }
           : item
-      )
-    );
+      );
+      persistCommitments(updated);
+      return updated;
+    });
     setEditing(null);
   }
 
   function deleteEditing() {
     if (!editing) return;
-    setCommitments((current) => current.filter((item) => item.id !== editing.id));
+    setCommitments((current) => {
+      const updated = current.filter((item) => item.id !== editing.id);
+      persistCommitments(updated);
+      return updated;
+    });
     setEditing(null);
   }
 
@@ -1577,7 +1701,11 @@ export default function CommitmentsPage() {
               <div className="fixed-bottom-action">
                 <button
                   disabled={unresolvedCount > 0}
-                  onClick={() => setStep(hasConfirmedConflict ? "conflict" : "plan")}
+                  onClick={() => {
+                    const nextStep = hasConfirmedConflict ? "conflict" : "plan";
+                    setStep(nextStep);
+                    persistFlowState({ step: nextStep });
+                  }}
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
                     unresolvedCount === 0 
                       ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
@@ -1631,8 +1759,12 @@ export default function CommitmentsPage() {
                 resolved={conflictResolved}
                 resolutionMode={resolutionMode}
                 onApply={() => {
-                  if (conflictResolved) setStep("plan");
-                  else applySuggestedConflict(false);
+                  if (conflictResolved) {
+                    setStep("plan");
+                    persistFlowState({ step: "plan" });
+                  } else {
+                    applySuggestedConflict(false);
+                  }
                 }}
                 onEdit={() => setManualConflictOpen(true)}
                 conflict={conflictAnalysis}
@@ -1971,7 +2103,10 @@ export default function CommitmentsPage() {
         onClose={() => setExportOpen(false)}
         includeChemistry={chemistryAdded}
         includeRoadmap={roadmapAdded}
-        onSaved={() => showToast("Saved to calendar")}
+        onSaved={() => {
+          window.localStorage.setItem("studentos_calendar_saved", "true");
+          showToast("Saved to calendar");
+        }}
       />
 
       <AnimatePresence>

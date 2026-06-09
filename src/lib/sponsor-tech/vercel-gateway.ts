@@ -3,6 +3,7 @@ import "server-only";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTasks } from "@/lib/session-splitting";
 
 const PlanItemSchema = z.object({
   title: z.string(),
@@ -103,15 +104,38 @@ const fallbackPlan: GatewayPlanResult = {
   },
 };
 
+function normalizePlanItems(items: GatewayPlanResult["dailyPlan"]["doNow"]) {
+  return splitLongStudyTasks(items).map((item) => ({
+    title: item.title,
+    timeLabel: item.timeLabel || "Next non-consecutive session",
+    estimatedMinutes: item.estimatedMinutes ?? MAX_STUDY_SESSION_MINUTES,
+    reason: item.reason || "Continues the goal step without creating an oversized study block.",
+  }));
+}
+
+function normalizeGatewayPlan(plan: GatewayPlanResult): GatewayPlanResult {
+  return {
+    ...plan,
+    dailyPlan: {
+      ...plan.dailyPlan,
+      doNow: normalizePlanItems(plan.dailyPlan.doNow),
+      doNext: normalizePlanItems(plan.dailyPlan.doNext),
+      later: normalizePlanItems(plan.dailyPlan.later),
+    },
+  };
+}
+
 export function buildFallbackPlan(reason: string): PlanDayResponse {
+  const normalizedFallbackPlan = normalizeGatewayPlan(fallbackPlan);
+
   return {
     provider: "fallback",
     status: "fallback",
     rationale: {
-      summary: fallbackPlan.summary,
-      bullets: fallbackPlan.bullets,
+      summary: normalizedFallbackPlan.summary,
+      bullets: normalizedFallbackPlan.bullets,
     },
-    dailyPlan: fallbackPlan.dailyPlan,
+    dailyPlan: normalizedFallbackPlan.dailyPlan,
     trace: [
       {
         provider: "Vercel AI Gateway",
@@ -137,6 +161,8 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
         schemaNotes: [
           "Return every field in the schema.",
           "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
+          `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
+          `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
           "Use an empty string for an unknown timeLabel.",
           "Use 0 for an unknown estimatedMinutes value.",
         ],
@@ -158,7 +184,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
   const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
 
   try {
-    const result = await generatePlanWithModel(primaryModel, input);
+    const result = normalizeGatewayPlan(await generatePlanWithModel(primaryModel, input));
 
     return {
       provider: "vercel-ai-gateway",
@@ -181,7 +207,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
   } catch (primaryError) {
     if (fallbackModel && fallbackModel !== primaryModel) {
       try {
-        const result = await generatePlanWithModel(fallbackModel, input);
+        const result = normalizeGatewayPlan(await generatePlanWithModel(fallbackModel, input));
 
         return {
           provider: "vercel-ai-gateway",

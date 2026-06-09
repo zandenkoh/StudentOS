@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { CheckCircle2, ChevronRight, MessageSquare, Mail, Calendar, School, FileText } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
@@ -11,6 +11,10 @@ import { clearStudentOSDemoState } from "@/lib/demo-state";
 export default function Home() {
   const router = useRouter();
   const [isFadingOut, setIsFadingOut] = useState(false);
+
+  useEffect(() => {
+    clearStudentOSDemoState();
+  }, []);
 
   return (
     <AppShell hideHeader={true}>

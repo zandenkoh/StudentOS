@@ -5,6 +5,7 @@ import { z } from "zod";
 import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
+import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
 import type { StudentOSAgentFootprint, CapturedSourceForAI } from "@/lib/studentos-ai-types";
 
 const SourceSchema = z.object({
@@ -694,7 +695,7 @@ function normalizeRoadmapStep(step: GeneratedRoadmapStep) {
     description: optionalText(step.description),
     scheduledDate: optionalText(step.scheduledDate),
     scheduledDateRange: optionalText(step.scheduledDateRange),
-    tasks: step.tasks.map(normalizePlanTask),
+    tasks: step.tasks.flatMap((task) => splitLongStudyTask(normalizePlanTask(task))),
     status: step.status,
   };
 }
@@ -772,7 +773,7 @@ function buildFootprintFromCore({
     timelineEvents: timelineValidation.events,
     resolvedTimelineEvents: resolvedTimelineValidation.events,
     conflict: normalizeConflictAnalysis(core.conflict, timelineValidation.groups),
-    planTasks: core.planTasks.map(normalizePlanTask),
+    planTasks: splitLongStudyTasks(core.planTasks.map(normalizePlanTask)),
     roadmapSteps: core.roadmapSteps.map(normalizeRoadmapStep),
     rationale: core.rationale,
     goalResearch,
@@ -815,6 +816,8 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "Only set conflictGroupId for two or more confirmed fixed-time items whose explicit start-end time ranges overlap. Never set conflictGroupId for time-flexible tasks; schedule them around fixed-time items instead. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
+          `Where possible, break big goals into steps that each fit within ${MAX_STUDY_SESSION_MINUTES} minutes.`,
+          `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
           "For every scheduled task and timeline event, include scheduleRationale: one concise user-facing agent rationale for why that exact time slot or date is a good assignment for that task.",
           "Create roadmap steps for any broad goal, using Exa context when provided.",
           "When Exa goal research includes clarificationQuestions, convert the most important unanswered items into goal clarification questions before finalizing the roadmap.",
