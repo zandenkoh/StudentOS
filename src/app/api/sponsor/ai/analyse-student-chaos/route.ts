@@ -25,6 +25,10 @@ function configuredAwsAgentEndpoint() {
   return sponsorEnv.awsAgentEndpoint?.trim() || "";
 }
 
+function allowLocalAgentFallback() {
+  return process.env.ALLOW_LOCAL_AGENT_FALLBACK !== "false";
+}
+
 function awsAgentHost(endpoint: string) {
   try {
     return new URL(endpoint).host;
@@ -110,6 +114,46 @@ async function analyseWithLocalFallback(
   ]);
 }
 
+function awsAgentErrorResponse(error: unknown) {
+  return NextResponse.json(
+    {
+      error: "AWS agent endpoint failed",
+      detail: error instanceof Error ? error.message : "Unknown AWS agent error",
+    },
+    {
+      status: 502,
+      headers: { "X-StudentOS-Agent-Compute": "aws-lambda-error" },
+    },
+  );
+}
+
+function streamAwsAgentResult(result: StudentOSAgentFootprint, endpoint: string, sources: AnalyseStudentChaosRequest["sources"]) {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event: AnalyseStudentChaosStreamEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+
+      send({ type: "log", log: awsForwardLog(endpoint) });
+      send({ type: "trace", trace: awsComputeTrace(endpoint) });
+      send({ type: "trace", trace: bedrockTextractTrace(sources) });
+      send({ type: "footprint", footprint: result });
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-StudentOS-Agent-Compute": "aws-lambda",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
 export async function POST(req: Request) {
   let requestBody: unknown;
 
@@ -145,6 +189,10 @@ export async function POST(req: Request) {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
         });
       } catch (error) {
+        if (!allowLocalAgentFallback()) {
+          return awsAgentErrorResponse(error);
+        }
+
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
         const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error);
 
@@ -162,6 +210,16 @@ export async function POST(req: Request) {
     return NextResponse.json(result, {
       headers: { "X-StudentOS-Agent-Compute": "local" },
     });
+  }
+
+  if (awsAgentEndpoint && !allowLocalAgentFallback()) {
+    try {
+      const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
+
+      return streamAwsAgentResult(result, awsAgentEndpoint, parsed.data.sources);
+    } catch (error) {
+      return awsAgentErrorResponse(error);
+    }
   }
 
   const encoder = new TextEncoder();

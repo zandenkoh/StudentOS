@@ -7,6 +7,7 @@
     "build": "next build",
     "build:aws-agent": "node scripts/build-aws-agent.mjs",
     "deploy:aws-agent": "npm run build:aws-agent && serverless deploy",
+    "verify:sponsors": "node scripts/verify-sponsors.mjs",
     "start": "next start",
     "lint": "eslint ."
   },
