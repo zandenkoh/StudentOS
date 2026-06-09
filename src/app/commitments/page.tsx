@@ -14,7 +14,6 @@ import {
   Paperclip,
   Pencil,
   Plus,
-  Server,
   Trash2
 } from "lucide-react";
 
@@ -1810,7 +1809,7 @@ export default function CommitmentsPage() {
         open={reasoningOpen}
         onClose={() => setReasoningOpen(false)}
         title="Why this plan?"
-        subtitle={aiPlanSummary}
+        subtitle={aiPlanLoading ? "Generating a planning rationale through Vercel AI Gateway..." : aiPlanSummary}
       >
         <div className="space-y-4">
           {aiPlanBullets.length > 0 ? (
