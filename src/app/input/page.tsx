@@ -88,6 +88,30 @@ type DemoPacketImportResponse = {
   trace?: SponsorTraceItem[];
 };
 
+const containerVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.08,
+      delayChildren: 0.05
+    }
+  }
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 15 },
+  show: { 
+    opacity: 1, 
+    y: 0, 
+    transition: { 
+      type: "spring" as const,
+      stiffness: 110,
+      damping: 17
+    } 
+  }
+};
+
 const exampleSources: InputSource[] = [
   {
     id: "whatsapp-screenshot",
@@ -655,19 +679,24 @@ export default function InputPage() {
       stepLabel="Inbox Capture" 
       progress={sources.length > 0 ? 0.33 : 0.15}
     >
-      <div className="safe-bottom-padding relative flex min-h-[calc(100dvh-140px)] flex-col px-5 pt-2">
+      <motion.div
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+        className="safe-bottom-padding relative flex min-h-[calc(100dvh-140px)] flex-col px-5 pt-2"
+      >
         {/* Screen Title */}
-        <div className="mb-6 text-center">
+        <motion.div variants={itemVariants} className="mb-6 text-center">
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-ink mb-1">
             Drop the mess here
           </h1>
           <p className="text-[13px] font-medium text-muted">
             Add your scattered sources or import the demo packet.
           </p>
-        </div>
+        </motion.div>
 
         {/* ChatGPT-style Input Container */}
-        <div className="relative rounded-[24px] border border-neutral-200 bg-white p-3 shadow-[0_8px_32px_rgba(0,0,0,0.03)] focus-within:border-neutral-400 transition-colors">
+        <motion.div variants={itemVariants} className="relative rounded-[24px] border border-neutral-200 bg-white p-3 shadow-[0_8px_32px_rgba(0,0,0,0.03)] focus-within:border-neutral-400 transition-colors">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -731,10 +760,10 @@ export default function InputPage() {
           {recordingError ? (
             <p className="mt-2 px-1 text-[11px] font-semibold text-red-500">{recordingError}</p>
           ) : null}
-        </div>
+        </motion.div>
 
         {/* Import Demo Packet Button */}
-        <div className="mt-4 flex justify-center">
+        <motion.div variants={itemVariants} className="mt-4 flex justify-center">
           <button
             disabled={isInjecting}
             onClick={handleInjectExamples}
@@ -748,10 +777,10 @@ export default function InputPage() {
             <Sparkles className={`size-3.5 ${isInjecting ? "animate-spin" : "text-amber-500"}`} />
             <span>Import student chaos packet</span>
           </button>
-        </div>
+        </motion.div>
 
         {/* Added Sources List */}
-        <div className="mt-8 space-y-3">
+        <motion.div variants={itemVariants} className="mt-8 space-y-3">
           <div className="flex items-center justify-between px-1">
             <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
               Captured Sources ({sources.length})
@@ -835,10 +864,10 @@ export default function InputPage() {
               </div>
             )}
           </AnimatePresence>
-        </div>
+        </motion.div>
 
         {/* Fixed Bottom Action Container */}
-        <div className="fixed-bottom-action">
+        <motion.div variants={itemVariants} className="fixed-bottom-action">
           <button
             disabled={isInjecting}
             onClick={handleAnalyse}
@@ -852,9 +881,9 @@ export default function InputPage() {
             <span>Analyse</span>
             <ChevronRight className="size-4.5" />
           </button>
-        </div>
+        </motion.div>
 
-      </div>
+      </motion.div>
 
       {/* Attachment Preview Modal */}
       <BottomSheet

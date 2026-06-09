@@ -95,7 +95,23 @@ export default function ChaosPage() {
 
   return (
     <AppShell hideHeader={true}>
-      <div className="relative flex min-h-dvh w-full flex-col justify-center overflow-hidden bg-[#FAF9F6] px-6 py-8">
+      <motion.div
+        animate={stage === "leaving" ? { backgroundColor: "#ffffff" } : { backgroundColor: "#FAF9F6" }}
+        transition={{ duration: 0.6, ease: "easeInOut" }}
+        className="relative flex min-h-dvh w-full flex-col justify-center overflow-hidden px-6 py-8"
+      >
+        {/* Scanning beam transition effect */}
+        {stage === "leaving" && (
+          <motion.div
+            initial={{ y: "0%", opacity: 0 }}
+            animate={{ 
+              y: ["0%", "100%"],
+              opacity: [0, 1, 1, 0]
+            }}
+            transition={{ duration: 0.7, ease: "easeInOut" }}
+            className="absolute left-0 right-0 top-0 z-50 h-2.5 bg-gradient-to-r from-transparent via-ink/25 to-transparent blur-[1px] pointer-events-none"
+          />
+        )}
         
         {/* Dynamic Cards Container */}
         {stage !== "reveal" && (
@@ -205,7 +221,7 @@ export default function ChaosPage() {
           )}
         </AnimatePresence>
 
-      </div>
+      </motion.div>
     </AppShell>
   );
 }
