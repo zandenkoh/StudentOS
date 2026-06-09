@@ -11,6 +11,7 @@ import {
   FileText,
   Globe2,
   Image as ImageIcon,
+  Loader2,
   Paperclip,
   Pencil,
   Plus,
@@ -180,6 +181,25 @@ type PlanDayResponse = {
     bullets: string[];
   };
   dailyPlan?: {
+    focus: string;
+  };
+  trace?: SponsorTraceItem[];
+};
+
+type ReplanTrigger = "clarification" | "manual_conflict";
+
+type ReplanAgentResponse = {
+  provider: "vercel-ai-gateway" | "fallback";
+  status: "success" | "fallback" | "error";
+  model?: string;
+  trigger: ReplanTrigger;
+  commitments: Commitment[];
+  planTasks: DemoPlanTask[];
+  timelineEvents: TimelineEvent[];
+  resolvedTimelineEvents: TimelineEvent[];
+  conflict: AIConflictAnalysis;
+  rationale: PlanDayResponse["rationale"];
+  dailyPlan: {
     focus: string;
   };
   trace?: SponsorTraceItem[];
@@ -1060,6 +1080,17 @@ function persistFlowState(state: {
   window.localStorage.setItem(SAVED_FLOW_STATE_KEY, JSON.stringify({ ...current, ...state }));
 }
 
+function AgentReplanStatus({ active, status }: { active: boolean; status: string | null }) {
+  if (!active && !status) return null;
+
+  return (
+    <div className="flex items-center gap-3 rounded-[18px] border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] font-semibold leading-5 text-emerald-900">
+      {active ? <Loader2 className="size-4 shrink-0 animate-spin text-emerald-700" /> : <CheckCircle2 className="size-4 shrink-0 text-emerald-700" />}
+      <span>{status ?? "Agent replanning complete."}</span>
+    </div>
+  );
+}
+
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
@@ -1100,6 +1131,8 @@ export default function CommitmentsPage() {
   const [clarificationAnswerRecords, setClarificationAnswerRecords] = useState<ClarificationAnswerRecord[]>([]);
   const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
+  const [replanLoading, setReplanLoading] = useState(false);
+  const [replanStatus, setReplanStatus] = useState<string | null>(null);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
   const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
@@ -1129,7 +1162,8 @@ export default function CommitmentsPage() {
   );
   const visibleTimelineEvents = useMemo(() => {
     if (!conflictResolved) return baseTimeline;
-    return resolutionMode === "manual" ? manualResolvedTimelineEvents : aiResolvedTimeline;
+    if (aiResolvedTimeline.length > 0) return aiResolvedTimeline;
+    return resolutionMode === "manual" ? manualResolvedTimelineEvents : resolvedTimelineEvents;
   }, [aiResolvedTimeline, baseTimeline, conflictResolved, resolutionMode]);
   const hasConfirmedConflict = useMemo(
     () => validateTimelineConflicts(baseTimeline).groups.length > 0,
@@ -1312,6 +1346,128 @@ export default function CommitmentsPage() {
     window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
   }, []);
 
+  function persistReplannedFootprint(result: ReplanAgentResponse) {
+    const keys = ["studentos_ai_footprint", "studentos_commitment_footprint"];
+
+    keys.forEach((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return;
+
+      try {
+        const parsed = JSON.parse(raw) as StudentOSAgentFootprint;
+        window.localStorage.setItem(
+          key,
+          JSON.stringify({
+            ...parsed,
+            commitments: result.commitments,
+            planTasks: result.planTasks,
+            timelineEvents: result.timelineEvents,
+            resolvedTimelineEvents: result.resolvedTimelineEvents,
+            conflict: result.conflict,
+            rationale: result.rationale,
+            sponsorTrace: result.trace?.length ? result.trace : parsed.sponsorTrace,
+          }),
+        );
+      } catch {
+        // Keep existing stored footprint if it cannot be parsed.
+      }
+    });
+  }
+
+  function applyReplanResult(result: ReplanAgentResponse) {
+    const nextTasks = enrichPlanTasksWithRationales(withoutCompletedTasks(result.planTasks));
+
+    setCommitments(result.commitments);
+    persistCommitments(result.commitments);
+    setPlanTasks(nextTasks);
+    persistPlanTasks(nextTasks);
+    setBaseTimeline(result.timelineEvents);
+    setAiResolvedTimeline(result.resolvedTimelineEvents);
+    setConflictAnalysis(result.conflict);
+    setAiPlan({
+      provider: result.provider,
+      status: result.status,
+      model: result.model,
+      rationale: result.rationale,
+      dailyPlan: result.dailyPlan,
+      trace: result.trace,
+    });
+    aiPlanRequestStarted.current = true;
+    result.trace?.forEach(addSponsorTrace);
+    persistReplannedFootprint(result);
+  }
+
+  async function runAgentReplan({
+    trigger,
+    nextCommitments = commitments,
+    nextPlanTasks = planTasks,
+    nextClarificationAnswers = clarificationAnswerRecords,
+    manualInstruction,
+    nextConflictResolved = conflictResolved,
+    nextResolutionMode = resolutionMode,
+  }: {
+    trigger: ReplanTrigger;
+    nextCommitments?: Commitment[];
+    nextPlanTasks?: DemoPlanTask[];
+    nextClarificationAnswers?: ClarificationAnswerRecord[];
+    manualInstruction?: string;
+    nextConflictResolved?: boolean;
+    nextResolutionMode?: ResolutionMode;
+  }) {
+    const status =
+      trigger === "manual_conflict"
+        ? "Agent is rebuilding the schedule from your manual instruction..."
+        : "Agent is reviewing clarification answers and rescheduling...";
+
+    setReplanLoading(true);
+    setAiPlanLoading(true);
+    setReplanStatus(status);
+
+    try {
+      const response = await fetch("/api/sponsor/ai/replan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          trigger,
+          currentDate: "2026-06-09",
+          commitments: nextCommitments,
+          planTasks: nextPlanTasks,
+          timelineEvents: baseTimeline,
+          resolvedTimelineEvents: nextConflictResolved
+            ? (aiResolvedTimeline.length ? aiResolvedTimeline : visibleTimelineEvents)
+            : aiResolvedTimeline,
+          conflict: conflictAnalysis,
+          clarificationAnswers: nextClarificationAnswers,
+          manualConflictInstruction: manualInstruction,
+          sourceContext: {
+            conflictResolution: nextResolutionMode ?? "none",
+            addedSource: addedSourceText ?? undefined,
+            addedSourceKey,
+            addedCommitment: addedInterpretation?.commitment,
+          },
+        }),
+      });
+
+      const result = (await response.json()) as ReplanAgentResponse;
+      if (!response.ok) throw new Error("Replanning route returned an error.");
+
+      applyReplanResult(result);
+      showToast(trigger === "manual_conflict" ? "Schedule rebuilt from instruction" : "Schedule updated from clarification");
+    } catch (error) {
+      addSponsorTrace({
+        provider: "StudentOS",
+        action: trigger === "manual_conflict" ? "Agent replanned manual conflict" : "Agent replanned after clarification",
+        status: "error",
+        detail: error instanceof Error ? error.message : "Replanning failed.",
+      });
+      showToast("Replanning failed; kept current plan");
+    } finally {
+      setReplanLoading(false);
+      setAiPlanLoading(false);
+      window.setTimeout(() => setReplanStatus(null), 1800);
+    }
+  }
+
   useEffect(() => {
     if (!planHydrated) return;
     persistPlanTasks(planTasks);
@@ -1344,7 +1500,7 @@ export default function CommitmentsPage() {
   }, [hasConfirmedConflict, planHydrated, step]);
 
   useEffect(() => {
-    if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current) return;
+    if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current || replanLoading) return;
 
     aiPlanRequestStarted.current = true;
 
@@ -1470,6 +1626,7 @@ export default function CommitmentsPage() {
     goalItems,
     planHydrated,
     resolutionMode,
+    replanLoading,
     step,
     visibleTimelineEvents,
   ]);
@@ -1576,35 +1733,39 @@ export default function CommitmentsPage() {
       };
     }
 
-    setCommitments((current) => {
-      const updated = current.map((item) =>
-        item.id === target.commitmentId && resolvedCommitmentForPlan
-          ? resolvedCommitmentForPlan
-          : item,
-      );
-      persistCommitments(updated);
-      return updated;
-    });
+    const nextCommitments = commitments.map((item) =>
+      item.id === target.commitmentId && resolvedCommitmentForPlan
+        ? resolvedCommitmentForPlan
+        : item,
+    );
+    const nextClarificationRecords = answeredRecords.length > 0
+      ? [
+          ...clarificationAnswerRecords.filter((item) => item.commitmentId !== target.commitmentId),
+          ...answeredRecords,
+        ]
+      : clarificationAnswerRecords;
+    const nextPlanTasks = resolvedCommitmentForPlan
+      ? upsertClarifiedCommitmentTask(planTasks, resolvedCommitmentForPlan, clarificationSummary)
+      : planTasks;
+
+    setCommitments(nextCommitments);
+    persistCommitments(nextCommitments);
     if (answeredRecords.length > 0) {
-      setClarificationAnswerRecords((current) => [
-        ...current.filter((item) => item.commitmentId !== target.commitmentId),
-        ...answeredRecords,
-      ]);
+      setClarificationAnswerRecords(nextClarificationRecords);
     }
     if (resolvedCommitmentForPlan) {
-      setPlanTasks((current) => {
-        const updated = upsertClarifiedCommitmentTask(
-          current,
-          resolvedCommitmentForPlan,
-          clarificationSummary,
-        );
-        persistPlanTasks(updated);
-        return updated;
-      });
+      setPlanTasks(nextPlanTasks);
+      persistPlanTasks(nextPlanTasks);
     }
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
     setClarifying(null);
+    void runAgentReplan({
+      trigger: "clarification",
+      nextCommitments,
+      nextPlanTasks,
+      nextClarificationAnswers: nextClarificationRecords,
+    });
   }
 
   function openCommitmentItem(commitment: Commitment) {
@@ -1643,11 +1804,23 @@ export default function CommitmentsPage() {
   }
 
   function applyManualInstruction() {
+    const instruction = manualConflictInstruction.trim();
+    if (!instruction) {
+      showToast("Add a manual instruction first");
+      return;
+    }
+
     setConflictResolved(true);
     setResolutionMode("manual");
     setManualConflictOpen(false);
     persistFlowState({ conflictResolved: true, resolutionMode: "manual" });
-    showToast("Manual instruction applied");
+    showToast("Manual instruction sent to agent");
+    void runAgentReplan({
+      trigger: "manual_conflict",
+      manualInstruction: instruction,
+      nextConflictResolved: true,
+      nextResolutionMode: "manual",
+    });
   }
 
   function applyAndContinue() {
@@ -2009,6 +2182,7 @@ export default function CommitmentsPage() {
                 title="Review extracted items"
                 subtitle="StudentOS separated obligations from longer-term goals."
               />
+              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <div className="space-y-6 pb-8">
                 <section className="space-y-3">
                   <div className="px-1">
@@ -2048,14 +2222,14 @@ export default function CommitmentsPage() {
               {/* Fixed Bottom Action Button */}
               <div className="fixed-bottom-action">
                 <button
-                  disabled={unresolvedCount > 0}
+                  disabled={unresolvedCount > 0 || replanLoading}
                   onClick={() => {
                     const nextStep = hasConfirmedConflict ? "conflict" : "plan";
                     setStep(nextStep);
                     persistFlowState({ step: nextStep });
                   }}
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-                    unresolvedCount === 0 
+                    unresolvedCount === 0 && !replanLoading
                       ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
                       : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
                   }`}
@@ -2091,6 +2265,7 @@ export default function CommitmentsPage() {
                     : conflictAnalysis?.unresolvedSummary ?? "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
                 }
               />
+              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <ConflictSummaryCard
                 resolved={conflictResolved}
                 resolutionMode={resolutionMode}
@@ -2112,8 +2287,9 @@ export default function CommitmentsPage() {
 
               <div className="fixed-bottom-action">
                 <button
+                  disabled={replanLoading}
                   onClick={applyAndContinue}
-                  className="flex h-[60px] w-full items-center justify-center gap-2 rounded-full bg-ink text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all hover:scale-[1.01] active:scale-[0.99]"
+                  className="flex h-[60px] w-full items-center justify-center gap-2 rounded-full bg-ink text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-white"
                 >
                   <span>Apply fix and continue</span>
                   <ChevronRight className="size-4.5" />
@@ -2131,6 +2307,7 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
+              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <FocusActionCard
                 conflictResolved={hasConfirmedConflict && conflictResolved}
                 onExplain={() => setReasoningOpen(true)}
@@ -2438,6 +2615,7 @@ export default function CommitmentsPage() {
         onInstructionChange={setManualConflictInstruction}
         onApply={applyManualInstruction}
         onClose={() => setManualConflictOpen(false)}
+        applying={replanLoading}
       />
 
       <ExportSuccessSheet

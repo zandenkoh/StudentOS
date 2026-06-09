@@ -8,13 +8,15 @@ export function ManualConflictSheet({
   instruction,
   onInstructionChange,
   onApply,
-  onClose
+  onClose,
+  applying = false
 }: {
   open: boolean;
   instruction: string;
   onInstructionChange: (value: string) => void;
   onApply: () => void;
   onClose: () => void;
+  applying?: boolean;
 }) {
   return (
     <BottomSheet
@@ -33,7 +35,9 @@ export function ManualConflictSheet({
           StudentOS will treat this as a scheduling instruction and rebuild the plan.
         </p>
         <div className="flex flex-col gap-3">
-          <PrimaryButton onClick={onApply}>Apply manual instruction</PrimaryButton>
+          <PrimaryButton onClick={onApply} disabled={applying || !instruction.trim()}>
+            {applying ? "Replanning..." : "Apply manual instruction"}
+          </PrimaryButton>
           <SecondaryButton onClick={onClose} className="w-full">
             Cancel
           </SecondaryButton>
