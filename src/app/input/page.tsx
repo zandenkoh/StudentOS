@@ -775,7 +775,7 @@ export default function InputPage() {
             }`}
           >
             <Sparkles className={`size-3.5 ${isInjecting ? "animate-spin" : "text-amber-500"}`} />
-            <span>Import student chaos packet</span>
+            <span>Import example attachments</span>
           </button>
         </motion.div>
 
