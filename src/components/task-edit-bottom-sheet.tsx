@@ -3,7 +3,7 @@
 import { ArrowLeft, ArrowRight, CalendarDays, Scissors } from "lucide-react";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
-import type { DemoPlanTask, DemoScheduleDateOption } from "@/lib/demo-data";
+import type { DemoPlanTask } from "@/lib/demo-data";
 import { cn } from "@/lib/utils";
 
 function currentScheduleLabel(task: DemoPlanTask) {
@@ -14,9 +14,28 @@ function scheduleRationale(task: DemoPlanTask) {
   return task.scheduleRationale ?? task.reason ?? "StudentOS placed this task where it best fits the current deadlines, fixed events, and available energy.";
 }
 
+function dateIdFromDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateFromDateId(dateId: string) {
+  const [year, month, day] = dateId.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function addDaysToDateId(dateId: string, days: number) {
+  const date = dateFromDateId(dateId);
+  if (!date) return "";
+  date.setDate(date.getDate() + days);
+  return dateIdFromDate(date);
+}
+
 export function TaskEditBottomSheet({
   task,
-  dateOptions,
   canScheduleEarlier,
   canScheduleLater,
   onClose,
@@ -26,7 +45,6 @@ export function TaskEditBottomSheet({
   onSplit
 }: {
   task: DemoPlanTask | null;
-  dateOptions: DemoScheduleDateOption[];
   canScheduleEarlier: boolean;
   canScheduleLater: boolean;
   onClose: () => void;
@@ -37,6 +55,8 @@ export function TaskEditBottomSheet({
 }) {
   const futureTask = task?.section === "subsequent_days";
   const deadlineDateId = task?.deadlineDateId;
+  const tomorrowDateId = addDaysToDateId(dateIdFromDate(new Date()), 1);
+  const lastValidDateId = deadlineDateId ? addDaysToDateId(deadlineDateId, -1) : undefined;
 
   return (
     <BottomSheet
@@ -119,21 +139,14 @@ export function TaskEditBottomSheet({
                   <CalendarDays className="size-4" />
                   Specific date
                 </span>
-                <select
+                <input
+                  type="date"
                   value={task.scheduledDateId ?? ""}
                   onChange={(event) => onDateChange(event.target.value)}
+                  min={tomorrowDateId}
+                  max={lastValidDateId}
                   className="h-12 w-full rounded-[18px] border border-neutral-200 bg-white px-4 text-[15px] font-semibold text-ink focus:border-neutral-400 focus:ring-0"
-                >
-                  {dateOptions.map((date) => {
-                    const afterDeadline = Boolean(deadlineDateId && date.id > deadlineDateId);
-                    return (
-                      <option key={date.id} value={date.id} disabled={afterDeadline}>
-                        {date.label}
-                        {afterDeadline ? " · after deadline" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
+                />
               </label>
             </div>
           ) : null}

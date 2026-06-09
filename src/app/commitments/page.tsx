@@ -42,7 +42,6 @@ import { TaskEditBottomSheet } from "@/components/task-edit-bottom-sheet";
 
 import {
   baseCommitments,
-  demoScheduleDateOptions,
   initialPlanTasks,
   manualResolvedTimelineEvents,
   resolvedTimelineEvents,
@@ -239,6 +238,7 @@ const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
 const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
 const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
 const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
+const USER_DECIDED_SCHEDULE_RATIONALE = "This was a user-decided schedule";
 
 const commitmentSourceKeywords: Record<string, RegExp> = {
   physics: /physics|homework|worksheet|chapter|teacher/i,
@@ -520,24 +520,56 @@ function GoalCandidateCard({
   );
 }
 
-function dateOptionFor(dateId: string) {
-  return demoScheduleDateOptions.find((date) => date.id === dateId);
+function dateIdFromDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function dateIndexFor(task: DemoPlanTask | null) {
-  if (!task?.scheduledDateId) return -1;
-  return demoScheduleDateOptions.findIndex((date) => date.id === task.scheduledDateId);
+function todayDateId() {
+  return dateIdFromDate(new Date());
+}
+
+function addDaysToDateId(dateId: string, days: number) {
+  const date = dateFromDateId(dateId);
+  if (!date) return "";
+  date.setDate(date.getDate() + days);
+  return dateIdFromDate(date);
+}
+
+function formatScheduleDateLabel(dateId: string) {
+  const date = dateFromDateId(dateId);
+  if (!date) return dateId;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "long",
+  }).format(date);
+}
+
+function validRescheduleBounds(task: DemoPlanTask | null) {
+  if (!task || task.section !== "subsequent_days") return null;
+  const min = addDaysToDateId(todayDateId(), 1);
+  const max = task.deadlineDateId ? addDaysToDateId(task.deadlineDateId, -1) : undefined;
+  return { min, max };
+}
+
+function canUseScheduleDate(task: DemoPlanTask | null, dateId: string) {
+  const bounds = validRescheduleBounds(task);
+  if (!bounds || !dateId) return false;
+  if (dateId < bounds.min) return false;
+  if (bounds.max && dateId > bounds.max) return false;
+  return true;
 }
 
 function canMoveTaskDate(task: DemoPlanTask | null, direction: -1 | 1) {
-  const currentIndex = dateIndexFor(task);
-  if (currentIndex < 0) return false;
-  const nextDate = demoScheduleDateOptions[currentIndex + direction];
-  if (!nextDate) return false;
-  if (direction > 0 && task?.deadlineDateId && nextDate.id > task.deadlineDateId) {
-    return false;
-  }
-  return true;
+  if (!task?.scheduledDateId) return false;
+  return canUseScheduleDate(task, addDaysToDateId(task.scheduledDateId, direction));
+}
+
+function nextDayForTask(task: DemoPlanTask) {
+  const dateId = task.scheduledDateId ?? todayDateId();
+  return addDaysToDateId(dateId, 1);
 }
 
 function baseTaskTitle(title: string) {
@@ -651,11 +683,6 @@ function scheduleRationaleForEvent(event: TimelineEvent | null, tasks: DemoPlanT
   if (!event) return "";
   const matchingTask = taskForTimelineEvent(event, tasks);
   return matchingTask ? scheduleRationaleForTask(matchingTask) : event.scheduleRationale ?? "StudentOS placed this block around fixed events, urgency, and the student’s remaining focus for the day.";
-}
-
-function movedScheduleRationale(task: DemoPlanTask, schedule: string) {
-  const deadline = task.deadline ? ` before ${task.deadline}` : "";
-  return `StudentOS moved ${baseTaskTitle(task.title)} to ${schedule} because it still fits${deadline} while reducing pressure on the original slot.`;
 }
 
 function dateFromDateId(dateId: string) {
@@ -1746,18 +1773,22 @@ export default function CommitmentsPage() {
 
   function updateSelectedTaskDate(dateId: string) {
     if (!selectedTask) return;
-    const date = dateOptionFor(dateId);
-    if (!date) return;
+    if (!canUseScheduleDate(selectedTask, dateId)) {
+      showToast("Choose a date after today and before the deadline");
+      return;
+    }
+
+    const dateLabel = formatScheduleDateLabel(dateId);
 
     setPlanTasks((current) => {
       const updated = current.map((task) =>
         task.id === selectedTask.id
           ? {
               ...task,
-              scheduledDateId: date.id,
-              scheduledDate: date.label,
+              scheduledDateId: dateId,
+              scheduledDate: dateLabel,
               scheduledDateRange: undefined,
-              scheduleRationale: movedScheduleRationale(task, date.label),
+              scheduleRationale: USER_DECIDED_SCHEDULE_RATIONALE,
               updated: true
             }
           : task
@@ -1770,13 +1801,12 @@ export default function CommitmentsPage() {
 
   function moveSelectedTaskDate(direction: -1 | 1) {
     if (!selectedTask) return;
-    const currentIndex = dateIndexFor(selectedTask);
-    const nextDate = demoScheduleDateOptions[currentIndex + direction];
-    if (!nextDate) return;
-    if (direction > 0 && selectedTask.deadlineDateId && nextDate.id > selectedTask.deadlineDateId) {
+    if (!selectedTask.scheduledDateId) return;
+    const nextDateId = addDaysToDateId(selectedTask.scheduledDateId, direction);
+    if (!canUseScheduleDate(selectedTask, nextDateId)) {
       return;
     }
-    updateSelectedTaskDate(nextDate.id);
+    updateSelectedTaskDate(nextDateId);
   }
 
   function splitSelectedTask() {
@@ -1789,10 +1819,10 @@ export default function CommitmentsPage() {
     const secondDuration = selectedTask.estimatedMinutes
       ? Math.floor(selectedTask.estimatedMinutes / 2)
       : undefined;
-    const nextDateIndex = dateIndexFor(selectedTask) + 1;
-    const nextDate = selectedTask.section === "subsequent_days"
-      ? demoScheduleDateOptions[nextDateIndex]
-      : undefined;
+    const nextDateId =
+      selectedTask.section === "subsequent_days" ? nextDayForTask(selectedTask) : undefined;
+    const nextDateIsValid = nextDateId ? canUseScheduleDate(selectedTask, nextDateId) : false;
+    const nextDateLabel = nextDateId && nextDateIsValid ? formatScheduleDateLabel(nextDateId) : undefined;
     const sessionOne: DemoPlanTask = {
       ...selectedTask,
       id: `${selectedTask.id}-session-1`,
@@ -1806,8 +1836,8 @@ export default function CommitmentsPage() {
       id: `${selectedTask.id}-session-2`,
       title: `${baseTitle} — Session 2`,
       estimatedMinutes: secondDuration,
-      scheduledDateId: nextDate?.id ?? selectedTask.scheduledDateId,
-      scheduledDate: nextDate?.label ?? selectedTask.scheduledDate,
+      scheduledDateId: nextDateIsValid ? nextDateId : selectedTask.scheduledDateId,
+      scheduledDate: nextDateLabel ?? selectedTask.scheduledDate,
       scheduledDateRange: undefined,
       timeLabel:
         selectedTask.section === "subsequent_days"
@@ -1815,7 +1845,7 @@ export default function CommitmentsPage() {
           : selectedTask.timeLabel
             ? "Next session"
             : undefined,
-      scheduleRationale: `StudentOS places the second half on ${nextDate?.label ?? scheduleLabelForTask(selectedTask)} so the task gets recovery space instead of becoming one long low-quality block.`,
+      scheduleRationale: `StudentOS places the second half on ${nextDateLabel ?? scheduleLabelForTask(selectedTask)} so the task gets recovery space instead of becoming one long low-quality block.`,
       updated: true
     };
 
@@ -2329,7 +2359,6 @@ export default function CommitmentsPage() {
 
       <TaskEditBottomSheet
         task={selectedTask}
-        dateOptions={demoScheduleDateOptions}
         canScheduleEarlier={canScheduleEarlier}
         canScheduleLater={canScheduleLater}
         onClose={() => setSelectedTaskForEdit(null)}
