@@ -55,7 +55,7 @@ function strictJudgeMode(body: unknown) {
 }
 
 async function healthResponse(strict: boolean) {
-  const gatewayTrace = await gatewayHealthTrace(5000);
+  const gatewayTrace = await gatewayHealthTrace();
   const lambdaTrace = awsLambdaSuccessTrace("AWS Lambda accepted a StudentOS agent health/preflight request.");
   const sourceTrace = bedrockTextractTrace([]);
 
@@ -103,7 +103,7 @@ export async function handler(event: ApiGatewayHttpEvent) {
     return healthResponse(strict);
   }
 
-  const gatewayTrace = await gatewayHealthTrace(5000);
+  const gatewayTrace = await gatewayHealthTrace();
 
   if (strict && gatewayTrace.status !== "success") {
     return jsonResponse(503, {

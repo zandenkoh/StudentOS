@@ -3,7 +3,7 @@ import type { AgentActivityEvent, AgentActivityStreamEvent } from "@/lib/agent-a
 import { ReplanAgentInputSchema, replanWithAgent } from "@/lib/sponsor-tech/replan-agent";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 type ParsedReplanInput = Parameters<typeof replanWithAgent>[0];
 
@@ -41,7 +41,7 @@ function initialEvents(input: ParsedReplanInput): AgentActivityEvent[] {
         id: "add-task-checking-gateway",
         kind: "tool",
         title: "Checking Gateway",
-        body: "The replanning route is checking whether Vercel AI Gateway is configured before relying on the live model path.",
+        body: "The replanning route is checking whether Vercel AI Gateway is configured before sending the live model request.",
         provider: "Vercel AI Gateway",
       }),
       agentEvent({
@@ -171,7 +171,7 @@ function resultDecisionEvent(result: Awaited<ReturnType<typeof replanWithAgent>>
     title: isError ? "Replanning error recorded" : "Fallback plan selected",
     body: isError
       ? "The replanning agent returned an error status, so the UI will keep the current plan state explicit."
-      : "The live model path was not verified, so StudentOS used the grounded replanning fallback instead.",
+      : "The Gateway replanning request failed, so StudentOS used the grounded replanning fallback instead.",
     detail: reason,
     provider: "StudentOS",
     status: isError ? "error" : "fallback",
@@ -190,10 +190,10 @@ function streamReplan(input: ParsedReplanInput) {
       let heartbeatCount = 0;
       const heartbeatTitles =
         input.trigger === "manual_conflict"
-          ? ["Still validating fixed-time constraints", "Waiting for replanning result", "Keeping fallback path explicit"]
+          ? ["Still validating fixed-time constraints", "Waiting for Gateway replanning result", "Applying manual instruction"]
           : input.trigger === "add_task"
-            ? ["Still classifying the added source", "Waiting for replanning result", "Keeping fallback path explicit"]
-            : ["Still applying clarified evidence", "Waiting for replanning result", "Keeping fallback path explicit"];
+            ? ["Still classifying the added source", "Waiting for Gateway replanning result", "Scheduling added task"]
+            : ["Still applying clarified evidence", "Waiting for Gateway replanning result", "Updating clarified plan"];
       const stopHeartbeat = () => {
         if (!heartbeat) return;
         clearInterval(heartbeat);
@@ -210,7 +210,7 @@ function streamReplan(input: ParsedReplanInput) {
             id: `replan-heartbeat-${heartbeatCount}`,
             kind: "observed",
             title,
-            body: "The agent stream is still connected. If live services fail, the result will be labeled as fallback instead of going silent.",
+            body: "The agent stream is still connected while Vercel AI Gateway finishes the replanning call.",
           }),
         });
       }, 1600);

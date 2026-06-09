@@ -43,7 +43,6 @@ type AgentLog = {
 };
 
 const REDIRECT_MIN_AT = 1600;
-const ANALYSIS_TIMEOUT_MS = 60000;
 const loadingMessages = [
   "Reading submitted sources",
   "Generating focused Exa searches",
@@ -240,11 +239,6 @@ export default function AgentsThinkingPage() {
     analysisStartedRef.current = true;
 
     const controller = new AbortController();
-    let timedOut = false;
-    const timeout = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, ANALYSIS_TIMEOUT_MS);
     const requestStartedAt = Date.now();
     let cancelled = false;
 
@@ -263,7 +257,6 @@ export default function AgentsThinkingPage() {
       if (cancelled) return;
       const nextTrace = mergeSponsorTraces(result.sponsorTrace, storedSponsorTrace());
 
-      window.clearTimeout(timeout);
       setAiFootprint(result);
       setAgentLogs(result.agentLogs.map(toClientLog));
       setSponsorTrace(nextTrace);
@@ -384,14 +377,12 @@ export default function AgentsThinkingPage() {
           throw new Error(streamErrorMessage || "StudentOS analysis stream ended before the final footprint.");
         }
       } catch (error) {
-        if (cancelled || (isAbortError(error) && !timedOut)) return;
+        if (cancelled || isAbortError(error)) return;
 
         setAnalysisFailed(true);
-        const message = timedOut
-          ? "StudentOS analysis stream timed out after 30 seconds."
-          : error instanceof Error
-            ? error.message
-            : "StudentOS analysis failed.";
+        const message = error instanceof Error
+          ? error.message
+          : "StudentOS analysis failed.";
         setStreamError(message);
         setAgentLogs((current) =>
           mergeLog(current, {
@@ -434,7 +425,6 @@ export default function AgentsThinkingPage() {
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timeout);
       if (!controller.signal.aborted) {
         controller.abort();
       }

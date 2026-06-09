@@ -6,7 +6,7 @@ provider:
   runtime: nodejs20.x
   region: ${env:AWS_REGION, "us-west-2"}
   stage: ${opt:stage, "dev"}
-  timeout: 60
+  timeout: 300
   memorySize: 1024
   environment:
     USE_REAL_VERCEL_AI: ${env:USE_REAL_VERCEL_AI, "true"}

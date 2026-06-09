@@ -70,25 +70,7 @@ export type PlanDayResponse = {
   }>;
 };
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
-
-export async function gatewayHealthTrace(timeoutMs = 5000): Promise<AISponsorTraceItem> {
+export async function gatewayHealthTrace(): Promise<AISponsorTraceItem> {
   if (!isVercelAiReady()) {
     return {
       provider: "Vercel AI Gateway",
@@ -99,16 +81,12 @@ export async function gatewayHealthTrace(timeoutMs = 5000): Promise<AISponsorTra
   }
 
   try {
-    const result = await withTimeout(
-      generateText({
-        model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
-        prompt: "Reply with exactly: StudentOS Gateway OK",
-        temperature: 0,
-        maxOutputTokens: 16,
-      }),
-      timeoutMs,
-      "Vercel AI Gateway preflight",
-    );
+    const result = await generateText({
+      model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
+      prompt: "Reply with exactly: StudentOS Gateway OK",
+      temperature: 0,
+      maxOutputTokens: 16,
+    });
     const text = result.text.trim();
 
     return {

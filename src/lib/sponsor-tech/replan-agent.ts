@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText, Output } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { ensureTaskTimeRanges } from "@/lib/time-scheduling";
@@ -140,6 +140,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function textValue(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function arrayValue(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+function stringArrayValue(value: unknown, fallback: string[]) {
+  const values = Array.isArray(value)
+    ? value.map((item) => textValue(item)).filter(Boolean)
+    : [];
+
+  return values.length >= 3 ? values.slice(0, 6) : fallback;
+}
+
+function parseJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1] ?? text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Replanning response did not contain a JSON object.");
+  }
+
+  return JSON.parse(candidate.slice(start, end + 1));
 }
 
 function sourceContextRecord(input: ReplanAgentInput) {
@@ -410,12 +435,48 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
   };
 }
 
+function coerceReplanOutput(value: unknown, input: ReplanAgentInput) {
+  const record = isRecord(value) ? value : {};
+  const baseline = fallbackReplan(input, "Gateway response repair baseline.");
+  const conflictRecord = isRecord(record.conflict) ? record.conflict : {};
+  const rationaleRecord = isRecord(record.rationale) ? record.rationale : {};
+  const dailyPlanRecord = isRecord(record.dailyPlan) ? record.dailyPlan : {};
+  const commitments = arrayValue(record.commitments).length ? record.commitments : baseline.commitments;
+  const planTasks = arrayValue(record.planTasks).length ? record.planTasks : baseline.planTasks;
+  const timelineEvents = arrayValue(record.timelineEvents).length ? record.timelineEvents : baseline.timelineEvents;
+  const resolvedTimelineEvents = arrayValue(record.resolvedTimelineEvents).length
+    ? record.resolvedTimelineEvents
+    : baseline.resolvedTimelineEvents;
+
+  return {
+    commitments,
+    planTasks,
+    timelineEvents,
+    resolvedTimelineEvents,
+    conflict: {
+      ...baseline.conflict,
+      ...conflictRecord,
+      recommendedActions: stringArrayValue(conflictRecord.recommendedActions, baseline.conflict.recommendedActions),
+      manualActions: stringArrayValue(conflictRecord.manualActions, baseline.conflict.manualActions),
+    },
+    rationale: {
+      summary: textValue(rationaleRecord.summary, baseline.rationale.summary),
+      bullets: stringArrayValue(rationaleRecord.bullets, baseline.rationale.bullets),
+    },
+    dailyPlan: {
+      focus: textValue(
+        dailyPlanRecord.focus,
+        baseline.dailyPlan.focus,
+      ),
+    },
+  };
+}
+
 async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
-  const { output } = await generateText({
+  const { text } = await generateText({
     model: gatewayLanguageModel(model),
-    output: Output.object({ schema: ReplanAgentOutputSchema }),
     system:
-      "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only structured JSON. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
+      "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only valid JSON. Do not wrap it in Markdown. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
     prompt: JSON.stringify(
       {
         trigger: input.trigger,
@@ -432,11 +493,11 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           commitments:
             "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions.",
           planTasks:
-            "Return the updated visible plan tasks. Every task must include exact timeLabel clock ranges. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
+            "Return the updated visible plan tasks. Every task must include id, title, section, estimatedMinutes, and exact timeLabel clock ranges. Optional UI fields may be omitted when unknown. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
           timelineEvents:
-            "Return the unresolved/current timeline, preserving conflict flags if the conflict is not resolved.",
+            "Return the unresolved/current timeline, preserving conflict flags if the conflict is not resolved. Optional UI fields may be omitted when unknown.",
           resolvedTimelineEvents:
-            "Return the live resolved timeline after the trigger. For manual_conflict, apply the user's manual instruction and remove obsolete conflictGroupId values when the conflict is resolved.",
+            "Return the live resolved timeline after the trigger. For manual_conflict, apply the user's manual instruction and remove obsolete conflictGroupId values when the conflict is resolved. Optional UI fields may be omitted when unknown.",
           conflict:
             "Return updated conflict copy and actions. overlapLabel must be based on confirmed overlapping fixed ranges, otherwise use Not confirmed.",
           rationale: "Explain the replanning decision in one summary plus 3-6 bullets.",
@@ -451,6 +512,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Move flexible work before moving fixed events unless the manual instruction explicitly says a fixed event changed.",
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
           "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
+          "Return only a JSON object with commitments, planTasks, timelineEvents, resolvedTimelineEvents, conflict, rationale, and dailyPlan.",
         ],
       },
       null,
@@ -458,7 +520,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
     ),
   });
 
-  return ReplanAgentOutputSchema.parse(output);
+  return ReplanAgentOutputSchema.parse(coerceReplanOutput(parseJsonObject(text), input));
 }
 
 export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAgentResponse> {
@@ -470,10 +532,11 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
     return fallbackReplan(input, "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.");
   }
 
-  const model = sponsorEnv.aiGatewayModel;
+  const primaryModel = sponsorEnv.aiGatewayModel;
+  const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
 
   try {
-    const result = await generateReplanWithModel(model, input);
+    const result = await generateReplanWithModel(primaryModel, input);
     const tasks = ensureUpdatedReplanTask(input.trigger, normalizeTasks(result.planTasks));
     const currentConflictValidation = validateTimelineConflicts(result.timelineEvents);
     const resolvedConflictValidation = validateTimelineConflicts(result.resolvedTimelineEvents);
@@ -502,7 +565,7 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
     return {
       provider: "vercel-ai-gateway",
       status: "success",
-      model,
+      model: primaryModel,
       trigger: input.trigger,
       commitments: result.commitments,
       planTasks: tasks,
@@ -521,14 +584,84 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
                 ? "Agent replanned added task"
                 : "Agent replanned after clarification",
           status: "success",
-          detail: `${model} returned updated commitments, timeline, conflict copy, and plan tasks.`,
+          detail: `${primaryModel} returned updated commitments, timeline, conflict copy, and plan tasks.`,
         },
       ],
     };
-  } catch (error) {
+  } catch (primaryError) {
+    if (fallbackModel && fallbackModel !== primaryModel) {
+      try {
+        const result = await generateReplanWithModel(fallbackModel, input);
+        const tasks = ensureUpdatedReplanTask(input.trigger, normalizeTasks(result.planTasks));
+        const currentConflictValidation = validateTimelineConflicts(result.timelineEvents);
+        const resolvedConflictValidation = validateTimelineConflicts(result.resolvedTimelineEvents);
+        const sanitizedResolvedEvents = resolvedConflictValidation.events;
+        const confirmedEventIds = resolvedConflictValidation.groups[0]?.eventIds ?? [];
+        const firstConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[0]);
+        const secondConfirmedEvent = sanitizedResolvedEvents.find((event) => event.id === confirmedEventIds[1]);
+        const conflict = {
+          ...result.conflict,
+          ...(input.trigger === "manual_conflict"
+            ? {
+                fixedEventTitle: firstConfirmedEvent?.title ?? result.conflict.fixedEventTitle,
+                fixedEventTime: firstConfirmedEvent?.duration ?? firstConfirmedEvent?.time ?? result.conflict.fixedEventTime,
+                conflictingEventTitle:
+                  secondConfirmedEvent?.title ??
+                  (resolvedConflictValidation.groups.length ? result.conflict.conflictingEventTitle : "No confirmed overlap"),
+                conflictingEventTime:
+                  secondConfirmedEvent?.duration ??
+                  secondConfirmedEvent?.time ??
+                  (resolvedConflictValidation.groups.length ? result.conflict.conflictingEventTime : "Not confirmed"),
+              }
+            : {}),
+          overlapLabel: resolvedConflictValidation.groups[0]?.overlapLabel ?? "No confirmed overlap",
+        };
+
+        return {
+          provider: "vercel-ai-gateway",
+          status: "success",
+          model: fallbackModel,
+          trigger: input.trigger,
+          commitments: result.commitments,
+          planTasks: tasks,
+          timelineEvents: currentConflictValidation.events,
+          resolvedTimelineEvents: sanitizedResolvedEvents,
+          conflict,
+          rationale: result.rationale,
+          dailyPlan: result.dailyPlan,
+          trace: [
+            {
+              provider: "Vercel AI Gateway",
+              action:
+                input.trigger === "manual_conflict"
+                  ? "Agent replanned manual conflict"
+                  : input.trigger === "add_task"
+                    ? "Agent replanned added task"
+                    : "Agent replanned after clarification",
+              status: "success",
+              detail: `${fallbackModel} returned updated schedule data after ${primaryModel} failed: ${
+                primaryError instanceof Error ? primaryError.message : "Unknown primary model error"
+              }`,
+            },
+          ],
+        };
+      } catch (fallbackError) {
+        return fallbackReplan(
+          input,
+          `Primary and fallback Gateway replanning failed: ${
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : primaryError instanceof Error
+                ? primaryError.message
+                : "Live replanning agent failed."
+          }`,
+        );
+      }
+    }
+
     return fallbackReplan(
       input,
-      error instanceof Error ? error.message : "Live replanning agent failed.",
+      primaryError instanceof Error ? primaryError.message : "Live replanning agent failed.",
     );
   }
 }

@@ -177,7 +177,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const live = url.searchParams.get("live") === "1";
   const strict = url.searchParams.get("judge") === "1" || process.env.STUDENTOS_STRICT_JUDGE === "true";
-  const gatewayTrace = await gatewayHealthTrace(live ? 5000 : 1000);
+  const gatewayTrace = await gatewayHealthTrace();
   const checks = [
     await awsLambdaCheck(live, strict),
     checkFromTrace("vercel-ai-gateway", "Vercel AI Gateway model routing", true, gatewayTrace),

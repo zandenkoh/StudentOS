@@ -20,7 +20,7 @@ import type {
 } from "@/lib/studentos-ai-types";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function configuredAwsAgentEndpoint() {
   return sponsorEnv.awsAgentEndpoint?.trim() || "";
@@ -269,7 +269,7 @@ function streamAwsAgentRequest(
       });
 
       try {
-        const gatewayTrace = await gatewayHealthTrace(5000);
+        const gatewayTrace = await gatewayHealthTrace();
 
         send({ type: "trace", trace: gatewayTrace });
         send({
@@ -324,7 +324,7 @@ function streamAwsAgentRequest(
 
         const trace = awsFallbackTrace(endpoint, error);
         const sourceTrace = bedrockTextractTrace(input.sources);
-        const gatewayTrace = await gatewayHealthTrace(5000);
+        const gatewayTrace = await gatewayHealthTrace();
 
         send({ type: "trace", trace });
         send({ type: "trace", trace: gatewayTrace });
@@ -394,7 +394,7 @@ export async function POST(req: Request) {
   if (!wantsStream) {
     if (awsAgentEndpoint) {
       try {
-        const gatewayTrace = await gatewayHealthTrace(5000);
+        const gatewayTrace = await gatewayHealthTrace();
 
         if (strict && gatewayTrace.status !== "success") {
           return strictJudgeErrorResponse(new Error(gatewayTrace.detail));
@@ -415,7 +415,7 @@ export async function POST(req: Request) {
         }
 
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
-        const gatewayTrace = await gatewayHealthTrace(5000);
+        const gatewayTrace = await gatewayHealthTrace();
         const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error, [gatewayTrace]);
 
         return NextResponse.json(result, {
@@ -432,7 +432,7 @@ export async function POST(req: Request) {
       return awsAgentErrorResponse(missingAwsEndpointError());
     }
 
-    const gatewayTrace = await gatewayHealthTrace(5000);
+    const gatewayTrace = await gatewayHealthTrace();
     const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
       localAwsTrace(),
       gatewayTrace,
@@ -478,7 +478,7 @@ export async function POST(req: Request) {
             result: sponsorEnv.aiGatewayModel,
           }),
         });
-        const gatewayTrace = await gatewayHealthTrace(5000);
+        const gatewayTrace = await gatewayHealthTrace();
 
         send({ type: "trace", trace: localTrace });
         send({ type: "trace", trace: gatewayTrace });

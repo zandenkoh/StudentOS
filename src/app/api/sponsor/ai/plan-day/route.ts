@@ -3,7 +3,7 @@ import { z } from "zod";
 import { planDayWithVercelGateway } from "@/lib/sponsor-tech/vercel-gateway";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const RequestSchema = z.object({
   currentDate: z.string().min(1),

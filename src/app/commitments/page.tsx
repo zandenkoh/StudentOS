@@ -252,7 +252,6 @@ const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
 const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
 const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
 const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
-const USER_DECIDED_SCHEDULE_RATIONALE = "This was a user-decided schedule";
 
 function capitalize(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
@@ -1610,7 +1609,12 @@ export default function CommitmentsPage() {
               scheduledDateId: dateId,
               scheduledDate: dateLabel,
               scheduledDateRange: undefined,
-              scheduleRationale: USER_DECIDED_SCHEDULE_RATIONALE,
+              scheduleRationale: `StudentOS moved ${baseTaskTitle(task.title)} to ${scheduleLabelForTask({
+                ...task,
+                scheduledDateId: dateId,
+                scheduledDate: dateLabel,
+                scheduledDateRange: undefined,
+              })} because the student selected that date and it remains after today and before the task deadline.`,
               updated: true
             }
           : task

@@ -136,14 +136,63 @@ export function sortSubsequentDayTasks(tasks: DemoPlanTask[]) {
 }
 
 function defaultScheduleRationale(task: DemoPlanTask) {
-  return `StudentOS placed ${baseTaskTitle(task.title)} at ${scheduleLabelForTask(task)} because that slot best balances urgency, fixed events, and available focus.`;
+  const title = baseTaskTitle(task.title);
+  const slot = scheduleLabelForTask(task);
+  const duration = task.estimatedMinutes
+    ? `${task.estimatedMinutes}-minute block`
+    : "focused block";
+  const placement =
+    task.section === "do_now"
+      ? "it is the most immediate commitment in the plan"
+      : task.section === "do_next"
+        ? "it can follow the first priority without pushing fixed events"
+        : "it belongs after today's commitments while still keeping the longer-term plan moving";
+  const deadline = task.deadline
+    ? ` and leaves room before ${task.deadline}`
+    : "";
+  const source = task.source ? ` The source is ${task.source}.` : "";
+
+  return `StudentOS placed ${title} at ${slot} because ${placement}, the ${duration} fits that window${deadline}.${source}`;
+}
+
+function normalizedRationale(value?: string) {
+  return normalizeSearchText(value ?? "");
+}
+
+function isGenericScheduleRationale(value?: string) {
+  const normalized = normalizedRationale(value);
+  if (!normalized) return true;
+
+  return [
+    "studentos placed this where it best fits the available evidence and schedule constraints",
+    "studentos placed this task where it best fits the current deadlines fixed events and available energy",
+    "studentos uses a conservative short work block until exact deadlines event details and workload are confirmed",
+  ].includes(normalized);
 }
 
 export function enrichPlanTasksWithRationales(tasks: DemoPlanTask[]) {
-  return ensureTaskTimeRanges(tasks).map((task) => ({
-    ...task,
-    scheduleRationale: task.scheduleRationale ?? defaultScheduleRationale(task),
-  }));
+  const rangedTasks = ensureTaskTimeRanges(tasks);
+  const rationaleCounts = rangedTasks.reduce<Record<string, number>>((counts, task) => {
+    const key = normalizedRationale(task.scheduleRationale);
+    if (!key) return counts;
+    counts[key] = (counts[key] ?? 0) + 1;
+    return counts;
+  }, {});
+
+  return rangedTasks.map((task) => {
+    const key = normalizedRationale(task.scheduleRationale);
+    const shouldRegenerate =
+      !task.scheduleRationale ||
+      isGenericScheduleRationale(task.scheduleRationale) ||
+      (key && rationaleCounts[key] > 1);
+
+    return {
+      ...task,
+      scheduleRationale: shouldRegenerate
+        ? defaultScheduleRationale(task)
+        : task.scheduleRationale,
+    };
+  });
 }
 
 export function scheduleRationaleForTask(task: DemoPlanTask) {

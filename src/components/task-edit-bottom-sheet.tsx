@@ -4,16 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Scissors } from "lucide-react";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
+import { scheduleRationaleForTask } from "@/app/commitments/commitment-helpers";
 import type { DemoPlanTask } from "@/lib/demo-data";
 import { scheduleLabelWithTimeRange } from "@/lib/time-scheduling";
 import { cn } from "@/lib/utils";
 
 function currentScheduleLabel(task: DemoPlanTask) {
   return scheduleLabelWithTimeRange(task) ?? "Not scheduled";
-}
-
-function scheduleRationale(task: DemoPlanTask) {
-  return task.scheduleRationale ?? task.reason ?? "StudentOS placed this task where it best fits the current deadlines, fixed events, and available energy.";
 }
 
 function dateIdFromDate(date: Date) {
@@ -170,7 +167,7 @@ export function TaskEditBottomSheet({
               Rationale for Schedule
             </p>
             <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
-              {scheduleRationale(task)}
+              {scheduleRationaleForTask(task)}
             </p>
           </div>
 

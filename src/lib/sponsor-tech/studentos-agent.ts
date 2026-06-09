@@ -1635,6 +1635,7 @@ export async function analyseStudentChaos(
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
+  const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
 
   await emitLog({
     id: "gateway-call-started",
@@ -1648,11 +1649,7 @@ export async function analyseStudentChaos(
   });
 
   try {
-    const result = await withTimeout(
-      generateFootprintCore(primaryModel, normalizedInput, goalResearch),
-      24000,
-      `Vercel AI Gateway ${primaryModel}`,
-    );
+    const result = await generateFootprintCore(primaryModel, normalizedInput, goalResearch);
     await emitTrace({
       provider: "Vercel AI Gateway",
       action: "Generated live StudentOS analysis",
@@ -1703,9 +1700,81 @@ export async function analyseStudentChaos(
       agentLogs: observableLogs(),
     };
   } catch (primaryError) {
-    const reason = primaryError instanceof Error
-      ? `${primaryError.message.replace(/\.$/, "")}. Skipped model retry to preserve the 30 second transition budget.`
-      : "Unknown Gateway error. Skipped model retry to preserve the 30 second transition budget.";
+    let finalError = primaryError;
+
+    if (fallbackModel && fallbackModel !== primaryModel) {
+      await emitLog({
+        id: "gateway-fallback-model-started",
+        kind: "tool",
+        title: "Retrying Vercel AI Gateway",
+        body: "The primary Gateway model failed, so StudentOS is retrying through the configured Gateway fallback model.",
+        detail: primaryError instanceof Error ? primaryError.message : "Unknown primary Gateway error.",
+        tool: {
+          provider: "Vercel AI Gateway",
+          result: fallbackModel,
+        },
+      });
+
+      try {
+        const result = await generateFootprintCore(fallbackModel, normalizedInput, goalResearch);
+
+        await emitTrace({
+          provider: "Vercel AI Gateway",
+          action: "Generated live StudentOS analysis",
+          status: "success",
+          detail: `${fallbackModel} returned commitments, questions, roadmap, and plan JSON after ${primaryModel} failed.`,
+        });
+        await emitLog({
+          id: "gateway-fallback-model-response",
+          kind: "tool",
+          title: "Fallback Gateway model responded",
+          body: "The Gateway fallback model returned structured JSON for commitments, questions, conflicts, roadmap, and plan tasks.",
+          tool: {
+            provider: "Vercel AI Gateway",
+            result: `${fallbackModel} completed the planning call.`,
+          },
+        });
+        await emitLog({
+          id: "schema-validation",
+          kind: "analysis",
+          title: "Validating structured footprint",
+          body: "Checking the returned JSON against the app schema before storing it for the review screen.",
+          detail: "Commitments, clarification questions, timeline events, roadmap steps, and plan tasks are validated together.",
+        });
+
+        const footprint = buildFootprintFromCore({
+          core: result,
+          input: normalizedInput,
+          goalResearch,
+          model: fallbackModel,
+          sponsorTrace,
+          agentLogs: observableLogs(),
+        });
+
+        await emitLog({
+          id: "live-footprint-ready",
+          kind: "footprint",
+          title: "Live footprint ready",
+          body: "The review screen can render the completed live analysis.",
+          detail: `${footprint.commitments.length} commitments, ${footprint.clarificationQuestions.length} clarification questions, ${footprint.planTasks.length} plan tasks.`,
+          tool: {
+            provider: "StudentOS",
+            result: "Validated footprint stored for the next screen.",
+          },
+        });
+
+        return {
+          ...footprint,
+          agentLogs: observableLogs(),
+        };
+      } catch (fallbackError) {
+        finalError = fallbackError;
+      }
+    }
+
+    const reason = finalError instanceof Error
+      ? finalError.message
+      : "Unknown Gateway error.";
     await emitTrace({
       provider: "Vercel AI Gateway",
       action: "Generated student chaos analysis fallback",
