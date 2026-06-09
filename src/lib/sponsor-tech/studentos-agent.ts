@@ -600,6 +600,23 @@ function fallbackFootprint(
   };
 }
 
+function mergeSponsorTrace(
+  primary: StudentOSAgentFootprint["sponsorTrace"],
+  fallback: StudentOSAgentFootprint["sponsorTrace"],
+) {
+  const seen = new Set(primary.map((item) => `${item.provider}:${item.action}`));
+
+  return [
+    ...primary,
+    ...fallback.filter((item) => {
+      const key = `${item.provider}:${item.action}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }),
+  ];
+}
+
 async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<StudentOSAgentFootprint["goalResearch"] | undefined> {
   const broadGoal = sources
     .map(sourceText)
@@ -852,7 +869,7 @@ export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Pr
     const fallback = fallbackFootprint(normalizedInput, "USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.", goalResearch);
     return {
       ...fallback,
-      sponsorTrace: [...sponsorTrace, ...fallback.sponsorTrace],
+      sponsorTrace: mergeSponsorTrace(sponsorTrace, fallback.sponsorTrace),
     };
   }
 
@@ -885,14 +902,14 @@ export async function analyseStudentChaos(input: AnalyseStudentChaosRequest): Pr
     const fallback = fallbackFootprint(
       normalizedInput,
       primaryError instanceof Error
-        ? `${primaryError.message}. Skipped model retry to preserve the 30 second transition budget.`
+        ? `${primaryError.message.replace(/\.$/, "")}. Skipped model retry to preserve the 30 second transition budget.`
         : "Unknown Gateway error. Skipped model retry to preserve the 30 second transition budget.",
       goalResearch,
     );
 
     return {
       ...fallback,
-      sponsorTrace: [...sponsorTrace, ...fallback.sponsorTrace],
+      sponsorTrace: mergeSponsorTrace(sponsorTrace, fallback.sponsorTrace),
     };
   }
 }
