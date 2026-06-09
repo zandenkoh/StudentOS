@@ -313,6 +313,199 @@ function parseJsonObject(text: string) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function textValue(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function numberValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function booleanValue(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function enumValue<const T extends readonly string[]>(value: unknown, options: T, fallback: T[number]) {
+  return typeof value === "string" && options.includes(value) ? value : fallback;
+}
+
+function slugFrom(value: string, fallback: string) {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
+  return slug || fallback;
+}
+
+function coerceActionArray(value: unknown, fallbacks: string[]) {
+  const actions = Array.isArray(value)
+    ? value.map((item) => textValue(item)).filter(Boolean)
+    : [];
+
+  for (const fallback of fallbacks) {
+    if (actions.length >= 3) break;
+    if (!actions.includes(fallback)) actions.push(fallback);
+  }
+
+  return actions.slice(0, 6);
+}
+
+function coerceGeneratedPlanTask(
+  value: unknown,
+  fallbackTitle: string,
+  index: number,
+  defaults: Partial<GeneratedPlanTask> = {},
+) {
+  const record = isRecord(value) ? value : {};
+  const stringValue = typeof value === "string" ? value : "";
+  const title = textValue(record.title, textValue(stringValue, fallbackTitle));
+  const goalId = textValue(record.goalId, defaults.goalId ?? "");
+
+  return {
+    id: textValue(record.id, `${slugFrom(title, "task")}-${index + 1}`),
+    title,
+    section: enumValue(record.section, ["do_now", "do_next", "subsequent_days"] as const, defaults.section ?? "subsequent_days"),
+    estimatedMinutes: Math.max(0, Math.round(numberValue(record.estimatedMinutes, defaults.estimatedMinutes ?? 30))),
+    timeLabel: textValue(record.timeLabel, defaults.timeLabel ?? ""),
+    scheduledDate: textValue(record.scheduledDate, defaults.scheduledDate ?? ""),
+    scheduledDateId: textValue(record.scheduledDateId, defaults.scheduledDateId ?? ""),
+    scheduledDateRange: textValue(record.scheduledDateRange, defaults.scheduledDateRange ?? ""),
+    deadline: textValue(record.deadline, defaults.deadline ?? ""),
+    deadlineDateId: textValue(record.deadlineDateId, defaults.deadlineDateId ?? ""),
+    reason: textValue(record.reason, defaults.reason ?? "Created from the live planning output."),
+    scheduleRationale: textValue(
+      record.scheduleRationale,
+      defaults.scheduleRationale ?? "StudentOS placed this where it best fits the available evidence and schedule constraints.",
+    ),
+    source: textValue(record.source, defaults.source ?? "Vercel AI Gateway"),
+    goalId,
+    isRoadmapTask: booleanValue(record.isRoadmapTask, defaults.isRoadmapTask ?? Boolean(goalId)),
+    updated: booleanValue(record.updated, defaults.updated ?? false),
+  };
+}
+
+function coerceGeneratedCore(raw: unknown) {
+  if (!isRecord(raw)) return raw;
+
+  const core = JSON.parse(JSON.stringify(raw)) as Record<string, unknown>;
+
+  if (Array.isArray(core.clarificationQuestions)) {
+    core.clarificationQuestions = core.clarificationQuestions.map((question, index) => {
+      if (!isRecord(question)) return question;
+
+      const title = textValue(question.title, `Clarification ${index + 1}`);
+      const resolved = isRecord(question.resolvedCommitment) ? question.resolvedCommitment : {};
+      const resolvedText = typeof question.resolvedCommitment === "string" ? question.resolvedCommitment : "";
+      const rawOptions = Array.isArray(question.options) ? question.options : [];
+      const options = rawOptions
+        .map((option, optionIndex) => {
+          if (isRecord(option)) {
+            return {
+              label: textValue(option.label, `Option ${optionIndex + 1}`),
+              recommended: booleanValue(option.recommended, optionIndex === 0),
+            };
+          }
+
+          return {
+            label: textValue(option, `Option ${optionIndex + 1}`),
+            recommended: optionIndex === 0,
+          };
+        })
+        .filter((option) => option.label);
+
+      while (options.length < 2) {
+        options.push({
+          label: options.length === 0 ? "Confirm" : "Skip for now",
+          recommended: options.length === 0,
+        });
+      }
+
+      return {
+        ...question,
+        options: options.slice(0, 4),
+        resolvedCommitment: {
+          title: textValue(resolved.title, textValue(resolvedText, title)),
+          state: enumValue(resolved.state, ["confirmed", "needs_clarification", "unsure", "resolved"] as const, "confirmed"),
+          confidence: Math.max(0, Math.min(100, Math.round(numberValue(resolved.confidence, 82)))),
+          estimatedDuration: textValue(resolved.estimatedDuration, "30min"),
+          explanation: textValue(resolved.explanation, textValue(resolvedText, "Clarified from the student's answer.")),
+        },
+      };
+    });
+  }
+
+  if (isRecord(core.conflict)) {
+    const conflict = core.conflict;
+    const recommendationSummary = textValue(
+      conflict.recommendationSummary,
+      "Confirm exact timing before locking the schedule.",
+    );
+
+    core.conflict = {
+      title: textValue(conflict.title, "Potential timing conflict needs confirmation"),
+      unresolvedSummary: textValue(conflict.unresolvedSummary, "Some supplied times are missing, tentative, or flexible."),
+      resolvedTitle: textValue(conflict.resolvedTitle, "Timing reviewed"),
+      resolvedSummary: textValue(conflict.resolvedSummary, "StudentOS keeps tentative items flexible until confirmed."),
+      fixedEventTitle: textValue(conflict.fixedEventTitle, "Fixed event"),
+      fixedEventTime: textValue(conflict.fixedEventTime, "Time to confirm"),
+      conflictingEventTitle: textValue(conflict.conflictingEventTitle, "Potential conflict"),
+      conflictingEventTime: textValue(conflict.conflictingEventTime, "Time to confirm"),
+      overlapLabel: textValue(conflict.overlapLabel, "Not confirmed"),
+      impactLabel: textValue(conflict.impactLabel, "Confirm times"),
+      resolvedImpactLabel: textValue(conflict.resolvedImpactLabel, "Plan can proceed"),
+      recommendationSummary,
+      recommendedActions: coerceActionArray(conflict.recommendedActions, [
+        recommendationSummary,
+        "Confirm exact start and end times.",
+        "Keep flexible work movable until fixed events are clear.",
+      ]),
+      manualActions: coerceActionArray(conflict.manualActions, [
+        "Manually mark confirmed fixed events.",
+        "Move flexible tasks around any fixed overlap.",
+        "Ask for clarification before locking tentative meetings.",
+      ]),
+    };
+  }
+
+  if (Array.isArray(core.planTasks)) {
+    core.planTasks = core.planTasks.map((task, index) =>
+      coerceGeneratedPlanTask(task, `Plan task ${index + 1}`, index),
+    );
+  }
+
+  if (Array.isArray(core.roadmapSteps)) {
+    core.roadmapSteps = core.roadmapSteps.map((step, stepIndex) => {
+      if (!isRecord(step)) return step;
+
+      const title = textValue(step.title, `Roadmap step ${stepIndex + 1}`);
+      const goalId = textValue(step.goalId, slugFrom(title, "goal"));
+      const rawTasks = Array.isArray(step.tasks) && step.tasks.length ? step.tasks : [`${title} task`];
+
+      return {
+        ...step,
+        id: textValue(step.id, `${slugFrom(title, "roadmap-step")}-${stepIndex + 1}`),
+        goalId,
+        title,
+        description: textValue(step.description),
+        scheduledDate: textValue(step.scheduledDate),
+        scheduledDateRange: textValue(step.scheduledDateRange),
+        status: enumValue(step.status, ["scheduled", "in_progress", "upcoming"] as const, "upcoming"),
+        tasks: rawTasks.map((task, taskIndex) =>
+          coerceGeneratedPlanTask(task, `${title} task ${taskIndex + 1}`, taskIndex, {
+            section: "subsequent_days",
+            goalId,
+            isRoadmapTask: true,
+            source: "Roadmap",
+          }),
+        ),
+      };
+    });
+  }
+
+  return core;
+}
+
 const defaultSources: CapturedSourceForAI[] = [
   {
     id: "whatsapp-screenshot",
@@ -906,7 +1099,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
     ),
   });
 
-  return GeneratedCoreSchema.parse(parseJsonObject(text));
+  return GeneratedCoreSchema.parse(coerceGeneratedCore(parseJsonObject(text)));
 }
 
 export async function analyseStudentChaos(

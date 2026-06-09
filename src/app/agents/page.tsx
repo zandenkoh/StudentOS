@@ -232,7 +232,7 @@ export default function AgentsThinkingPage() {
         setAnalysisFailed(false);
         setStreamError(null);
 
-        const response = await fetch("/api/sponsor/ai/analyse-student-chaos?stream=1", {
+        const response = await fetch("/api/sponsor/ai/analyse-student-chaos", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
