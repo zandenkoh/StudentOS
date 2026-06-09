@@ -29,7 +29,7 @@ type DemoPacketFile = {
 const demoPacketFiles: DemoPacketFile[] = [
   {
     sourceId: "whatsapp-screenshot",
-    title: "WhatsApp project chat.jpg",
+    title: "IMG-20260609-WA0004.jpg",
     source: "WhatsApp Screenshot",
     snippet: "Team chat: project meeting may move because Sarah has CCA and tuition.",
     fileSize: "185 KB",
@@ -55,7 +55,7 @@ const demoPacketFiles: DemoPacketFile[] = [
   },
   {
     sourceId: "calendar-conflict",
-    title: "Tuition calendar clash.png",
+    title: "Screenshot 2026-06-09 123905.jpg",
     source: "Calendar Conflict",
     snippet: "Tuition is fixed from 4:30-6:30 PM, overlapping the CCA briefing.",
     fileSize: "210 KB",
@@ -65,7 +65,7 @@ const demoPacketFiles: DemoPacketFile[] = [
   },
   {
     sourceId: "cca-screenshot",
-    title: "CCA announcement screenshot.jpg",
+    title: "Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
     source: "CCA Announcement",
     snippet: "Briefing starts at 5:30 PM today in the auditorium.",
     fileSize: "492 KB",
@@ -98,7 +98,8 @@ function filePathForPublicPath(publicPath: string) {
 }
 
 function templateS3Key(source: DemoPacketFile, contentHash: string) {
-  const safeTitle = source.title.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const filename = source.publicPath ? path.basename(decodeURIComponent(source.publicPath)) : source.title;
+  const safeTitle = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
   return `studentos-demo/templates/${source.sourceId}-${contentHash.slice(0, 12)}-${safeTitle}`;
 }
 
@@ -124,7 +125,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
   const cacheKey = sourceCacheKey("initial_packet", source.sourceId);
   const cached = manifestRecords[cacheKey];
 
-  if (cached?.contentHash === contentHash && cached.s3Key) {
+  if (cached?.contentHash === contentHash && cached.s3Key && cached.title === source.title) {
     if (!cached.sourceSummary && (source.fileType === "image" || source.fileType === "pdf" || source.fileType === "text")) {
       const interpretation = await interpretSourceAttachment({
         title: source.title,

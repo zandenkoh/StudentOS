@@ -41,6 +41,7 @@ const sourceInterpreterSystemPrompt = [
   "You are the StudentOS source interpreter.",
   "Your job is to summarize messy student attachments before the planner sees them.",
   "Read the actual image or PDF when provided; use OCR as supporting evidence, not as the only truth.",
+  "Do not infer tasks, events, subjects, deadlines, or summaries from filenames, S3 keys, or generated storage names.",
   "Preserve and interpret non-English text, including Chinese, instead of ignoring it.",
   "A single attachment may contain multiple worksheets, messages, events, or tasks; extract each distinct actionable item.",
   "If the source only identifies a packet, cover page, or unclear chat context, mark needsClarification=true.",
@@ -61,6 +62,7 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
       ocrText: compactText(input.rawText),
       outputGuidance: [
         "Return JSON only.",
+        "Use the title only as an attachment label; do not use it as evidence for extracted tasks.",
         "summary: one sentence, under 180 characters if possible.",
         "extractedTasks: student commitments only; use type='unclear' for ambiguous actions.",
         "clarificationPrompt: direct question for the review page when needed.",
