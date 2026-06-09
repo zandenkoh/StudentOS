@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
+import { SponsorProofStrip } from "@/components/sponsor-proof-strip";
 import { cn } from "@/lib/utils";
 import type {
   AIAgentLog,
@@ -101,6 +102,13 @@ function mergeLog(rows: AgentLog[], next: AgentLog) {
       : [...rows, next];
 
   return merged.slice().sort((a, b) => a.at - b.at);
+}
+
+function mergeSponsorTrace(rows: AISponsorTraceItem[], next: AISponsorTraceItem) {
+  return [
+    next,
+    ...rows.filter((item) => !(item.provider === next.provider && item.action === next.action)),
+  ].slice(0, 8);
 }
 
 function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
@@ -193,6 +201,7 @@ export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
+  const [sponsorTrace, setSponsorTrace] = useState<AISponsorTraceItem[]>([]);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -212,20 +221,38 @@ export default function AgentsThinkingPage() {
 
     function storeFootprint(result: StudentOSAgentFootprint) {
       if (cancelled) return;
+      const nextTrace = result.sponsorTrace.slice(0, 8);
+
       window.clearTimeout(timeout);
       setAiFootprint(result);
       setAgentLogs(result.agentLogs.map(toClientLog));
+      setSponsorTrace(nextTrace);
       window.localStorage.setItem("studentos_footprint", "completed");
       window.localStorage.setItem("agent_log_visited", "true");
       window.localStorage.setItem("studentos_ai_footprint", JSON.stringify(result));
       window.localStorage.setItem("studentos_commitment_footprint", JSON.stringify(result));
-      window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(result.sponsorTrace.slice(0, 8)));
+      window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(nextTrace));
+    }
+
+    function storeSponsorTrace(item: AISponsorTraceItem) {
+      setSponsorTrace((current) => {
+        const nextTrace = mergeSponsorTrace(current, item);
+
+        window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(nextTrace));
+        return nextTrace;
+      });
     }
 
     async function runAnalysis() {
       let capturedSources: CapturedSourceForAI[] = [];
 
       try {
+        const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
+        if (rawTrace) {
+          const parsedTrace = JSON.parse(rawTrace) as AISponsorTraceItem[];
+          if (Array.isArray(parsedTrace)) setSponsorTrace(parsedTrace.slice(0, 8));
+        }
+
         const rawSources = window.localStorage.getItem("studentos_captured_sources");
         if (rawSources) {
           const parsed = JSON.parse(rawSources) as CapturedSourceForAI[];
@@ -283,6 +310,7 @@ export default function AgentsThinkingPage() {
           }
 
           if (event.type === "trace") {
+            storeSponsorTrace(event.trace);
             return;
           }
 
@@ -361,6 +389,7 @@ export default function AgentsThinkingPage() {
         ].slice(0, 8);
 
         window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(fallbackTrace));
+        setSponsorTrace(fallbackTrace);
       }
     }
 
@@ -474,6 +503,9 @@ export default function AgentsThinkingPage() {
                 {statusLabel}
               </span>
             </div>
+          </div>
+          <div className="mt-3">
+            <SponsorProofStrip trace={sponsorTrace} />
           </div>
         </section>
 

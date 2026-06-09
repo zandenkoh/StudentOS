@@ -4,6 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { ensureTaskTimeRanges } from "@/lib/time-scheduling";
+import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 
 const CommitmentSchema = z.object({
@@ -279,7 +280,7 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
 
 async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
   const { output } = await generateText({
-    model,
+    model: gatewayLanguageModel(model),
     output: Output.object({ schema: ReplanAgentOutputSchema }),
     system:
       "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only structured JSON. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply clarification answers or manual conflict instructions as source-of-truth, and update the schedule immediately.",

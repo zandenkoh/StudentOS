@@ -13,6 +13,7 @@ export const sponsorEnv = {
   awsBucket: process.env.AWS_S3_BUCKET,
   bedrockRegion: process.env.AWS_BEDROCK_REGION || process.env.AWS_REGION || "us-west-2",
   bedrockModelId: process.env.AWS_BEDROCK_MODEL_ID,
+  awsAgentEndpoint: process.env.AWS_AGENT_ENDPOINT,
 };
 
 export function isAwsReady() {

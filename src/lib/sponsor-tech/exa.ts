@@ -2,6 +2,7 @@ import "server-only";
 
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { compactResearchCopy } from "@/lib/sponsor-tech/research-format";
 
@@ -370,7 +371,7 @@ export async function generateResearchQueryPlan(evidence: string): Promise<Resea
   try {
     const { output } = await withTimeout(
       generateText({
-        model: sponsorEnv.aiGatewayResearchModel,
+        model: gatewayLanguageModel(sponsorEnv.aiGatewayResearchModel),
         output: Output.object({ schema: ResearchQueryPlanSchema }),
         system: [
           "You are the StudentOS research-query planner.",

@@ -1,0 +1,39 @@
+service: studentos-agent
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${env:AWS_REGION, "ap-southeast-1"}
+  stage: ${opt:stage, "dev"}
+  timeout: 60
+  memorySize: 1024
+  environment:
+    USE_REAL_VERCEL_AI: ${env:USE_REAL_VERCEL_AI, "true"}
+    AI_GATEWAY_API_KEY: ${env:AI_GATEWAY_API_KEY, ""}
+    AI_GATEWAY_MODEL: ${env:AI_GATEWAY_MODEL, "openai/gpt-4o-mini"}
+    AI_GATEWAY_FALLBACK_MODEL: ${env:AI_GATEWAY_FALLBACK_MODEL, "openai/gpt-4o-mini"}
+    USE_REAL_EXA: ${env:USE_REAL_EXA, "false"}
+    EXA_API_KEY: ${env:EXA_API_KEY, ""}
+    USE_REAL_AWS: ${env:USE_REAL_AWS, "false"}
+    AWS_S3_BUCKET: ${env:AWS_S3_BUCKET, ""}
+    USE_REAL_BEDROCK: ${env:USE_REAL_BEDROCK, "false"}
+    AWS_BEDROCK_MODEL_ID: ${env:AWS_BEDROCK_MODEL_ID, ""}
+
+package:
+  patterns:
+    - "!**"
+    - "dist/aws/analyse-student-chaos-handler.js"
+    - "dist/aws/analyse-student-chaos-handler.js.map"
+
+functions:
+  analyseStudentChaos:
+    name: studentos-analyse-chaos
+    handler: dist/aws/analyse-student-chaos-handler.handler
+    events:
+      - httpApi:
+          method: POST
+          path: /analyse-student-chaos
+      - httpApi:
+          method: OPTIONS
+          path: /analyse-student-chaos

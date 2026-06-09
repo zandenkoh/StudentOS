@@ -10,6 +10,7 @@ import {
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import { getObjectBytes, getReadUrl } from "@/lib/sponsor-tech/aws-s3";
+import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isBedrockReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 
 const InterpretedTaskSchema = z.object({
@@ -288,7 +289,7 @@ export async function interpretSourceAttachment(
     const rawText = compactText(input.rawText);
 
     const { output } = await generateText({
-      model: sponsorEnv.aiGatewayModel,
+      model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
       output: Output.object({ schema: SourceInterpretationSchema }),
       system: sourceInterpreterSystemPrompt,
       messages: [

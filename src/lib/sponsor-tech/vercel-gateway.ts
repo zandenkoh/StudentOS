@@ -2,6 +2,7 @@ import "server-only";
 
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTasks } from "@/lib/session-splitting";
 
@@ -238,7 +239,7 @@ function mergeSourceContextWithReview(sourceContext: unknown, review: Clarificat
 
 async function reviewClarificationsWithModel(model: string, input: PlanDayInput) {
   const { output } = await generateText({
-    model,
+    model: gatewayLanguageModel(model),
     output: Output.object({ schema: ClarificationReviewSchema }),
     system:
       "You are the StudentOS clarification-review agent. Review user clarification answers before the planner schedules anything. Resolve what is now known, keep unresolved uncertainty explicit, and never invent commitments unrelated to the supplied input.",
@@ -312,7 +313,7 @@ async function reviewClarifications(input: PlanDayInput) {
 
 async function generatePlanWithModel(model: string, input: PlanDayInput) {
   const { output } = await generateText({
-    model,
+    model: gatewayLanguageModel(model),
     output: Output.object({ schema: GatewayPlanSchema }),
     system:
       "You are StudentOS, an AI chief-of-staff for ambitious students. Produce a realistic daily plan from messy commitments, broad goals, and fixed constraints. Keep the plan student-specific, deadline-aware, and concise. Do not invent unrelated tasks.",

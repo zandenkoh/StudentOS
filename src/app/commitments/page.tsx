@@ -39,6 +39,7 @@ import { RecommendationCard } from "@/components/recommendation-card";
 import { ScreenHeader } from "@/components/screen-header";
 import { resetScreenScroll } from "@/components/scroll-to-screen-top";
 import { SourceChip } from "@/components/source-chip";
+import { SponsorProofStrip } from "@/components/sponsor-proof-strip";
 import { TaskEditBottomSheet } from "@/components/task-edit-bottom-sheet";
 
 import {
@@ -1130,6 +1131,7 @@ export default function CommitmentsPage() {
   const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
   const [clarificationAnswerRecords, setClarificationAnswerRecords] = useState<ClarificationAnswerRecord[]>([]);
   const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
+  const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
   const [replanLoading, setReplanLoading] = useState(false);
   const [replanStatus, setReplanStatus] = useState<string | null>(null);
@@ -1213,6 +1215,12 @@ export default function CommitmentsPage() {
 
   useEffect(() => {
     try {
+      const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
+      if (rawTrace) {
+        const parsedTrace = JSON.parse(rawTrace) as SponsorTraceItem[];
+        if (Array.isArray(parsedTrace)) setSponsorTrace(parsedTrace.slice(0, 8));
+      }
+
       const rawFootprint =
         window.localStorage.getItem("studentos_ai_footprint") ??
         window.localStorage.getItem("studentos_commitment_footprint");
@@ -1231,6 +1239,7 @@ export default function CommitmentsPage() {
           setBaseTimeline(parsedFootprint.timelineEvents);
           setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
           setConflictAnalysis(parsedFootprint.conflict);
+          setSponsorTrace(parsedFootprint.sponsorTrace.slice(0, 8));
           setAiPlan({
             provider: parsedFootprint.provider,
             status: parsedFootprint.status,
@@ -1343,7 +1352,13 @@ export default function CommitmentsPage() {
       }
     }
 
-    window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
+    const nextTrace = [
+      item,
+      ...trace.filter((traceItem) => !(traceItem.provider === item.provider && traceItem.action === item.action)),
+    ].slice(0, 8);
+
+    window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(nextTrace));
+    setSponsorTrace(nextTrace);
   }, []);
 
   function persistReplannedFootprint(result: ReplanAgentResponse) {
@@ -2182,6 +2197,7 @@ export default function CommitmentsPage() {
                 title="Review extracted items"
                 subtitle="StudentOS separated obligations from longer-term goals."
               />
+              <SponsorProofStrip trace={sponsorTrace} />
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <div className="space-y-6 pb-8">
                 <section className="space-y-3">
@@ -2265,6 +2281,7 @@ export default function CommitmentsPage() {
                     : conflictAnalysis?.unresolvedSummary ?? "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
                 }
               />
+              <SponsorProofStrip trace={sponsorTrace} />
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <ConflictSummaryCard
                 resolved={conflictResolved}
@@ -2307,6 +2324,7 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
+              <SponsorProofStrip trace={sponsorTrace} />
               <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <FocusActionCard
                 conflictResolved={hasConfirmedConflict && conflictResolved}

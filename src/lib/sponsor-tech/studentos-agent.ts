@@ -3,6 +3,7 @@ import "server-only";
 import { generateText } from "ai";
 import { z } from "zod";
 import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
+import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
@@ -1634,7 +1635,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
   const sources = input.sources;
 
   const { text } = await generateText({
-    model,
+    model: gatewayLanguageModel(model),
     system:
       "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
     prompt: JSON.stringify(

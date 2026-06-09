@@ -2,11 +2,121 @@ import { NextResponse } from "next/server";
 import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
+  type AnalyseStudentChaosRequest,
 } from "@/lib/sponsor-tech/studentos-agent";
-import type { AnalyseStudentChaosStreamEvent } from "@/lib/studentos-ai-types";
+import { sponsorEnv } from "@/lib/sponsor-tech/env";
+import type {
+  AIAgentLog,
+  AISponsorTraceItem,
+  AnalyseStudentChaosStreamEvent,
+  StudentOSAgentFootprint,
+} from "@/lib/studentos-ai-types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+
+function configuredAwsAgentEndpoint() {
+  return sponsorEnv.awsAgentEndpoint?.trim() || "";
+}
+
+function awsAgentHost(endpoint: string) {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
+}
+
+function awsComputeTrace(endpoint: string): AISponsorTraceItem {
+  return {
+    provider: "AWS Lambda",
+    action: "Ran StudentOS agent orchestrator",
+    status: "success",
+    detail: `Vercel route forwarded analysis to AWS compute at ${awsAgentHost(endpoint)}.`,
+  };
+}
+
+function awsFallbackTrace(endpoint: string, error: unknown): AISponsorTraceItem {
+  return {
+    provider: "AWS Lambda",
+    action: "Ran StudentOS agent orchestrator",
+    status: "fallback",
+    detail:
+      error instanceof Error
+        ? `AWS endpoint ${awsAgentHost(endpoint)} failed: ${error.message}`
+        : `AWS endpoint ${awsAgentHost(endpoint)} failed; local fallback handled the request.`,
+  };
+}
+
+function withPrependedTrace(
+  footprint: StudentOSAgentFootprint,
+  trace: AISponsorTraceItem,
+): StudentOSAgentFootprint {
+  return {
+    ...footprint,
+    sponsorTrace: [
+      trace,
+      ...footprint.sponsorTrace.filter(
+        (item) => !(item.provider === trace.provider && item.action === trace.action),
+      ),
+    ],
+  };
+}
+
+async function callAwsAgent(
+  endpoint: string,
+  input: AnalyseStudentChaosRequest,
+): Promise<StudentOSAgentFootprint> {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+    cache: "no-store",
+  });
+  const text = await response.text();
+  const payload = text ? JSON.parse(text) as unknown : undefined;
+
+  if (!response.ok) {
+    const message =
+      payload &&
+      typeof payload === "object" &&
+      "error" in payload &&
+      typeof payload.error === "string"
+        ? payload.error
+        : `AWS agent endpoint returned ${response.status}.`;
+
+    throw new Error(message);
+  }
+
+  return withPrependedTrace(payload as StudentOSAgentFootprint, awsComputeTrace(endpoint));
+}
+
+function awsForwardLog(endpoint: string): AIAgentLog {
+  return {
+    id: "aws-agent-forwarded",
+    at: 0,
+    kind: "tool",
+    title: "Forwarding to AWS Lambda",
+    body: "Vercel is handing the StudentOS orchestration request to the AWS-hosted agent endpoint.",
+    tool: {
+      provider: "AWS",
+      result: awsAgentHost(endpoint),
+    },
+  };
+}
+
+async function analyseWithLocalFallback(
+  input: AnalyseStudentChaosRequest,
+  endpoint: string,
+  error: unknown,
+): Promise<StudentOSAgentFootprint> {
+  const fallback = await analyseStudentChaos(input);
+
+  return withPrependedTrace(fallback, awsFallbackTrace(endpoint, error));
+}
 
 export async function POST(req: Request) {
   let requestBody: unknown;
@@ -32,11 +142,31 @@ export async function POST(req: Request) {
   const wantsStream =
     new URL(req.url).searchParams.get("stream") === "1" ||
     req.headers.get("accept")?.includes("application/x-ndjson");
+  const awsAgentEndpoint = configuredAwsAgentEndpoint();
 
   if (!wantsStream) {
+    if (awsAgentEndpoint) {
+      try {
+        const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
+
+        return NextResponse.json(result, {
+          headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
+        });
+      } catch (error) {
+        console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
+        const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error);
+
+        return NextResponse.json(result, {
+          headers: { "X-StudentOS-Agent-Compute": "local-fallback" },
+        });
+      }
+    }
+
     const result = await analyseStudentChaos(parsed.data);
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: { "X-StudentOS-Agent-Compute": "local" },
+    });
   }
 
   const encoder = new TextEncoder();
@@ -48,6 +178,43 @@ export async function POST(req: Request) {
       };
 
       try {
+        if (awsAgentEndpoint) {
+          const forwardLog = awsForwardLog(awsAgentEndpoint);
+
+          send({ type: "log", log: forwardLog });
+
+          try {
+            const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
+
+            send({ type: "trace", trace: awsComputeTrace(awsAgentEndpoint) });
+            send({ type: "footprint", footprint: result });
+            return;
+          } catch (error) {
+            console.error("StudentOS AWS agent endpoint failed; streaming local fallback.", error);
+            const trace = awsFallbackTrace(awsAgentEndpoint, error);
+
+            send({ type: "trace", trace });
+            send({
+              type: "log",
+              log: {
+                id: "aws-agent-local-fallback",
+                at: 250,
+                kind: "decision",
+                title: "AWS agent fallback selected",
+                body: "The AWS endpoint did not complete, so StudentOS kept the demo flow moving locally.",
+                detail: trace.detail,
+              },
+            });
+
+            const fallback = await analyseStudentChaos(parsed.data, {
+              onEvent: send,
+            });
+
+            send({ type: "footprint", footprint: withPrependedTrace(fallback, trace) });
+            return;
+          }
+        }
+
         const result = await analyseStudentChaos(parsed.data, {
           onEvent: send,
         });
@@ -68,6 +235,7 @@ export async function POST(req: Request) {
     headers: {
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
+      "X-StudentOS-Agent-Compute": awsAgentEndpoint ? "aws-lambda" : "local",
       "X-Accel-Buffering": "no",
     },
   });
