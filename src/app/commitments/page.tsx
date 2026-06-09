@@ -814,11 +814,6 @@ export default function CommitmentsPage() {
   const canScheduleLater = canMoveTaskDate(selectedTask, 1);
   const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanReasoning;
   const aiPlanBullets = aiPlan?.rationale.bullets ?? [];
-  const aiPlanStatusLabel = aiPlanLoading
-    ? "Planning"
-    : aiPlan?.status === "success"
-      ? "Gateway"
-      : "Fallback";
   const activeClarification = clarifying
     ? aiFootprint?.clarificationQuestions.find(
         (question) => question.commitmentId === clarifying.commitmentId,
@@ -1651,27 +1646,6 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
-              <section className="rounded-[8px] border border-neutral-200 bg-white p-4 shadow-[0_12px_38px_rgba(0,0,0,0.04)]">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-white">
-                      <Server className="size-4" />
-                    </span>
-                    <div className="min-w-0">
-                      <p className="truncate text-[13px] font-bold text-ink">Vercel AI Gateway planner</p>
-                      <p className="truncate text-[11px] font-semibold text-neutral-400">
-                        {aiPlan?.model ?? "Structured fallback"} rationale
-                      </p>
-                    </div>
-                  </div>
-                  <SourceChip tone={aiPlan?.status === "success" ? "success" : "neutral"}>
-                    {aiPlanStatusLabel}
-                  </SourceChip>
-                </div>
-                <p className="text-[13px] leading-5 text-neutral-600">
-                  {aiPlanLoading ? "Generating a planning rationale through Vercel AI Gateway..." : aiPlanSummary}
-                </p>
-              </section>
               <FocusActionCard
                 onExplain={() => setReasoningOpen(true)}
                 onComplete={handleCompleteTask}

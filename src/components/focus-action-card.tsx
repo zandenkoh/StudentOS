@@ -1,19 +1,26 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { CheckCircle2 } from "lucide-react";
-import { PrimaryButton, SecondaryButton } from "@/components/buttons";
+import { PrimaryButton } from "@/components/buttons";
 import { SourceChip } from "@/components/source-chip";
 import type { DemoPlanTask } from "@/lib/demo-data";
 
 export function FocusActionCard({
-  onExplain,
   onComplete,
   task
 }: {
-  onExplain: () => void;
+  onExplain?: () => void;
   onComplete?: (task: DemoPlanTask) => void;
   task?: DemoPlanTask;
 }) {
+  const [isCompleting, setIsCompleting] = useState(false);
+
+  // Reset completion state when the task changes
+  useEffect(() => {
+    setIsCompleting(false);
+  }, [task?.id]);
+
   if (!task) {
     return (
       <section className="rounded-[28px] border border-neutral-200 bg-ink p-6 text-white shadow-lift flex flex-col items-center justify-center text-center py-8">
@@ -31,24 +38,42 @@ export function FocusActionCard({
   const deadline = task.deadline ? `Due ${task.deadline}` : "Due tomorrow 8 AM";
   const priority = task.reason ?? "High priority";
 
+  const handleComplete = () => {
+    if (isCompleting) return;
+    setIsCompleting(true);
+    setTimeout(() => {
+      onComplete?.(task);
+    }, 600); // 600ms transition time
+  };
+
   return (
-    <section className="rounded-[28px] border border-neutral-200 bg-ink p-5 text-white shadow-lift">
+    <section 
+      className={`rounded-[28px] border p-5 text-white shadow-lift transition-all duration-500 ease-in-out ${
+        isCompleting
+          ? "border-emerald-500 bg-emerald-600 scale-[0.98] opacity-95"
+          : "border-neutral-200 bg-ink"
+      }`}
+    >
       <div className="mb-5 flex items-center justify-between">
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Do this now</p>
-        <SourceChip tone="success">Conflict resolved</SourceChip>
+        <SourceChip tone={isCompleting ? "neutral" : "success"}>
+          {isCompleting ? "Done!" : "Conflict resolved"}
+        </SourceChip>
       </div>
       <h2 className="text-[26px] font-semibold leading-[1.05]">{title}</h2>
       <p className="mt-3 text-[15px] leading-6 text-white/72">
         {duration} · {deadline} · {priority}
       </p>
       <div className="mt-6 flex flex-col gap-3">
-        <PrimaryButton onClick={() => onComplete?.(task)} className="bg-white text-ink hover:bg-neutral-100">
+        <PrimaryButton 
+          onClick={handleComplete} 
+          className={`bg-white text-ink transition-all duration-300 ${
+            isCompleting ? "opacity-75 cursor-not-allowed" : "hover:bg-neutral-100"
+          }`}
+        >
           <CheckCircle2 className="size-4" />
-          Mark as complete
+          {isCompleting ? "Completing..." : "Mark as complete"}
         </PrimaryButton>
-        <SecondaryButton onClick={onExplain} className="w-full border-white/15 bg-white/10 text-white">
-          Explain why
-        </SecondaryButton>
       </div>
     </section>
   );

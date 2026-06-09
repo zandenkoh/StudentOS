@@ -38,7 +38,7 @@ const chaosCardsData: ChaosCard[] = [
 
 export default function ChaosPage() {
   const router = useRouter();
-  const [stage, setStage] = useState<"intro" | "populating" | "falling" | "reveal">("intro");
+  const [stage, setStage] = useState<"intro" | "populating" | "falling" | "reveal" | "leaving">("intro");
   const [visibleCardCount, setVisibleCardCount] = useState(0);
 
   useEffect(() => {
@@ -85,13 +85,13 @@ export default function ChaosPage() {
   useEffect(() => {
     if (stage !== "reveal") return;
 
-    // 4. Stay on the narrative for 3.2s, then route to /input
+    // 4. Stay on the narrative for 2.6s, then start transitioning out
     const redirectTimer = setTimeout(() => {
-      router.push("/input");
-    }, 3200);
+      setStage("leaving");
+    }, 2600);
 
     return () => clearTimeout(redirectTimer);
-  }, [stage, router]);
+  }, [stage]);
 
   return (
     <AppShell hideHeader={true}>
@@ -180,13 +180,15 @@ export default function ChaosPage() {
             <motion.div
               key="reveal-content"
               className="z-10 mx-auto w-full max-w-[300px] text-center"
-              initial={{ opacity: 0, scale: 0.95, y: -10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ duration: 0.75, ease: "easeOut", delay: 0.15 }}
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.75, ease: "easeOut", delay: 0.15 } }}
+              exit={{ opacity: 0, scale: 0.95, y: -15, transition: { duration: 0.6, ease: "easeIn" } }}
+              onAnimationComplete={() => {
+                if ((stage as string) === "leaving") {
+                  router.push("/input");
+                }
+              }}
             >
-              <div className="mx-auto mb-6 flex size-12 items-center justify-center rounded-full bg-ink text-white shadow-soft">
-                <Sparkles className="size-5" />
-              </div>
               <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink mb-3">
                 One inbox for your school mess.
               </h1>
