@@ -867,21 +867,23 @@ export default function InputPage() {
         </motion.div>
 
         {/* Fixed Bottom Action Container */}
-        <motion.div variants={itemVariants} className="fixed-bottom-action">
-          <button
-            disabled={isInjecting}
-            onClick={handleAnalyse}
-            type="button"
-            className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-              !isInjecting
-                ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
-                : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
-            }`}
-          >
-            <span>Analyse</span>
-            <ChevronRight className="size-4.5" />
-          </button>
-        </motion.div>
+        <div className="fixed-bottom-action">
+          <motion.div variants={itemVariants}>
+            <button
+              disabled={isInjecting}
+              onClick={handleAnalyse}
+              type="button"
+              className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
+                !isInjecting
+                  ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
+                  : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
+              }`}
+            >
+              <span>Analyse</span>
+              <ChevronRight className="size-4.5" />
+            </button>
+          </motion.div>
+        </div>
 
       </motion.div>
 

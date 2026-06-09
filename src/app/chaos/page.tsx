@@ -93,6 +93,17 @@ export default function ChaosPage() {
     return () => clearTimeout(redirectTimer);
   }, [stage]);
 
+  useEffect(() => {
+    if (stage !== "leaving") return;
+
+    // 5. Let the exit transition play for 600ms, then route to /input
+    const redirectTimer = setTimeout(() => {
+      router.push("/input");
+    }, 600);
+
+    return () => clearTimeout(redirectTimer);
+  }, [stage, router]);
+
   return (
     <AppShell hideHeader={true}>
       <motion.div
@@ -114,7 +125,7 @@ export default function ChaosPage() {
         )}
         
         {/* Dynamic Cards Container */}
-        {stage !== "reveal" && (
+        {(stage === "intro" || stage === "populating" || stage === "falling") && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {chaosCardsData.map((card, index) => {
               const isVisible = index < visibleCardCount;
@@ -199,11 +210,6 @@ export default function ChaosPage() {
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.75, ease: "easeOut", delay: 0.15 } }}
               exit={{ opacity: 0, scale: 0.95, y: -15, transition: { duration: 0.6, ease: "easeIn" } }}
-              onAnimationComplete={() => {
-                if ((stage as string) === "leaving") {
-                  router.push("/input");
-                }
-              }}
             >
               <h1 className="text-[26px] font-bold leading-tight tracking-tight text-ink mb-3">
                 One inbox for your school mess.
