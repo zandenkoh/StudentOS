@@ -74,13 +74,6 @@ const ClarificationAnswerSchema = z.object({
   answeredAt: z.string(),
 });
 
-const SponsorTraceSchema = z.object({
-  provider: z.string(),
-  action: z.string(),
-  status: z.enum(["success", "fallback", "error"]),
-  detail: z.string(),
-});
-
 const ReplanAgentInputSchema = z.object({
   trigger: z.enum(["clarification", "manual_conflict"]),
   currentDate: z.string().min(1),
@@ -110,6 +103,13 @@ const ReplanAgentOutputSchema = z.object({
 });
 
 export type ReplanAgentInput = z.infer<typeof ReplanAgentInputSchema>;
+type ReplanSponsorTrace = {
+  provider: string;
+  action: string;
+  status: "success" | "fallback" | "error";
+  detail: string;
+};
+
 export type ReplanAgentResponse = {
   provider: "vercel-ai-gateway" | "fallback";
   status: "success" | "fallback" | "error";
@@ -122,14 +122,10 @@ export type ReplanAgentResponse = {
   conflict: z.infer<typeof ConflictSchema>;
   rationale: z.infer<typeof ReplanAgentOutputSchema>["rationale"];
   dailyPlan: z.infer<typeof ReplanAgentOutputSchema>["dailyPlan"];
-  trace: z.infer<typeof SponsorTraceSchema>[];
+  trace: ReplanSponsorTrace[];
 };
 
 export { ReplanAgentInputSchema };
-
-function textValue(value: unknown, fallback = "") {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
-}
 
 function slugFrom(value: string, fallback: string) {
   const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48);
@@ -332,7 +328,7 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
   }
 
   if (!isVercelAiReady()) {
-    return fallbackReplan(input, "USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.");
+    return fallbackReplan(input, "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.");
   }
 
   const model = sponsorEnv.aiGatewayModel;

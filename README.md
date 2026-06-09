@@ -194,9 +194,15 @@ USE_REAL_BEDROCK=false
 # Vercel AI Gateway Configuration
 # ==========================================
 AI_GATEWAY_API_KEY=your_vercel_ai_gateway_key
-AI_GATEWAY_MODEL=openai/gpt-5.4-mini
-AI_GATEWAY_FALLBACK_MODEL=openai/gpt-5.1-instant
+VERCEL_OIDC_TOKEN=your_vercel_oidc_token
+AI_GATEWAY_MODEL=openai/gpt-5.4
+AI_GATEWAY_FALLBACK_MODEL=anthropic/claude-sonnet-4.6
 AI_GATEWAY_RESEARCH_MODEL=anthropic/claude-sonnet-4.6
+
+# AWS Lambda agent and judge mode
+AWS_AGENT_ENDPOINT=https://<api-id>.execute-api.us-west-2.amazonaws.com/analyse-student-chaos
+ALLOW_LOCAL_AGENT_FALLBACK=true
+STUDENTOS_STRICT_JUDGE=false
 
 # ==========================================
 # Exa Search Configuration
@@ -243,6 +249,9 @@ npm run lint
 
 # Compile production-ready Next.js build
 npm run build
+
+# Verify sponsor proof paths; runs live checks when env vars are present
+npm run verify:sponsors
 ```
 
 ---

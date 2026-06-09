@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 type ProofProvider = {
   id: string;
   label: string;
+  role: "critical" | "optional";
   match: (item: AISponsorTraceItem) => boolean;
   icon: typeof Server;
 };
@@ -21,6 +22,7 @@ const providers: ProofProvider[] = [
   {
     id: "aws-lambda",
     label: "AWS Lambda",
+    role: "critical",
     icon: Server,
     match: (item) =>
       item.provider.toLowerCase().includes("aws lambda") ||
@@ -29,19 +31,22 @@ const providers: ProofProvider[] = [
   {
     id: "aws-source",
     label: "Bedrock/Textract",
+    role: "optional",
     icon: FileSearch,
     match: (item) =>
       /bedrock|textract/i.test(`${item.provider} ${item.action} ${item.detail}`),
   },
   {
     id: "vercel",
-    label: "Vercel AI",
+    label: "Vercel Gateway",
+    role: "critical",
     icon: Cloud,
     match: (item) => item.provider.includes("Vercel AI Gateway"),
   },
   {
     id: "exa",
     label: "Exa",
+    role: "optional",
     icon: Search,
     match: (item) => item.provider.includes("Exa"),
   },
@@ -50,15 +55,16 @@ const providers: ProofProvider[] = [
 function bestTraceItem(items: AISponsorTraceItem[]) {
   return (
     items.find((item) => item.status === "success") ??
+    items.find((item) => item.status === "error") ??
     items.find((item) => item.status === "fallback") ??
     items[0]
   );
 }
 
-function statusLabel(item?: AISponsorTraceItem) {
-  if (!item) return "waiting";
+function statusLabel(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
+  if (!item) return role === "critical" ? "needs proof" : "optional";
   if (item.status === "success") return "verified";
-  if (item.status === "fallback") return "fallback";
+  if (item.status === "fallback") return role === "critical" ? "needs proof" : "fallback";
   return "error";
 }
 
@@ -101,6 +107,7 @@ export function SponsorProofStrip({
           return (
             <div
               key={provider.id}
+              title={item?.detail}
               className={cn(
                 "min-w-0 rounded-[8px] border px-2.5 py-2",
                 statusClasses(item),
@@ -119,7 +126,10 @@ export function SponsorProofStrip({
                 </span>
               </div>
               <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.12em] opacity-70">
-                {statusLabel(item)}
+                {statusLabel(item, provider.role)}
+              </p>
+              <p className="mt-0.5 truncate text-[10px] font-semibold opacity-60">
+                {provider.role === "critical" ? "Required" : "Optional"}
               </p>
             </div>
           );

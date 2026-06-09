@@ -30,6 +30,9 @@ const SourceSchema = z.object({
   textractText: z.string().optional(),
   sourceSummary: z.string().optional(),
   extractedTasks: z.array(z.string()).optional(),
+  extractedEvidence: z.array(z.string()).optional(),
+  sourceConfidence: z.number().min(0).max(1).optional(),
+  languageNotes: z.string().optional(),
   needsClarification: z.boolean().optional(),
   clarificationPrompt: z.string().optional(),
   durationSeconds: z.number().optional(),
@@ -273,6 +276,7 @@ export const AnalyseStudentChaosRequestSchema = z.object({
   currentDate: z.string().default("2026-06-09"),
   sources: z.array(SourceSchema).default([]),
   sourceContext: z.unknown().optional(),
+  strictJudgeMode: z.boolean().optional(),
 });
 
 export type AnalyseStudentChaosRequest = z.infer<typeof AnalyseStudentChaosRequestSchema>;
@@ -747,6 +751,8 @@ function sourceText(source: CapturedSourceForAI) {
     source.snippet,
     source.sourceSummary,
     source.extractedTasks?.join("\n"),
+    source.extractedEvidence?.join("\n"),
+    source.languageNotes,
     source.clarificationPrompt,
     source.ocrText,
     source.textractText,
@@ -795,6 +801,9 @@ function researchEvidencePacket(sources: CapturedSourceForAI[]) {
         source.snippet ? `Student note: ${source.snippet}` : undefined,
         source.sourceSummary ? `Interpreted summary: ${source.sourceSummary}` : undefined,
         source.extractedTasks?.length ? `Extracted tasks: ${source.extractedTasks.join("; ")}` : undefined,
+        source.extractedEvidence?.length ? `Evidence: ${source.extractedEvidence.join("; ")}` : undefined,
+        typeof source.sourceConfidence === "number" ? `Source confidence: ${Math.round(source.sourceConfidence * 100)}%` : undefined,
+        source.languageNotes ? `Language or OCR notes: ${source.languageNotes}` : undefined,
         source.clarificationPrompt ? `Clarification needed: ${source.clarificationPrompt}` : undefined,
         source.ocrText ? `OCR text: ${source.ocrText.slice(0, 1200)}` : undefined,
         source.textractText ? `Textract text: ${source.textractText.slice(0, 1200)}` : undefined,
@@ -1839,7 +1848,7 @@ export async function analyseStudentChaos(
   }
 
   if (!isVercelAiReady()) {
-    const reason = "USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.";
+    const reason = "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.";
     await emitLog({
       id: "gateway-unavailable",
       kind: "decision",

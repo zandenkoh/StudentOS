@@ -54,6 +54,9 @@ type InputSource = {
   ocrText?: string;
   sourceSummary?: string;
   extractedTasks?: string[];
+  extractedEvidence?: string[];
+  sourceConfidence?: number;
+  languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
   sponsorStatus?: "cached" | "uploaded" | "extracted" | "fallback" | "error";
@@ -87,6 +90,9 @@ type AwsExtractResponse = {
   blockCount?: number;
   summary?: string;
   extractedTasks?: string[];
+  extractedEvidence?: string[];
+  confidence?: number;
+  languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
   interpretationProvider?: string;
@@ -105,6 +111,9 @@ type CachedSourceResponse = {
   textractText?: string;
   sourceSummary?: string;
   extractedTasks?: string[];
+  extractedEvidence?: string[];
+  sourceConfidence?: number;
+  languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
   sponsorStatus?: InputSource["sponsorStatus"];
@@ -464,6 +473,9 @@ export default function InputPage() {
       let sponsorStatus: InputSource["sponsorStatus"] = "uploaded";
       let sourceSummary: string | undefined;
       let extractedTasks: string[] | undefined;
+      let extractedEvidence: string[] | undefined;
+      let sourceConfidence: number | undefined;
+      let languageNotes: string | undefined;
       let needsClarification: boolean | undefined;
       let clarificationPrompt: string | undefined;
 
@@ -484,6 +496,9 @@ export default function InputPage() {
           ocrText = extraction.text || "";
           sourceSummary = extraction.summary;
           extractedTasks = extraction.extractedTasks;
+          extractedEvidence = extraction.extractedEvidence;
+          sourceConfidence = extraction.confidence;
+          languageNotes = extraction.languageNotes;
           needsClarification = extraction.needsClarification;
           clarificationPrompt = extraction.clarificationPrompt;
           snippet = extraction.summary || (extraction.text ?? "").split("\n").find(Boolean)?.slice(0, 110) || snippet;
@@ -518,6 +533,9 @@ export default function InputPage() {
                 ocrText,
                 sourceSummary,
                 extractedTasks,
+                extractedEvidence,
+                sourceConfidence,
+                languageNotes,
                 needsClarification,
                 clarificationPrompt,
                 sponsorStatus,
@@ -688,6 +706,9 @@ export default function InputPage() {
       ocrText: source.textractText,
       sourceSummary: source.sourceSummary,
       extractedTasks: source.extractedTasks,
+      extractedEvidence: source.extractedEvidence,
+      sourceConfidence: source.sourceConfidence,
+      languageNotes: source.languageNotes,
       needsClarification: source.needsClarification,
       clarificationPrompt: source.clarificationPrompt,
       sponsorStatus: source.sponsorStatus,
@@ -779,6 +800,9 @@ export default function InputPage() {
       ocrText: source.ocrText,
       sourceSummary: source.sourceSummary,
       extractedTasks: source.extractedTasks,
+      extractedEvidence: source.extractedEvidence,
+      sourceConfidence: source.sourceConfidence,
+      languageNotes: source.languageNotes,
       needsClarification: source.needsClarification,
       clarificationPrompt: source.clarificationPrompt,
       durationSeconds: source.durationSeconds,
@@ -1030,12 +1054,36 @@ export default function InputPage() {
 
           {previewSource?.sourceSummary && (
             <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
-              <p className="mb-1 text-[10px] uppercase tracking-wider text-emerald-700">
-                Interpreted summary
-              </p>
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-emerald-700">
+                <span>Interpreted evidence</span>
+                {previewSource.provider ? <span>{previewSource.provider}</span> : null}
+                {typeof previewSource.sourceConfidence === "number" ? (
+                  <span>{Math.round(previewSource.sourceConfidence * 100)}% confidence</span>
+                ) : null}
+              </div>
               <p>{previewSource.sourceSummary}</p>
+              {previewSource.extractedTasks?.length ? (
+                <div className="mt-2 rounded-lg border border-emerald-200/70 bg-white/55 p-2">
+                  <p className="mb-1 text-[10px] uppercase tracking-wider text-emerald-700">
+                    Extracted commitments
+                  </p>
+                  <ul className="space-y-1">
+                    {previewSource.extractedTasks.slice(0, 4).map((task) => (
+                      <li key={task} className="leading-snug">- {task}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {previewSource.extractedEvidence?.length ? (
+                <p className="mt-2 border-l-2 border-emerald-200 pl-2 text-emerald-800">
+                  Evidence: {previewSource.extractedEvidence.slice(0, 2).join(" | ")}
+                </p>
+              ) : null}
+              {previewSource.languageNotes ? (
+                <p className="mt-2 text-emerald-800">{previewSource.languageNotes}</p>
+              ) : null}
               {previewSource.needsClarification && previewSource.clarificationPrompt ? (
-                <p className="mt-2 text-emerald-800">{previewSource.clarificationPrompt}</p>
+                <p className="mt-2 text-amber-800">Uncertainty: {previewSource.clarificationPrompt}</p>
               ) : null}
             </div>
           )}
@@ -1062,6 +1110,7 @@ export default function InputPage() {
           {previewSource?.fileType === "image" && (
             previewSource.filePath ? (
               <div className="rounded-xl border border-neutral-100 bg-[#FAFAFA] overflow-hidden shadow-sm flex items-center justify-center p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img 
                   src={previewSource.filePath} 
                   className="max-h-[50vh] w-auto object-contain rounded-lg shadow-sm" 

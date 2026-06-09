@@ -27,6 +27,9 @@ export type CapturedSourceForAI = {
   textractText?: string;
   sourceSummary?: string;
   extractedTasks?: string[];
+  extractedEvidence?: string[];
+  sourceConfidence?: number;
+  languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
   durationSeconds?: number;

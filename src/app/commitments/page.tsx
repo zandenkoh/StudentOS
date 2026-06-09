@@ -113,6 +113,15 @@ type SourcePreview = {
   snippet: string;
   filePath?: string;
   durationSeconds?: number;
+  provider?: string;
+  sponsorStatus?: string;
+  sourceSummary?: string;
+  extractedTasks?: string[];
+  extractedEvidence?: string[];
+  sourceConfidence?: number;
+  languageNotes?: string;
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
 };
 
 type EditDraft = {
@@ -304,6 +313,8 @@ function sourceTextForMatch(source: CapturedSourceForAI) {
       source.ocrText,
       source.textractText,
       source.extractedTasks?.join(" "),
+      source.extractedEvidence?.join(" "),
+      source.languageNotes,
     ]
       .filter(Boolean)
       .join(" "),
@@ -331,6 +342,15 @@ function previewFromCapturedSource(source: CapturedSourceForAI): SourcePreview {
     snippet,
     filePath: source.filePath,
     durationSeconds: source.durationSeconds,
+    provider: source.provider,
+    sponsorStatus: source.sponsorStatus,
+    sourceSummary: source.sourceSummary,
+    extractedTasks: source.extractedTasks,
+    extractedEvidence: source.extractedEvidence,
+    sourceConfidence: source.sourceConfidence,
+    languageNotes: source.languageNotes,
+    needsClarification: source.needsClarification,
+    clarificationPrompt: source.clarificationPrompt,
   };
 }
 
@@ -384,12 +404,62 @@ function resolveCommitmentSourcePreview(
   return matchedPreview;
 }
 
+function EvidenceMetadata({ preview }: { preview: SourcePreview }) {
+  if (
+    !preview.provider &&
+    !preview.sourceSummary &&
+    !preview.extractedTasks?.length &&
+    !preview.extractedEvidence?.length &&
+    !preview.languageNotes &&
+    !preview.clarificationPrompt
+  ) {
+    return null;
+  }
+
+  return (
+    <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider text-emerald-700">
+        <span>Interpreted evidence</span>
+        {preview.provider ? <span>{preview.provider}</span> : null}
+        {preview.sponsorStatus ? <span>{preview.sponsorStatus}</span> : null}
+        {typeof preview.sourceConfidence === "number" ? (
+          <span>{Math.round(preview.sourceConfidence * 100)}% confidence</span>
+        ) : null}
+      </div>
+      {preview.sourceSummary ? <p>{preview.sourceSummary}</p> : null}
+      {preview.extractedTasks?.length ? (
+        <div className="mt-2 rounded-lg border border-emerald-200/70 bg-white/60 p-2">
+          <p className="mb-1 text-[10px] uppercase tracking-wider text-emerald-700">
+            Extracted commitments
+          </p>
+          <ul className="space-y-1">
+            {preview.extractedTasks.slice(0, 4).map((task) => (
+              <li key={task} className="leading-snug">- {task}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {preview.extractedEvidence?.length ? (
+        <p className="mt-2 border-l-2 border-emerald-200 pl-2 text-emerald-800">
+          Evidence: {preview.extractedEvidence.slice(0, 2).join(" | ")}
+        </p>
+      ) : null}
+      {preview.languageNotes ? <p className="mt-2 text-emerald-800">{preview.languageNotes}</p> : null}
+      {preview.needsClarification && preview.clarificationPrompt ? (
+        <p className="mt-2 text-amber-800">Uncertainty: {preview.clarificationPrompt}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
   if (preview.fileType === "image") {
     return (
       <div className="w-full pb-4">
+        <EvidenceMetadata preview={preview} />
         {preview.filePath ? (
           <div className="flex items-center justify-center overflow-hidden rounded-xl border border-neutral-100 bg-[#FAFAFA] p-2 shadow-sm">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={preview.filePath}
               className="max-h-[50vh] w-auto rounded-lg object-contain shadow-sm"
@@ -408,6 +478,7 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
   if (preview.fileType === "link") {
     return (
       <div className="w-full pb-4">
+        <EvidenceMetadata preview={preview} />
         <div className="rounded-xl border border-neutral-100 bg-white p-4 shadow-sm">
           <div className="mb-2 flex items-center gap-1.5 text-xs text-neutral-400">
             <Globe2 className="size-3.5" />
@@ -435,6 +506,7 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
 
     return (
       <div className="w-full pb-4">
+        <EvidenceMetadata preview={preview} />
         <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
           <div className="mb-4 flex items-center gap-3">
             <span className="flex size-11 items-center justify-center rounded-full bg-ink text-white">
@@ -462,6 +534,7 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
 
   return (
     <div className="w-full pb-4">
+      <EvidenceMetadata preview={preview} />
       <div className="space-y-3 rounded-xl border border-neutral-100 bg-neutral-50 p-4 font-mono text-xs text-neutral-700">
         <div className="flex justify-between border-b border-neutral-200 pb-2 font-sans text-[10px] font-semibold uppercase text-neutral-400">
           <span>{preview.title}</span>

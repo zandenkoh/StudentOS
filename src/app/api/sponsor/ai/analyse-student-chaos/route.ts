@@ -11,6 +11,7 @@ import {
   bedrockTextractTrace,
   prependSponsorTraces,
 } from "@/lib/sponsor-tech/sponsor-proof";
+import { gatewayHealthTrace } from "@/lib/sponsor-tech/vercel-gateway";
 import type {
   AIAgentLog,
   AISponsorTraceItem,
@@ -27,6 +28,20 @@ function configuredAwsAgentEndpoint() {
 
 function allowLocalAgentFallback() {
   return process.env.ALLOW_LOCAL_AGENT_FALLBACK !== "false";
+}
+
+function strictJudgeMode(req: Request, body: unknown) {
+  const url = new URL(req.url);
+
+  return (
+    process.env.STUDENTOS_STRICT_JUDGE === "true" ||
+    url.searchParams.get("judge") === "1" ||
+    req.headers.get("x-studentos-strict-judge") === "true" ||
+    (typeof body === "object" &&
+      body !== null &&
+      "strictJudgeMode" in body &&
+      body.strictJudgeMode === true)
+  );
 }
 
 function awsAgentHost(endpoint: string) {
@@ -131,41 +146,23 @@ function awsAgentErrorResponse(error: unknown) {
   );
 }
 
-function streamAwsAgentResult(
-  result: StudentOSAgentFootprint,
-  endpoint: string,
-  sources: AnalyseStudentChaosRequest["sources"],
-) {
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream({
-    start(controller) {
-      const send = (event: AnalyseStudentChaosStreamEvent) => {
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
-      };
-
-      send({ type: "log", log: awsForwardLog(endpoint) });
-      send({ type: "trace", trace: awsComputeTrace(endpoint) });
-      send({ type: "trace", trace: bedrockTextractTrace(sources) });
-      send({ type: "footprint", footprint: result });
-      controller.close();
+function strictJudgeErrorResponse(error: unknown) {
+  return NextResponse.json(
+    {
+      error: "Strict judge mode requires AWS Lambda and Vercel AI Gateway to verify.",
+      detail: error instanceof Error ? error.message : "Strict sponsor verification failed.",
     },
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "application/x-ndjson; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "X-StudentOS-Agent-Compute": "aws-lambda",
-      "X-Accel-Buffering": "no",
+    {
+      status: 502,
+      headers: { "X-StudentOS-Agent-Compute": "strict-judge-failed" },
     },
-  });
+  );
 }
 
-function streamAwsFallbackResult(
+function streamAwsAgentRequest(
   input: AnalyseStudentChaosRequest,
   endpoint: string,
-  error: unknown,
+  strict: boolean,
 ) {
   const encoder = new TextEncoder();
 
@@ -175,13 +172,26 @@ function streamAwsFallbackResult(
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
 
+      send({ type: "log", log: awsForwardLog(endpoint) });
+      send({ type: "trace", trace: awsComputeTrace(endpoint) });
+      send({ type: "trace", trace: bedrockTextractTrace(input.sources) });
+
       try {
+        const result = await callAwsAgent(endpoint, input);
+        send({ type: "footprint", footprint: result });
+      } catch (error) {
+        if (strict || !allowLocalAgentFallback()) {
+          send({
+            type: "error",
+            error: error instanceof Error ? error.message : "AWS Lambda agent verification failed.",
+          });
+          return;
+        }
+
         const trace = awsFallbackTrace(endpoint, error);
         const sourceTrace = bedrockTextractTrace(input.sources);
 
-        send({ type: "log", log: awsForwardLog(endpoint) });
         send({ type: "trace", trace });
-        send({ type: "trace", trace: sourceTrace });
         send({
           type: "log",
           log: {
@@ -202,11 +212,6 @@ function streamAwsFallbackResult(
           type: "footprint",
           footprint: prependSponsorTraces(fallback, [trace, sourceTrace]),
         });
-      } catch (fallbackError) {
-        send({
-          type: "error",
-          error: fallbackError instanceof Error ? fallbackError.message : "StudentOS analysis stream failed.",
-        });
       } finally {
         controller.close();
       }
@@ -217,7 +222,7 @@ function streamAwsFallbackResult(
     headers: {
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
-      "X-StudentOS-Agent-Compute": "local-fallback",
+      "X-StudentOS-Agent-Compute": "aws-lambda",
       "X-Accel-Buffering": "no",
     },
   });
@@ -248,6 +253,7 @@ export async function POST(req: Request) {
     new URL(req.url).searchParams.get("stream") === "1" ||
     req.headers.get("accept")?.includes("application/x-ndjson");
   const awsAgentEndpoint = configuredAwsAgentEndpoint();
+  const strict = strictJudgeMode(req, requestBody);
 
   if (!wantsStream) {
     if (awsAgentEndpoint) {
@@ -258,6 +264,10 @@ export async function POST(req: Request) {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
         });
       } catch (error) {
+        if (strict) {
+          return strictJudgeErrorResponse(error);
+        }
+
         if (!allowLocalAgentFallback()) {
           return awsAgentErrorResponse(error);
         }
@@ -271,12 +281,18 @@ export async function POST(req: Request) {
       }
     }
 
+    if (strict) {
+      return strictJudgeErrorResponse(missingAwsEndpointError());
+    }
+
     if (!allowLocalAgentFallback()) {
       return awsAgentErrorResponse(missingAwsEndpointError());
     }
 
+    const gatewayTrace = await gatewayHealthTrace(5000);
     const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
       localAwsTrace(),
+      gatewayTrace,
       bedrockTextractTrace(parsed.data.sources),
     ]);
 
@@ -286,18 +302,11 @@ export async function POST(req: Request) {
   }
 
   if (awsAgentEndpoint) {
-    try {
-      const result = await callAwsAgent(awsAgentEndpoint, parsed.data);
+    return streamAwsAgentRequest(parsed.data, awsAgentEndpoint, strict);
+  }
 
-      return streamAwsAgentResult(result, awsAgentEndpoint, parsed.data.sources);
-    } catch (error) {
-      if (!allowLocalAgentFallback()) {
-        return awsAgentErrorResponse(error);
-      }
-
-      console.error("StudentOS AWS agent endpoint failed; streaming local fallback.", error);
-      return streamAwsFallbackResult(parsed.data, awsAgentEndpoint, error);
-    }
+  if (strict) {
+    return strictJudgeErrorResponse(missingAwsEndpointError());
   }
 
   if (!allowLocalAgentFallback()) {
@@ -315,8 +324,10 @@ export async function POST(req: Request) {
       try {
         const localTrace = localAwsTrace();
         const sourceTrace = bedrockTextractTrace(parsed.data.sources);
+        const gatewayTrace = await gatewayHealthTrace(5000);
 
         send({ type: "trace", trace: localTrace });
+        send({ type: "trace", trace: gatewayTrace });
         send({ type: "trace", trace: sourceTrace });
 
         const result = await analyseStudentChaos(parsed.data, {
@@ -325,7 +336,7 @@ export async function POST(req: Request) {
 
         send({
           type: "footprint",
-          footprint: prependSponsorTraces(result, [localTrace, sourceTrace]),
+          footprint: prependSponsorTraces(result, [localTrace, gatewayTrace, sourceTrace]),
         });
       } catch (error) {
         send({

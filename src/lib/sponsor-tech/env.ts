@@ -4,9 +4,10 @@ export const sponsorEnv = {
   useExa: process.env.USE_REAL_EXA === "true",
   useVercelAi: process.env.USE_REAL_VERCEL_AI === "true",
   useBedrock: process.env.USE_REAL_BEDROCK === "true",
-  aiGatewayModel: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4-mini",
-  aiGatewayFallbackModel: process.env.AI_GATEWAY_FALLBACK_MODEL || "openai/gpt-5.1-instant",
+  aiGatewayModel: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
+  aiGatewayFallbackModel: process.env.AI_GATEWAY_FALLBACK_MODEL || "anthropic/claude-sonnet-4.6",
   aiGatewayResearchModel: process.env.AI_GATEWAY_RESEARCH_MODEL || "anthropic/claude-sonnet-4.6",
+  vercelOidcToken: process.env.VERCEL_OIDC_TOKEN,
   exaApiKey: process.env.EXA_API_KEY,
   awsRegion: process.env.AWS_REGION || "us-west-2",
   awsTextractRegion: process.env.AWS_TEXTRACT_REGION || process.env.AWS_REGION || "us-west-2",
@@ -26,7 +27,10 @@ export function isAwsReady() {
 }
 
 export function isVercelAiReady() {
-  return Boolean(sponsorEnv.useVercelAi && process.env.AI_GATEWAY_API_KEY);
+  return Boolean(
+    sponsorEnv.useVercelAi &&
+      (process.env.AI_GATEWAY_API_KEY || sponsorEnv.vercelOidcToken || process.env.VERCEL === "1"),
+  );
 }
 
 export function isExaReady() {

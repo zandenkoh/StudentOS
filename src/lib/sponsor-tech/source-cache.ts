@@ -18,6 +18,9 @@ export type CachedSourceRecord = {
   textractBlockCount?: number;
   sourceSummary?: string;
   extractedTasks?: string[];
+  extractedEvidence?: string[];
+  sourceConfidence?: number;
+  languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
   provider: "aws-s3" | "aws-textract" | "mock";

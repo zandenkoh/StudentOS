@@ -5,6 +5,7 @@ import { z } from "zod";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTasks } from "@/lib/session-splitting";
+import type { AISponsorTraceItem } from "@/lib/studentos-ai-types";
 
 const PlanItemSchema = z.object({
   title: z.string(),
@@ -68,6 +69,65 @@ export type PlanDayResponse = {
     detail: string;
   }>;
 };
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+export async function gatewayHealthTrace(timeoutMs = 5000): Promise<AISponsorTraceItem> {
+  if (!isVercelAiReady()) {
+    return {
+      provider: "Vercel AI Gateway",
+      action: "Verified Gateway preflight",
+      status: "fallback",
+      detail: "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.",
+    };
+  }
+
+  try {
+    const result = await withTimeout(
+      generateText({
+        model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
+        prompt: "Reply with exactly: StudentOS Gateway OK",
+        temperature: 0,
+        maxOutputTokens: 16,
+      }),
+      timeoutMs,
+      "Vercel AI Gateway preflight",
+    );
+    const text = result.text.trim();
+
+    return {
+      provider: "Vercel AI Gateway",
+      action: "Verified Gateway preflight",
+      status: /studentos gateway ok/i.test(text) ? "success" : "fallback",
+      detail: /studentos gateway ok/i.test(text)
+        ? `${sponsorEnv.aiGatewayModel} completed a live preflight call through Gateway.`
+        : `${sponsorEnv.aiGatewayModel} returned an unexpected preflight response.`,
+    };
+  } catch (error) {
+    return {
+      provider: "Vercel AI Gateway",
+      action: "Verified Gateway preflight",
+      status: "fallback",
+      detail: error instanceof Error ? error.message : "Gateway preflight failed.",
+    };
+  }
+}
 
 const fallbackPlan: GatewayPlanResult = {
   summary:
@@ -345,7 +405,7 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
 
 export async function planDayWithVercelGateway(input: PlanDayInput): Promise<PlanDayResponse> {
   if (!isVercelAiReady()) {
-    return buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or AI_GATEWAY_API_KEY is missing.", input);
+    return buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.", input);
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
