@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { BottomSheet } from "@/components/bottom-sheet";
+import type { CapturedSourceForAI } from "@/lib/studentos-ai-types";
 
 type InputSource = {
   id: string;
@@ -497,7 +498,6 @@ export default function InputPage() {
   };
 
   const revealSources = (nextSources: InputSource[]) => {
-    if (isInjecting) return;
     setIsInjecting(true);
     setSources([]);
 
@@ -517,7 +517,7 @@ export default function InputPage() {
       setSources((prev) => [...prev, nextSource]);
       currentIndex++;
 
-      if (currentIndex >= exampleSources.length) {
+      if (currentIndex >= nextSources.length) {
         if (injectionIntervalRef.current) {
           clearInterval(injectionIntervalRef.current);
           injectionIntervalRef.current = null;
@@ -563,7 +563,27 @@ export default function InputPage() {
   };
 
   const handleAnalyse = () => {
-    if (sources.length === 0) return;
+    const analysisSources = sources.length > 0 ? sources : exampleSources;
+    const capturedSources: CapturedSourceForAI[] = analysisSources.map((source) => ({
+      id: source.id,
+      title: source.title,
+      source: source.source,
+      snippet: source.snippet,
+      fileType: source.fileType,
+      fileSize: source.fileSize,
+      filePath: source.filePath,
+      s3Key: source.s3Key,
+      provider: source.provider,
+      sponsorStatus: source.sponsorStatus,
+      ocrText: source.ocrText,
+    }));
+
+    window.localStorage.setItem("studentos_captured_sources", JSON.stringify(capturedSources));
+    window.localStorage.removeItem("studentos_commitment_footprint");
+    window.localStorage.removeItem("studentos_ai_footprint");
+    window.localStorage.removeItem("studentos_plan_overrides");
+    window.localStorage.removeItem("studentos_vercel_plan_day_recommended_standard");
+    window.localStorage.removeItem("studentos_vercel_plan_day_recommended_chemistry");
     router.push("/agents");
   };
 
@@ -656,6 +676,7 @@ export default function InputPage() {
           <button
             disabled={isInjecting}
             onClick={handleInjectExamples}
+            type="button"
             className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-semibold shadow-[0_2px_8px_rgba(0,0,0,0.04)] border transition-all ${
               isInjecting 
                 ? "bg-neutral-50 text-neutral-400 border-neutral-100 cursor-not-allowed"
@@ -757,10 +778,11 @@ export default function InputPage() {
         {/* Fixed Bottom Action Container */}
         <div className="fixed-bottom-action">
           <button
-            disabled={sources.length === 0}
+            disabled={isInjecting}
             onClick={handleAnalyse}
+            type="button"
             className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-              sources.length > 0 
+              !isInjecting
                 ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
                 : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
             }`}

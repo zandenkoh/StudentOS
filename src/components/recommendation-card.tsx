@@ -2,6 +2,7 @@
 
 import { ListChecks } from "lucide-react";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
+import type { AIConflictAnalysis } from "@/lib/studentos-ai-types";
 
 const actions = [
   "Keep tuition at 4:30 PM",
@@ -22,15 +23,19 @@ export function RecommendationCard({
   resolved,
   resolutionMode,
   onApply,
-  onEdit
+  onEdit,
+  conflict
 }: {
   resolved: boolean;
   resolutionMode: "recommended" | "manual" | null;
   onApply: () => void;
   onEdit: () => void;
+  conflict?: AIConflictAnalysis;
 }) {
   const usingManual = resolutionMode === "manual";
-  const visibleActions = usingManual ? manualActions : actions;
+  const visibleActions = usingManual
+    ? conflict?.manualActions ?? manualActions
+    : conflict?.recommendedActions ?? actions;
 
   return (
     <section className="rounded-[28px] border border-neutral-200 bg-white p-5 shadow-soft">
@@ -50,7 +55,8 @@ export function RecommendationCard({
       <p className="text-[14px] leading-6 text-neutral-700">
         {usingManual
           ? "Physics now has an extension to 16 June, and tuition no longer clashes with the CCA briefing."
-          : "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner. Physics stays first because it is due tomorrow morning."}
+          : conflict?.recommendationSummary ??
+            "Keep tuition fixed, ask your CCA lead for briefing notes, and move revision after dinner. Physics stays first because it is due tomorrow morning."}
       </p>
       <div className="mt-4 space-y-2">
         {visibleActions.map((action) => (

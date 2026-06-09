@@ -107,11 +107,11 @@ export function MobileTimeline({
     <section className="relative rounded-[28px] border border-neutral-200 bg-[#F7F7F8] p-4 shadow-soft">
       <div className="absolute bottom-8 left-[4.8rem] top-8 w-px bg-neutral-200" />
       <div className="space-y-4">
-        {eventGroups.map((group) => {
+        {eventGroups.map((group, groupIndex) => {
           if (group.type === "single") {
             return (
               <TimelineRow
-                key={group.event.id}
+                key={`${group.event.id}-${groupIndex}`}
                 event={group.event}
                 onEventClick={onEventClick}
               />
@@ -120,7 +120,7 @@ export function MobileTimeline({
 
           return (
             <div
-              key={group.id}
+              key={`${group.id}-${groupIndex}`}
               className="relative rounded-[24px] border border-red-200 bg-red-50/70 p-3 pt-9 shadow-[0_12px_35px_rgba(239,68,68,0.08)]"
             >
               <span className="absolute right-3 top-3 rounded-full border border-red-200 bg-white/85 px-3 py-1 text-xs font-semibold text-red-700">

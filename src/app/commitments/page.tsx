@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -14,6 +14,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Server,
   Trash2
 } from "lucide-react";
 
@@ -21,7 +22,11 @@ import { AppShell } from "@/components/app-shell";
 import { BottomActionBar } from "@/components/bottom-action-bar";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton } from "@/components/buttons";
-import { ClarificationBottomSheet } from "@/components/clarification-bottom-sheet";
+import {
+  ClarificationBottomSheet,
+  type ClarificationAnswers,
+  type ClarificationQuestion
+} from "@/components/clarification-bottom-sheet";
 import { CommitmentCard } from "@/components/commitment-card";
 import { ConflictSummaryCard } from "@/components/conflict-summary-card";
 import { ExportSuccessSheet } from "@/components/export-success-sheet";
@@ -47,6 +52,11 @@ import {
   type PlanTaskSection,
   type TimelineEvent
 } from "@/lib/demo-data";
+import type {
+  AIConflictAnalysis,
+  AIClarificationQuestion,
+  StudentOSAgentFootprint
+} from "@/lib/studentos-ai-types";
 
 type CommitmentsStep = "commitments" | "conflict" | "plan";
 
@@ -85,6 +95,11 @@ type PlanDisplaySection = {
 
 type ResolutionMode = "recommended" | "manual" | null;
 
+type ClarifyingState = {
+  kind: AIClarificationQuestion["kind"];
+  commitmentId: string;
+} | null;
+
 const MANUAL_CONFLICT_INSTRUCTION =
   "Physics teacher has granted extension for worksheet deadline to 16 June. Reschedule tuition accordingly, so that it no longer clashes with CCA briefing.";
 
@@ -104,6 +119,20 @@ type ProcessTextSourceResponse = {
     snippet: string;
     s3Key?: string;
     sponsorStatus?: string;
+  };
+  trace?: SponsorTraceItem[];
+};
+
+type PlanDayResponse = {
+  provider: "vercel-ai-gateway" | "fallback";
+  status: "success" | "fallback" | "error";
+  model?: string;
+  rationale: {
+    summary: string;
+    bullets: string[];
+  };
+  dailyPlan?: {
+    focus: string;
   };
   trace?: SponsorTraceItem[];
 };
@@ -155,6 +184,9 @@ const commitmentSourcePreviews: Record<string, SourcePreview> = {
 };
 
 const commitmentTypes: Commitment["type"][] = ["task", "event", "deadline", "goal", "conflict"];
+
+const fallbackPlanReasoning =
+  "StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept fixed commitments stable, handled the CCA clash, moved flexible revision later, and scheduled your coding roadmap across future days.";
 
 function capitalize(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
@@ -358,11 +390,23 @@ function baseTaskTitle(title: string) {
   return title.replace(/\s+— Session \d+$/, "");
 }
 
+function questionForSheet(question?: AIClarificationQuestion): ClarificationQuestion[] | undefined {
+  if (!question) return undefined;
+
+  return [
+    {
+      question: question.question,
+      options: question.options,
+      customPlaceholder: question.customPlaceholder,
+    },
+  ];
+}
+
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
   const [commitments, setCommitments] = useState<Commitment[]>(baseCommitments);
-  const [clarifying, setClarifying] = useState<"goal" | "team" | null>(null);
+  const [clarifying, setClarifying] = useState<ClarifyingState>(null);
   const [editing, setEditing] = useState<Commitment | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>({
     title: "",
@@ -390,6 +434,13 @@ export default function CommitmentsPage() {
   const [planHydrated, setPlanHydrated] = useState(false);
   const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(initialPlanTasks);
   const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
+  const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
+  const [aiPlanLoading, setAiPlanLoading] = useState(false);
+  const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
+  const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
+  const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
+  const [conflictAnalysis, setConflictAnalysis] = useState<AIConflictAnalysis | undefined>();
+  const aiPlanRequestStarted = useRef(false);
 
   const unresolvedCount = commitments.filter(
     (item) => item.state === "needs_clarification" || item.state === "unsure"
@@ -400,24 +451,90 @@ export default function CommitmentsPage() {
       items: planTasks.filter((task) => task.section === section.section)
     }));
   }, [planTasks]);
-  const commitmentItems = commitments.filter((item) => item.type !== "goal");
-  const goalItems = commitments.filter((item) => item.type === "goal");
-  const visibleTimelineEvents = !conflictResolved
-    ? timelineEvents
-    : resolutionMode === "manual"
-      ? manualResolvedTimelineEvents
-      : resolvedTimelineEvents;
+  const commitmentItems = useMemo(
+    () => commitments.filter((item) => item.type !== "goal"),
+    [commitments],
+  );
+  const goalItems = useMemo(
+    () => commitments.filter((item) => item.type === "goal"),
+    [commitments],
+  );
+  const visibleTimelineEvents = useMemo(() => {
+    if (!conflictResolved) return baseTimeline;
+    return resolutionMode === "manual" ? manualResolvedTimelineEvents : aiResolvedTimeline;
+  }, [aiResolvedTimeline, baseTimeline, conflictResolved, resolutionMode]);
   const selectedTask = useMemo(() => {
     if (!selectedTaskForEdit) return null;
     return planTasks.find((task) => task.id === selectedTaskForEdit.id) ?? selectedTaskForEdit;
   }, [planTasks, selectedTaskForEdit]);
   const canScheduleEarlier = canMoveTaskDate(selectedTask, -1);
   const canScheduleLater = canMoveTaskDate(selectedTask, 1);
+  const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanReasoning;
+  const aiPlanBullets = aiPlan?.rationale.bullets ?? [];
+  const aiPlanStatusLabel = aiPlanLoading
+    ? "Planning"
+    : aiPlan?.status === "success"
+      ? "Gateway"
+      : "Fallback";
+  const activeClarification = clarifying
+    ? aiFootprint?.clarificationQuestions.find(
+        (question) => question.commitmentId === clarifying.commitmentId,
+      )
+    : undefined;
+  const focusTask = planTasks.find((task) => task.section === "do_now") ?? planTasks[0];
+  const roadmapGoal = goalItems[0];
+  const nextRoadmapTask = planTasks.find((task) => task.isRoadmapTask);
+  const roadmapSummaryLines = [
+    `${aiFootprint?.roadmapSteps.length ?? 6} steps scheduled across Jun-Dec.`,
+    nextRoadmapTask
+      ? `Next action: ${nextRoadmapTask.estimatedMinutes ? `${nextRoadmapTask.estimatedMinutes} min ` : ""}${nextRoadmapTask.title}.`
+      : "Next action: 30 min coding fundamentals.",
+    aiFootprint?.goalResearch
+      ? "Grounded with Exa goal research."
+      : "Risk: consistency, not deadline proximity.",
+  ];
 
   useEffect(() => {
     try {
+      const rawFootprint =
+        window.localStorage.getItem("studentos_ai_footprint") ??
+        window.localStorage.getItem("studentos_commitment_footprint");
+      let loadedFootprint = false;
+
+      if (rawFootprint) {
+        const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
+
+        if (
+          Array.isArray(parsedFootprint.commitments) &&
+          Array.isArray(parsedFootprint.planTasks) &&
+          parsedFootprint.rationale
+        ) {
+          loadedFootprint = true;
+          setAiFootprint(parsedFootprint);
+          setCommitments(parsedFootprint.commitments);
+          setPlanTasks(parsedFootprint.planTasks);
+          setBaseTimeline(parsedFootprint.timelineEvents);
+          setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
+          setConflictAnalysis(parsedFootprint.conflict);
+          setAiPlan({
+            provider: parsedFootprint.provider,
+            status: parsedFootprint.status,
+            model: parsedFootprint.model,
+            rationale: parsedFootprint.rationale,
+            dailyPlan: {
+              focus:
+                parsedFootprint.planTasks.find((task) => task.section === "do_now")?.title ??
+                parsedFootprint.planTasks[0]?.title ??
+                "Today's focus",
+            },
+            trace: parsedFootprint.sponsorTrace,
+          });
+          aiPlanRequestStarted.current = true;
+        }
+      }
+
       const savedPlan = window.localStorage.getItem("studentos_plan_overrides");
-      if (savedPlan) {
+      if (!loadedFootprint && savedPlan) {
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
         if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
           setPlanTasks(parsedPlan);
@@ -443,17 +560,7 @@ export default function CommitmentsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!planHydrated) return;
-    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
-  }, [planHydrated, planTasks]);
-
-  function showToast(message: string) {
-    setToastMessage(message);
-    window.setTimeout(() => setToastMessage(null), 1800);
-  }
-
-  function addSponsorTrace(item: SponsorTraceItem) {
+  const addSponsorTrace = useCallback((item: SponsorTraceItem) => {
     const existing = window.localStorage.getItem("studentos_sponsor_trace");
     let trace: SponsorTraceItem[] = [];
 
@@ -466,12 +573,159 @@ export default function CommitmentsPage() {
     }
 
     window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify([item, ...trace].slice(0, 8)));
+  }, []);
+
+  useEffect(() => {
+    if (!planHydrated) return;
+    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
+  }, [planHydrated, planTasks]);
+
+  useEffect(() => {
+    if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current) return;
+
+    aiPlanRequestStarted.current = true;
+
+    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${chemistryAdded ? "chemistry" : "standard"}`;
+    const cached = window.localStorage.getItem(cacheKey);
+
+    if (cached) {
+      try {
+        setAiPlan(JSON.parse(cached) as PlanDayResponse);
+        setAiPlanLoading(false);
+        return;
+      } catch {
+        window.localStorage.removeItem(cacheKey);
+      }
+    }
+
+    const controller = new AbortController();
+    setAiPlanLoading(true);
+
+    async function requestAiPlan() {
+      try {
+        const response = await fetch("/api/sponsor/ai/plan-day", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            currentDate: "2026-06-09",
+            commitments: commitments.map((item) => ({
+              id: item.id,
+              title: item.title,
+              type: item.type,
+              state: item.state,
+              estimatedDuration: item.estimatedDuration,
+              source: item.source,
+            })),
+            goals: goalItems.map((item) => ({
+              id: item.id,
+              title: item.title,
+              estimatedDuration: item.estimatedDuration,
+              state: item.state,
+            })),
+            fixedEvents: visibleTimelineEvents
+              .filter((event) => event.chip === "Fixed" || event.chip === "Rescheduled")
+              .map((event) => ({
+                id: event.id,
+                time: event.time,
+                title: event.title,
+                duration: event.duration,
+                status: event.chip,
+              })),
+            sourceContext: {
+              narrative: "AWS extracted messy screenshots, PDFs, and text sources before this Vercel planning step.",
+              conflictResolution: resolutionMode ?? "recommended",
+              addedSource: chemistryAdded ? "Chemistry worksheet due 8 PM" : undefined,
+              addedSourceKey,
+            },
+          }),
+        });
+
+        const result = (await response.json()) as PlanDayResponse;
+        if (!response.ok) throw new Error("Planner route returned an error.");
+
+        setAiPlan(result);
+        window.localStorage.setItem(cacheKey, JSON.stringify(result));
+        result.trace?.forEach(addSponsorTrace);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+
+        const fallback: PlanDayResponse = {
+          provider: "fallback",
+          status: "fallback",
+          rationale: {
+            summary: fallbackPlanReasoning,
+            bullets: [
+              "Physics is due tomorrow morning.",
+              "Fixed events stay protected.",
+              "Flexible work moves around the conflict.",
+              "The coding goal remains a scheduled roadmap.",
+            ],
+          },
+          dailyPlan: {
+            focus: "Finish Physics worksheet",
+          },
+          trace: [
+            {
+              provider: "Vercel AI Gateway",
+              action: "Vercel AI Gateway fallback planning",
+              status: "fallback",
+              detail: error instanceof Error ? error.message : "Planner request failed.",
+            },
+          ],
+        };
+
+        setAiPlan(fallback);
+        fallback.trace?.forEach(addSponsorTrace);
+      } finally {
+        if (!controller.signal.aborted) setAiPlanLoading(false);
+      }
+    }
+
+    void requestAiPlan();
+
+    return () => controller.abort();
+  }, [
+    addSponsorTrace,
+    addedSourceKey,
+    aiPlan,
+    chemistryAdded,
+    commitments,
+    goalItems,
+    planHydrated,
+    resolutionMode,
+    step,
+    visibleTimelineEvents,
+  ]);
+
+  function showToast(message: string) {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage(null), 1800);
   }
 
-  function clarify(kind: "goal" | "team") {
+  function clarify(target: NonNullable<ClarifyingState>, answers: ClarificationAnswers = {}) {
+    const question = aiFootprint?.clarificationQuestions.find(
+      (item) => item.commitmentId === target.commitmentId,
+    );
+    const selectedAnswer = Object.values(answers).find((answer) => answer && answer !== "Skipped");
+    const selectedOption = selectedAnswer
+      ? question?.options.find((option) => option.label === selectedAnswer)
+      : undefined;
+    const resolved = question?.resolvedCommitment;
+
     setCommitments((current) =>
       current.map((item) => {
-        if (kind === "goal" && item.id === "coding") {
+        if (item.id === target.commitmentId && resolved) {
+          return {
+            ...item,
+            ...resolved,
+            state: resolved.state ?? "confirmed",
+            explanation:
+              resolved.explanation ??
+              `Clarified from answer: ${selectedOption?.label ?? selectedAnswer ?? "confirmed"}.`,
+          };
+        }
+        if (target.kind === "goal" && item.id === "coding") {
           return {
             ...item,
             state: "confirmed",
@@ -480,7 +734,7 @@ export default function CommitmentsPage() {
             explanation: "Roadmap ready: 6 steps scheduled across Jun-Dec."
           };
         }
-        if (kind === "team" && item.id === "team") {
+        if (target.kind === "team" && item.id === "team") {
           return {
             ...item,
             state: "confirmed",
@@ -494,6 +748,27 @@ export default function CommitmentsPage() {
       })
     );
     setClarifying(null);
+  }
+
+  function openCommitmentItem(commitment: Commitment) {
+    const aiQuestion = aiFootprint?.clarificationQuestions.find(
+      (question) => question.commitmentId === commitment.id,
+    );
+
+    if (aiQuestion) {
+      setClarifying({ kind: aiQuestion.kind, commitmentId: commitment.id });
+      return;
+    }
+
+    if (commitment.state === "needs_clarification" || commitment.state === "unsure") {
+      setClarifying({
+        kind: commitment.type === "goal" ? "goal" : "team",
+        commitmentId: commitment.id,
+      });
+      return;
+    }
+
+    openEditor(commitment);
   }
 
   function applySuggestedConflict(continueToPlan = false) {
@@ -622,6 +897,8 @@ export default function CommitmentsPage() {
       ];
     });
     setChemistryAdded(true);
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
     window.localStorage.setItem("studentos_extra_source_added", "chemistry_worksheet_due_8pm");
     setImpactOpen(false);
     showToast("Plan updated");
@@ -752,7 +1029,7 @@ export default function CommitmentsPage() {
       hideHeader={false}
     >
       <div className="safe-bottom-padding px-5 pt-2">
-        <AnimatePresence mode="wait">
+        <>
           {step === "commitments" && (
             <motion.div
               key="commitments"
@@ -777,10 +1054,7 @@ export default function CommitmentsPage() {
                     <CommitmentCard
                       key={commitment.id}
                       commitment={commitment}
-                      onClick={() => {
-                        if (commitment.state === "unsure") setClarifying("team");
-                        else openEditor(commitment);
-                      }}
+                      onClick={() => openCommitmentItem(commitment)}
                       onSourceClick={() => {
                         setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
                       }}
@@ -799,10 +1073,7 @@ export default function CommitmentsPage() {
                     <GoalCandidateCard
                       key={commitment.id}
                       commitment={commitment}
-                      onClick={() => {
-                        if (commitment.state === "needs_clarification") setClarifying("goal");
-                        else openEditor(commitment);
-                      }}
+                      onClick={() => openCommitmentItem(commitment)}
                       onSourceClick={() => {
                         setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
                       }}
@@ -847,11 +1118,15 @@ export default function CommitmentsPage() {
                   conflictResolved
                     ? resolutionMode === "manual"
                       ? "StudentOS used your instruction and rebuilt the clash."
-                      : "StudentOS updated the day without moving fixed commitments."
-                    : "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
+                      : conflictAnalysis?.resolvedSummary ?? "StudentOS updated the day without moving fixed commitments."
+                    : conflictAnalysis?.unresolvedSummary ?? "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
                 }
               />
-              <ConflictSummaryCard resolved={conflictResolved} resolutionMode={resolutionMode} />
+              <ConflictSummaryCard
+                resolved={conflictResolved}
+                resolutionMode={resolutionMode}
+                conflict={conflictAnalysis}
+              />
               
               <MobileTimeline
                 events={visibleTimelineEvents}
@@ -867,6 +1142,7 @@ export default function CommitmentsPage() {
                   else applySuggestedConflict(false);
                 }}
                 onEdit={() => setManualConflictOpen(true)}
+                conflict={conflictAnalysis}
               />
 
               <div className="fixed-bottom-action">
@@ -890,8 +1166,34 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
-              <FocusActionCard onExplain={() => setReasoningOpen(true)} />
-              <GoalRoadmapCard onView={viewRoadmap} roadmapAdded={roadmapAdded} />
+              <section className="rounded-[8px] border border-neutral-200 bg-white p-4 shadow-[0_12px_38px_rgba(0,0,0,0.04)]">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-white">
+                      <Server className="size-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[13px] font-bold text-ink">Vercel AI Gateway planner</p>
+                      <p className="truncate text-[11px] font-semibold text-neutral-400">
+                        {aiPlan?.model ?? "Structured fallback"} rationale
+                      </p>
+                    </div>
+                  </div>
+                  <SourceChip tone={aiPlan?.status === "success" ? "success" : "neutral"}>
+                    {aiPlanStatusLabel}
+                  </SourceChip>
+                </div>
+                <p className="text-[13px] leading-5 text-neutral-600">
+                  {aiPlanLoading ? "Generating a planning rationale through Vercel AI Gateway..." : aiPlanSummary}
+                </p>
+              </section>
+              <FocusActionCard onExplain={() => setReasoningOpen(true)} task={focusTask} />
+              <GoalRoadmapCard
+                onView={viewRoadmap}
+                roadmapAdded={roadmapAdded}
+                goalTitle={roadmapGoal?.title}
+                summaryLines={roadmapSummaryLines}
+              />
               <div className="space-y-6">
                 {displayedPlanSections.map((section) => (
                   <PlanSection
@@ -904,7 +1206,7 @@ export default function CommitmentsPage() {
               </div>
             </motion.div>
           )}
-        </AnimatePresence>
+        </>
       </div>
 
       <AddSourceButton onClick={openAddSource} raised={step === "plan"} />
@@ -915,9 +1217,12 @@ export default function CommitmentsPage() {
 
       <ClarificationBottomSheet
         open={clarifying !== null}
-        kind={clarifying ?? "goal"}
+        kind={clarifying?.kind === "goal" ? "goal" : "team"}
         onClose={() => setClarifying(null)}
-        onSubmit={() => clarifying && clarify(clarifying)}
+        onSubmit={(answers) => clarifying && clarify(clarifying, answers)}
+        questionsOverride={questionForSheet(activeClarification)}
+        titleOverride={activeClarification?.title}
+        subtitleOverride={activeClarification?.subtitle}
       />
 
       <BottomSheet
@@ -1044,12 +1349,24 @@ export default function CommitmentsPage() {
         open={reasoningOpen}
         onClose={() => setReasoningOpen(false)}
         title="Why this plan?"
-        subtitle={`StudentOS prioritised the Physics worksheet because it is due tomorrow morning, ${resolutionMode === "manual" ? "used your manual instruction to move tuition away from CCA," : "kept tuition fixed and handled the CCA clash,"} moved flexible revision later,${chemistryAdded ? " inserted Chemistry before 8 PM," : ""} and scheduled your coding roadmap across future days.`}
+        subtitle={aiPlanSummary}
       >
-        <div className="flex flex-wrap gap-2">
-          {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Goal roadmap"].map((chip) => (
-            <SourceChip key={chip}>{chip}</SourceChip>
-          ))}
+        <div className="space-y-4">
+          {aiPlanBullets.length > 0 ? (
+            <div className="space-y-2">
+              {aiPlanBullets.map((bullet) => (
+                <div key={bullet} className="flex gap-3 rounded-[18px] bg-neutral-50 px-3 py-2 text-[13px] font-semibold leading-5 text-neutral-700">
+                  <span className="mt-2 size-1.5 shrink-0 rounded-full bg-ink" />
+                  <span>{bullet}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Goal roadmap"].map((chip) => (
+              <SourceChip key={chip}>{chip}</SourceChip>
+            ))}
+          </div>
         </div>
       </BottomSheet>
 

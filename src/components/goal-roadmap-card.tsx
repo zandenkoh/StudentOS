@@ -5,11 +5,23 @@ import { SourceChip } from "@/components/source-chip";
 
 export function GoalRoadmapCard({
   onView,
-  roadmapAdded
+  roadmapAdded,
+  goalTitle = "Learn coding by December",
+  summaryLines
 }: {
   onView: () => void;
   roadmapAdded: boolean;
+  goalTitle?: string;
+  summaryLines?: string[];
 }) {
+  const lines = summaryLines?.length
+    ? summaryLines
+    : [
+        "6 steps scheduled across Jun-Dec.",
+        "Next action: 30 min coding fundamentals.",
+        "Risk: consistency, not deadline proximity.",
+      ];
+
   return (
     <section className="rounded-[26px] border border-neutral-200 bg-white p-5 shadow-[0_12px_45px_rgba(0,0,0,0.04)]">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -22,7 +34,7 @@ export function GoalRoadmapCard({
               Goal roadmap
             </p>
             <h2 className="mt-1 text-[17px] font-semibold text-ink">
-              Learn coding by December
+              {goalTitle}
             </h2>
           </div>
         </div>
@@ -35,9 +47,9 @@ export function GoalRoadmapCard({
       </div>
 
       <div className="space-y-2 rounded-[20px] bg-neutral-50 p-3 text-[13px] font-semibold text-neutral-600">
-        <p>6 steps scheduled across Jun-Dec.</p>
-        <p>Next action: 30 min coding fundamentals.</p>
-        <p>Risk: consistency, not deadline proximity.</p>
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
       </div>
 
       <button

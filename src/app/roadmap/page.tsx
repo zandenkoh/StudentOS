@@ -8,13 +8,35 @@ import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
 import { GoalRoadmapTimeline } from "@/components/goal-roadmap-timeline";
 import { SourceChip } from "@/components/source-chip";
-import { goalRoadmapSteps } from "@/lib/demo-data";
+import { goalRoadmapSteps, type DemoGoalRoadmapStep } from "@/lib/demo-data";
+import type { StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
 
 export default function RoadmapPage() {
   const router = useRouter();
   const [roadmapAdded, setRoadmapAdded] = useState(true);
+  const [steps, setSteps] = useState<DemoGoalRoadmapStep[]>(goalRoadmapSteps);
+  const [goalTitle, setGoalTitle] = useState("Learn coding by December");
+  const [goalResearch, setGoalResearch] = useState<StudentOSAgentFootprint["goalResearch"]>();
 
   useEffect(() => {
+    try {
+      const rawFootprint =
+        window.localStorage.getItem("studentos_ai_footprint") ??
+        window.localStorage.getItem("studentos_commitment_footprint");
+
+      if (rawFootprint) {
+        const footprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
+        if (Array.isArray(footprint.roadmapSteps) && footprint.roadmapSteps.length > 0) {
+          setSteps(footprint.roadmapSteps);
+        }
+        const goal = footprint.commitments.find((item) => item.type === "goal");
+        if (goal) setGoalTitle(goal.title);
+        setGoalResearch(footprint.goalResearch);
+      }
+    } catch {
+      setSteps(goalRoadmapSteps);
+    }
+
     window.localStorage.setItem("studentos_roadmap_added", "true");
     setRoadmapAdded(true);
   }, []);
@@ -40,7 +62,7 @@ export default function RoadmapPage() {
             Goal roadmap
           </h1>
           <p className="mt-1 text-[16px] font-semibold text-neutral-600">
-            Learn coding by December
+            {goalTitle}
           </p>
         </header>
 
@@ -52,7 +74,7 @@ export default function RoadmapPage() {
               </span>
               <div>
                 <h2 className="text-[18px] font-semibold text-ink">On track after today&apos;s plan</h2>
-                <p className="mt-1 text-[13px] text-muted">6 steps scheduled across Jun-Dec.</p>
+                <p className="mt-1 text-[13px] text-muted">{steps.length} steps scheduled across Jun-Dec.</p>
               </div>
             </div>
             <SourceChip tone="success">
@@ -94,12 +116,30 @@ export default function RoadmapPage() {
               Next scheduled action
             </p>
             <p className="mt-1 text-[14px] font-semibold text-ink">
-              Coding fundamentals — Session 1
+              {steps.flatMap((step) => step.tasks)[0]?.title ?? "Coding fundamentals - Session 1"}
             </p>
           </div>
+
+          {goalResearch ? (
+            <div className="mt-3 rounded-2xl border border-violet-100 bg-violet-50 p-3">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-700">
+                Live context from Exa
+              </p>
+              <p className="mt-2 text-[13px] font-semibold leading-5 text-violet-950">
+                {goalResearch.summary}
+              </p>
+              {goalResearch.citations.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {goalResearch.citations.slice(0, 2).map((citation) => (
+                    <SourceChip key={citation.url}>{citation.title}</SourceChip>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
-        <GoalRoadmapTimeline steps={goalRoadmapSteps} />
+        <GoalRoadmapTimeline steps={steps} />
 
         <div className="fixed-bottom-action">
           <PrimaryButton onClick={backToPlan}>

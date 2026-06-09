@@ -18,6 +18,7 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { cn } from "@/lib/utils";
+import type { CapturedSourceForAI, StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
 
 type LogKind = "thought" | "analysis" | "tool" | "decision" | "footprint";
 
@@ -36,7 +37,8 @@ type AgentLog = {
   };
 };
 
-const FINISH_AT = 10000;
+const REDIRECT_MIN_AT = 9800;
+const REDIRECT_MAX_AT = 52000;
 
 type SponsorTraceItem = {
   provider: string;
@@ -76,8 +78,21 @@ const logs: AgentLog[] = [
     detail: "Open questions prepared: target coding outcome, whether the team meeting is confirmed."
   },
   {
+    id: "exa",
+    at: 5400,
+    kind: "tool",
+    title: "Researching broad goals",
+    body: "Checking whether vague goals need live web context before StudentOS turns them into a roadmap.",
+    tool: {
+      name: "Exa goal research",
+      icon: FileSearch,
+      color: "text-violet-700",
+      result: "Grounding goal context"
+    }
+  },
+  {
     id: "calendar",
-    at: 6100,
+    at: 7000,
     kind: "tool",
     title: "Checking calendar conflicts",
     body: "Comparing fixed tuition against the CCA briefing and flexible evening work blocks.",
@@ -90,11 +105,11 @@ const logs: AgentLog[] = [
   },
   {
     id: "plan",
-    at: 8200,
+    at: 8800,
     kind: "footprint",
-    title: "Building executable day plan",
-    body: "Saving the clean commitment footprint so the review, conflict solver, and plan can pick up without another upload.",
-    detail: "Redirecting to /commitments."
+    title: "Calling planning agent",
+    body: "Vercel AI Gateway is returning structured commitments, questions, conflicts, roadmap steps, and a daily plan.",
+    detail: "StudentOS will open the review screen once the live footprint is ready."
   }
 ];
 
@@ -207,7 +222,10 @@ export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
+  const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
+  const [analysisFailed, setAnalysisFailed] = useState(false);
   const logViewportRef = useRef<HTMLDivElement>(null);
+  const analysisStartedRef = useRef(false);
 
   useEffect(() => {
     const trace = window.localStorage.getItem("studentos_sponsor_trace");
@@ -220,7 +238,117 @@ export default function AgentsThinkingPage() {
     }
   }, []);
 
+  useEffect(() => {
+    if (analysisStartedRef.current) return;
+    analysisStartedRef.current = true;
+
+    const controller = new AbortController();
+
+    async function runAnalysis() {
+      let capturedSources: CapturedSourceForAI[] = [];
+
+      try {
+        const rawSources = window.localStorage.getItem("studentos_captured_sources");
+        if (rawSources) {
+          const parsed = JSON.parse(rawSources) as CapturedSourceForAI[];
+          if (Array.isArray(parsed)) capturedSources = parsed;
+        }
+      } catch {
+        capturedSources = [];
+      }
+
+      try {
+        const response = await fetch("/api/sponsor/ai/analyse-student-chaos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            currentDate: "2026-06-09",
+            sources: capturedSources,
+            sourceContext: {
+              productNarrative:
+                "AWS reads messy screenshots, PDFs, and text. Exa researches broad goals. Vercel AI Gateway runs the planning agent.",
+            },
+          }),
+        });
+
+        const result = (await response.json()) as StudentOSAgentFootprint;
+        if (!response.ok) throw new Error("StudentOS analysis route returned an error.");
+
+        setAiFootprint(result);
+        setSponsorTrace(result.sponsorTrace);
+        window.localStorage.setItem("studentos_footprint", "completed");
+        window.localStorage.setItem("agent_log_visited", "true");
+        window.localStorage.setItem("studentos_ai_footprint", JSON.stringify(result));
+        window.localStorage.setItem("studentos_commitment_footprint", JSON.stringify(result));
+        window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(result.sponsorTrace.slice(0, 8)));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+
+        setAnalysisFailed(true);
+        let existingTrace: SponsorTraceItem[] = [];
+
+        try {
+          const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
+          if (rawTrace) {
+            const parsedTrace = JSON.parse(rawTrace) as SponsorTraceItem[];
+            if (Array.isArray(parsedTrace)) existingTrace = parsedTrace;
+          }
+        } catch {
+          existingTrace = [];
+        }
+
+        const fallbackTrace = [
+          {
+            provider: "Vercel AI Gateway",
+            action: "Generated live StudentOS analysis",
+            status: "fallback" as const,
+            detail: error instanceof Error ? error.message : "StudentOS analysis failed.",
+          },
+          ...existingTrace,
+        ].slice(0, 8);
+
+        setSponsorTrace(fallbackTrace);
+        window.localStorage.setItem("studentos_sponsor_trace", JSON.stringify(fallbackTrace));
+      }
+    }
+
+    void runAnalysis();
+
+    return () => {
+      controller.abort();
+      analysisStartedRef.current = false;
+    };
+  }, []);
+
   const allLogs = useMemo<AgentLog[]>(() => {
+    if (aiFootprint?.agentLogs.length) {
+      return aiFootprint.agentLogs
+        .slice()
+        .sort((a, b) => a.at - b.at)
+        .map((log) => ({
+          id: log.id,
+          at: log.at,
+          kind: log.kind,
+          title: log.title,
+          body: log.body,
+          detail: log.detail,
+          tool: log.tool
+            ? {
+                name: log.tool.provider,
+                icon: Server,
+                color:
+                  log.tool.provider === "AWS"
+                    ? "text-sky-700"
+                    : log.tool.provider === "Exa"
+                      ? "text-violet-700"
+                      : "text-neutral-800",
+                result: log.tool.result,
+              }
+            : undefined,
+        }));
+    }
+
     const sponsorLogs = sponsorTrace
       .slice()
       .reverse()
@@ -247,15 +375,20 @@ export default function AgentsThinkingPage() {
       }));
 
     return [...logs.slice(0, 1), ...sponsorLogs, ...logs.slice(1)].sort((a, b) => a.at - b.at);
-  }, [sponsorTrace]);
+  }, [aiFootprint, sponsorTrace]);
 
   const visibleLogs = useMemo(
     () => allLogs.filter((log) => elapsedMs >= log.at),
     [allLogs, elapsedMs]
   );
   const activeLog = visibleLogs[visibleLogs.length - 1] ?? allLogs[0];
-  const progress = Math.min(0.62, 0.36 + (elapsedMs / FINISH_AT) * 0.26);
-  const done = elapsedMs >= allLogs[allLogs.length - 1].at;
+  const analysisDone = Boolean(aiFootprint) || analysisFailed;
+  const progress = Math.min(0.92, 0.36 + (elapsedMs / REDIRECT_MAX_AT) * 0.56);
+  const readyToRedirect = analysisDone && elapsedMs >= REDIRECT_MIN_AT;
+  const done = readyToRedirect;
+  const sourceCount = aiFootprint?.sourceSummary.totalSources ?? (sponsorTrace.length > 0 ? "Real" : "7");
+  const foundCount = aiFootprint?.commitments.length ?? "5";
+  const openCount = aiFootprint?.clarificationQuestions.length ?? "2";
 
   useEffect(() => {
     const viewport = logViewportRef.current;
@@ -269,44 +402,19 @@ export default function AgentsThinkingPage() {
       setElapsedMs(Date.now() - startedAt);
     }, 250);
 
-    const footprintTimer = window.setTimeout(() => {
-      window.localStorage.setItem("studentos_footprint", "completed");
-      window.localStorage.setItem("agent_log_visited", "true");
-      window.localStorage.setItem(
-        "studentos_commitment_footprint",
-        JSON.stringify({
-          createdAt: new Date().toISOString(),
-          sources: [
-            "WhatsApp project chat screenshot",
-            "Physics Chapter 12 homework PDF",
-            "Teammate voice note",
-            "Tuition calendar conflict",
-            "CCA announcement screenshot",
-            "goalDemo.txt coding goal",
-            "Team project follow-up message"
-          ],
-          commitments: [
-            "Python data-handling learning goal",
-            "Physics assignment deadline",
-            "Tuition timetable block",
-            "CCA briefing conflict",
-            "Teammate slide deck follow-up"
-          ],
-          nextRoute: "/commitments"
-        })
-      );
-    }, 8200);
-
-    const redirectTimer = window.setTimeout(() => {
-      router.push("/commitments");
-    }, FINISH_AT);
-
     return () => {
       window.clearInterval(interval);
-      window.clearTimeout(footprintTimer);
-      window.clearTimeout(redirectTimer);
     };
-  }, [router]);
+  }, []);
+
+  useEffect(() => {
+    if (!readyToRedirect) return;
+    const redirectTimer = window.setTimeout(() => {
+      router.push("/commitments");
+    }, 650);
+
+    return () => window.clearTimeout(redirectTimer);
+  }, [readyToRedirect, router]);
 
   return (
     <AppShell stepLabel="Agent Log" progress={progress} hideHeader={false}>
@@ -334,9 +442,9 @@ export default function AgentsThinkingPage() {
 
           <div className="mt-4 grid grid-cols-3 gap-2">
             {[
-              ["Sources", sponsorTrace.length > 0 ? "Real" : "7"],
-              ["Found", "5"],
-              ["Open", "2"]
+              ["Sources", sourceCount],
+              ["Found", foundCount],
+              ["Open", openCount]
             ].map(([label, value]) => (
               <div key={label} className="rounded-[8px] border border-neutral-100 bg-neutral-50 px-3 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-neutral-400">{label}</p>
@@ -392,7 +500,7 @@ export default function AgentsThinkingPage() {
             <div className="h-2 w-28 overflow-hidden rounded-full bg-neutral-100">
               <motion.div
                 className="h-full rounded-full bg-ink"
-                animate={{ width: `${Math.min(100, (elapsedMs / FINISH_AT) * 100)}%` }}
+                animate={{ width: `${Math.min(100, readyToRedirect ? 100 : (elapsedMs / REDIRECT_MAX_AT) * 100)}%` }}
                 transition={{ duration: 0.2, ease: "linear" }}
               />
             </div>

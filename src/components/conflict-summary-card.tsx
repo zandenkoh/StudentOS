@@ -1,15 +1,28 @@
 import { TriangleAlert } from "lucide-react";
 import { SourceChip } from "@/components/source-chip";
 import { cn } from "@/lib/utils";
+import type { AIConflictAnalysis } from "@/lib/studentos-ai-types";
 
 export function ConflictSummaryCard({
   resolved,
-  resolutionMode
+  resolutionMode,
+  conflict
 }: {
   resolved: boolean;
   resolutionMode?: "recommended" | "manual" | null;
+  conflict?: AIConflictAnalysis;
 }) {
   const manual = resolutionMode === "manual";
+  const title = resolved
+    ? manual
+      ? "Manual instruction applied"
+      : conflict?.resolvedTitle ?? "Conflict resolved"
+    : conflict?.title ?? "CCA briefing overlaps with tuition";
+  const summary = resolved
+    ? manual
+      ? "Tuition no longer clashes with CCA."
+      : conflict?.resolvedSummary ?? "Suggested deconflict applied."
+    : conflict?.unresolvedSummary ?? "You cannot attend both fully.";
 
   return (
     <section
@@ -30,14 +43,10 @@ export function ConflictSummaryCard({
           </span>
           <div>
             <h2 className={cn("text-[17px] font-semibold", resolved ? "text-emerald-950" : "text-red-950")}>
-              {resolved ? (manual ? "Manual instruction applied" : "Conflict resolved") : "CCA briefing overlaps with tuition"}
+              {title}
             </h2>
             <p className={cn("text-[13px]", resolved ? "text-emerald-800" : "text-red-800")}>
-              {resolved
-                ? manual
-                  ? "Tuition no longer clashes with CCA."
-                  : "Suggested deconflict applied."
-                : "You cannot attend both fully."}
+              {summary}
             </p>
           </div>
         </div>
@@ -47,20 +56,26 @@ export function ConflictSummaryCard({
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div className="rounded-2xl bg-white/75 p-3">
-          <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>Tuition</p>
-          <p className="mt-1 font-semibold">4:30-6:30 PM</p>
+          <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>
+            {conflict?.fixedEventTitle ?? "Tuition"}
+          </p>
+          <p className="mt-1 font-semibold">{conflict?.fixedEventTime ?? "4:30-6:30 PM"}</p>
         </div>
         <div className="rounded-2xl bg-white/75 p-3">
-          <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>CCA briefing</p>
-          <p className="mt-1 font-semibold">5:30-6:15 PM</p>
+          <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>
+            {conflict?.conflictingEventTitle ?? "CCA briefing"}
+          </p>
+          <p className="mt-1 font-semibold">{conflict?.conflictingEventTime ?? "5:30-6:15 PM"}</p>
         </div>
         <div className="rounded-2xl bg-white/75 p-3">
           <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>Overlap</p>
-          <p className="mt-1 font-semibold">{resolved ? "Handled" : "45 min"}</p>
+          <p className="mt-1 font-semibold">{resolved ? "Handled" : conflict?.overlapLabel ?? "45 min"}</p>
         </div>
         <div className="rounded-2xl bg-white/75 p-3">
           <p className={cn("text-xs font-semibold", resolved ? "text-emerald-700" : "text-red-700")}>Impact</p>
-          <p className="mt-1 font-semibold">{resolved ? "Plan ready" : "Decision needed"}</p>
+          <p className="mt-1 font-semibold">
+            {resolved ? conflict?.resolvedImpactLabel ?? "Plan ready" : conflict?.impactLabel ?? "Decision needed"}
+          </p>
         </div>
       </div>
     </section>

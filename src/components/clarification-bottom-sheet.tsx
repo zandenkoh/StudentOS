@@ -10,11 +10,13 @@ type ClarificationOption = {
   recommended?: boolean;
 };
 
-type ClarificationQuestion = {
+export type ClarificationQuestion = {
   question: string;
   options: ClarificationOption[];
   customPlaceholder: string;
 };
+
+export type ClarificationAnswers = Record<number, string>;
 
 export function MCQOption({
   label,
@@ -111,14 +113,24 @@ export function ClarificationBottomSheet({
   open,
   kind,
   onClose,
-  onSubmit
+  onSubmit,
+  questionsOverride,
+  titleOverride,
+  subtitleOverride
 }: {
   open: boolean;
   kind: "goal" | "team";
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit: (answers: ClarificationAnswers) => void;
+  questionsOverride?: ClarificationQuestion[];
+  titleOverride?: string;
+  subtitleOverride?: string;
 }) {
-  const questions = kind === "goal" ? goalQuestions : teamQuestions;
+  const questions = questionsOverride?.length
+    ? questionsOverride
+    : kind === "goal"
+      ? goalQuestions
+      : teamQuestions;
   const [activeIndex, setActiveIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
@@ -147,22 +159,23 @@ export function ClarificationBottomSheet({
     };
   }, []);
 
-  function advance() {
+  function advance(nextAnswers = answers) {
     if (safeActiveIndex < questions.length - 1) {
       setActiveIndex((current) => current + 1);
       return;
     }
-    onSubmit();
+    onSubmit(nextAnswers);
   }
 
   function chooseAnswer(answer: string) {
-    setAnswers((current) => ({ ...current, [safeActiveIndex]: answer }));
+    const nextAnswers = { ...answers, [safeActiveIndex]: answer };
+    setAnswers(nextAnswers);
     if (advanceTimeoutRef.current) {
       window.clearTimeout(advanceTimeoutRef.current);
     }
     advanceTimeoutRef.current = window.setTimeout(() => {
       advanceTimeoutRef.current = null;
-      advance();
+      advance(nextAnswers);
     }, 140);
   }
 
@@ -182,11 +195,12 @@ export function ClarificationBottomSheet({
     <BottomSheet
       open={open}
       onClose={onClose}
-      title={kind === "goal" ? "Clarify coding goal" : "Clarify team meeting"}
+      title={titleOverride ?? (kind === "goal" ? "Clarify coding goal" : "Clarify team meeting")}
       subtitle={
-        kind === "goal"
+        subtitleOverride ??
+        (kind === "goal"
           ? "StudentOS needs a few quick details to plan this properly."
-          : "Resolve the uncertainty before StudentOS builds the day."
+          : "Resolve the uncertainty before StudentOS builds the day.")
       }
     >
       <div className="space-y-4">
@@ -245,7 +259,7 @@ export function ClarificationBottomSheet({
             {customAnswers[safeActiveIndex]?.trim() ? (
               <button
                 type="button"
-                onClick={advance}
+                onClick={() => advance()}
                 className="flex min-h-12 w-full items-center justify-center rounded-[18px] bg-ink px-4 py-3 text-[15px] font-semibold text-white"
               >
                 Continue

@@ -4,13 +4,20 @@ import { CheckCircle2 } from "lucide-react";
 import { useState } from "react";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import { SourceChip } from "@/components/source-chip";
+import type { DemoPlanTask } from "@/lib/demo-data";
 
 export function FocusActionCard({
-  onExplain
+  onExplain,
+  task
 }: {
   onExplain: () => void;
+  task?: DemoPlanTask;
 }) {
   const [started, setStarted] = useState(false);
+  const title = task?.title ?? "Finish Physics worksheet";
+  const duration = task?.estimatedMinutes ? `${task.estimatedMinutes} min` : "35 min";
+  const deadline = task?.deadline ? `Due ${task.deadline}` : "Due tomorrow 8 AM";
+  const priority = task?.reason ?? "High priority";
 
   return (
     <section className="rounded-[28px] border border-neutral-200 bg-ink p-5 text-white shadow-lift">
@@ -18,9 +25,9 @@ export function FocusActionCard({
         <p className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55">Do this now</p>
         <SourceChip tone="success">Conflict resolved</SourceChip>
       </div>
-      <h2 className="text-[26px] font-semibold leading-[1.05]">Finish Physics worksheet</h2>
+      <h2 className="text-[26px] font-semibold leading-[1.05]">{title}</h2>
       <p className="mt-3 text-[15px] leading-6 text-white/72">
-        35 min · Due tomorrow 8 AM · High priority
+        {duration} · {deadline} · {priority}
       </p>
       {started ? (
         <div className="mt-4 flex items-center gap-2 rounded-[18px] border border-white/10 bg-white/10 px-3 py-2 text-sm font-semibold text-white">
