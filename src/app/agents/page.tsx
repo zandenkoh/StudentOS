@@ -41,7 +41,7 @@ type AgentLog = {
 };
 
 const REDIRECT_MIN_AT = 1600;
-const ANALYSIS_TIMEOUT_MS = 30000;
+const ANALYSIS_TIMEOUT_MS = 34000;
 
 const kindIcon: Record<LogKind, LucideIcon> = {
   thought: BrainCircuit,
@@ -200,8 +200,10 @@ export default function AgentsThinkingPage() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     const requestStartedAt = Date.now();
+    let cancelled = false;
 
     function storeFootprint(result: StudentOSAgentFootprint) {
+      if (cancelled) return;
       window.clearTimeout(timeout);
       setAiFootprint(result);
       setAgentLogs(result.agentLogs.map(toClientLog));
@@ -269,6 +271,8 @@ export default function AgentsThinkingPage() {
         let streamErrorMessage = "";
 
         const handleEvent = (event: AnalyseStudentChaosStreamEvent) => {
+          if (cancelled) return;
+
           if (event.type === "log") {
             setAgentLogs((current) => mergeLog(current, toClientLog(event.log)));
             return;
@@ -311,6 +315,8 @@ export default function AgentsThinkingPage() {
           throw new Error(streamErrorMessage || "StudentOS analysis stream ended before the final footprint.");
         }
       } catch (error) {
+        if (cancelled) return;
+
         setAnalysisFailed(true);
         const message = controller.signal.aborted
           ? "StudentOS analysis stream timed out after 30 seconds."
@@ -357,6 +363,7 @@ export default function AgentsThinkingPage() {
     void runAnalysis();
 
     return () => {
+      cancelled = true;
       window.clearTimeout(timeout);
       controller.abort();
       analysisStartedRef.current = false;

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText, Output } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
@@ -298,6 +298,19 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
         reject(error);
       });
   });
+}
+
+function parseJsonObject(text: string) {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1] ?? text;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Planner response did not contain a JSON object.");
+  }
+
+  return JSON.parse(candidate.slice(start, end + 1));
 }
 
 const defaultSources: CapturedSourceForAI[] = [
@@ -835,11 +848,10 @@ function buildFootprintFromCore({
 async function generateFootprintCore(model: string, input: AnalyseStudentChaosRequest, goalResearch?: StudentOSAgentFootprint["goalResearch"]) {
   const sources = input.sources.length ? input.sources : defaultSources;
 
-  const { output } = await generateText({
+  const { text } = await generateText({
     model,
-    output: Output.object({ schema: GeneratedCoreSchema }),
     system:
-      "You are StudentOS, an AI chief-of-staff for ambitious students. Return structured data only. Do not expose hidden chain-of-thought; instead provide concise observable agent actions, decisions, and user-facing rationale. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
+      "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
     prompt: JSON.stringify(
       {
         currentDate: input.currentDate,
@@ -853,6 +865,17 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           evidenceText: sourceText(source).slice(0, 1400),
         })),
         exaGoalResearch: goalResearch,
+        outputContract: {
+          commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
+          clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean.",
+          timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
+          resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
+          conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, 3-6 recommendedActions, 3-6 manualActions.",
+          planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean.",
+          roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming.",
+          rationale: "summary plus 3-6 bullets.",
+          emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
+        },
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
           "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
@@ -880,7 +903,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
     ),
   });
 
-  return output;
+  return GeneratedCoreSchema.parse(parseJsonObject(text));
 }
 
 export async function analyseStudentChaos(
@@ -1048,7 +1071,7 @@ export async function analyseStudentChaos(
   try {
     const result = await withTimeout(
       generateFootprintCore(primaryModel, normalizedInput, goalResearch),
-      18000,
+      24000,
       `Vercel AI Gateway ${primaryModel}`,
     );
     await emitTrace({
