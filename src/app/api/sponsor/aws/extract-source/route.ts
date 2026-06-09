@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { detectTextFromS3 } from "@/lib/sponsor-tech/aws-textract";
 import { isAwsReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { interpretSourceAttachment } from "@/lib/sponsor-tech/source-interpreter";
 
 export const runtime = "nodejs";
 
 const RequestSchema = z.object({
   key: z.string().min(1),
+  name: z.string().optional(),
+  mimeType: z.string().optional(),
+  fileType: z.enum(["image", "pdf", "text", "audio", "link", "email"]).optional(),
 });
 
 export async function POST(req: Request) {
@@ -34,19 +38,44 @@ export async function POST(req: Request) {
 
   try {
     const result = await detectTextFromS3(parsed.data.key);
+    const interpretation = await interpretSourceAttachment({
+      title: parsed.data.name || parsed.data.key,
+      fileType: parsed.data.fileType,
+      mimeType: parsed.data.mimeType,
+      s3Key: parsed.data.key,
+      rawText: result.text,
+    });
 
     return NextResponse.json({
       provider: "aws-textract",
       region: sponsorEnv.awsTextractRegion,
       text: result.text,
       blockCount: result.raw.Blocks?.length || 0,
+      summary: interpretation.summary,
+      extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+      needsClarification: interpretation.needsClarification,
+      clarificationPrompt: interpretation.clarificationPrompt,
+      interpretationProvider: interpretation.provider,
     });
   } catch (error) {
+    const interpretation = await interpretSourceAttachment({
+      title: parsed.data.name || parsed.data.key,
+      fileType: parsed.data.fileType,
+      mimeType: parsed.data.mimeType,
+      s3Key: parsed.data.key,
+      rawText: "",
+    });
+
     return NextResponse.json({
       provider: "aws-textract",
       warning: "Textract failed; demo can continue with fallback OCR text.",
       text: "",
       blocks: [],
+      summary: interpretation.summary,
+      extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+      needsClarification: interpretation.needsClarification,
+      clarificationPrompt: interpretation.clarificationPrompt,
+      interpretationProvider: interpretation.provider,
       error: error instanceof Error ? error.message : "Unknown Textract error",
     });
   }

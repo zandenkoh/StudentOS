@@ -56,3 +56,17 @@ export async function getObjectText(key: string) {
 
   return response.Body?.transformToString() ?? "";
 }
+
+export async function getObjectBytes(key: string) {
+  if (!sponsorEnv.awsBucket) throw new Error("Missing AWS_S3_BUCKET");
+
+  const client = getS3Client();
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: sponsorEnv.awsBucket,
+      Key: key,
+    }),
+  );
+
+  return response.Body?.transformToByteArray() ?? new Uint8Array();
+}

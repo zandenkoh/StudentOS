@@ -16,6 +16,10 @@ export type CachedSourceRecord = {
   contentHash?: string;
   textractText?: string;
   textractBlockCount?: number;
+  sourceSummary?: string;
+  extractedTasks?: string[];
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
   provider: "aws-s3" | "aws-textract" | "mock";
   sponsorStatus: "cached" | "uploaded" | "extracted" | "fallback" | "error";
   processedAt: string;

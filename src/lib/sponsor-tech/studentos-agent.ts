@@ -19,6 +19,10 @@ const SourceSchema = z.object({
   sponsorStatus: z.string().optional(),
   ocrText: z.string().optional(),
   textractText: z.string().optional(),
+  sourceSummary: z.string().optional(),
+  extractedTasks: z.array(z.string()).optional(),
+  needsClarification: z.boolean().optional(),
+  clarificationPrompt: z.string().optional(),
 });
 
 const CommitmentSchema = z.object({
@@ -208,12 +212,12 @@ const GeneratedAgentLogSchema = z.object({
 });
 
 const GeneratedCoreSchema = z.object({
-  commitments: z.array(CommitmentSchema).min(3).max(8),
+  commitments: z.array(CommitmentSchema).min(1).max(8),
   clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(4),
   timelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   resolvedTimelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   conflict: ConflictSchema,
-  planTasks: z.array(GeneratedPlanTaskSchema).min(3).max(10),
+  planTasks: z.array(GeneratedPlanTaskSchema).min(1).max(10),
   roadmapSteps: z.array(GeneratedRoadmapStepSchema).min(1).max(6),
   rationale: RationaleSchema,
   agentLogs: z.array(GeneratedAgentLogSchema).min(5).max(8),
@@ -236,7 +240,7 @@ const FootprintSchema = z.object({
   timelineEvents: z.array(TimelineEventSchema).min(1),
   resolvedTimelineEvents: z.array(TimelineEventSchema).min(1),
   conflict: ConflictSchema,
-  planTasks: z.array(PlanTaskSchema).min(3),
+  planTasks: z.array(PlanTaskSchema).min(1),
   roadmapSteps: z.array(RoadmapStepSchema).min(1),
   rationale: RationaleSchema,
   goalResearch: GoalResearchSchema.optional(),
@@ -327,7 +331,16 @@ const defaultSources: CapturedSourceForAI[] = [
 ];
 
 function sourceText(source: CapturedSourceForAI) {
-  return [source.title, source.source, source.snippet, source.ocrText, source.textractText]
+  return [
+    source.title,
+    source.source,
+    source.snippet,
+    source.sourceSummary,
+    source.extractedTasks?.join("\n"),
+    source.clarificationPrompt,
+    source.ocrText,
+    source.textractText,
+  ]
     .filter(Boolean)
     .join("\n");
 }
@@ -336,7 +349,7 @@ function sourceStats(sources: CapturedSourceForAI[]) {
   return {
     totalSources: sources.length,
     realSources: sources.filter((source) => source.provider && source.provider !== "mock").length,
-    ocrReadySources: sources.filter((source) => source.ocrText || source.textractText || source.sponsorStatus === "extracted").length,
+    ocrReadySources: sources.filter((source) => source.ocrText || source.textractText || source.sourceSummary || source.sponsorStatus === "extracted").length,
   };
 }
 
@@ -739,11 +752,19 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
         sourceContext: input.sourceContext,
         sources: sources.map((source) => ({
           ...source,
+          interpretedSummary: source.sourceSummary,
+          interpretedTasks: source.extractedTasks,
+          sourceNeedsClarification: source.needsClarification,
+          sourceClarificationPrompt: source.clarificationPrompt,
           evidenceText: sourceText(source).slice(0, 1400),
         })),
         exaGoalResearch: goalResearch,
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
+          "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
+          "If OCR only shows an exam cover page, worksheet cover page, candidate instructions, names, class fields, or index-number boilerplate, do not invent the worksheet task. Create one unclear commitment and a clarification question asking which worksheet/page/question numbers the student wants handled.",
+          "If OCR appears to have dropped Chinese or other non-English text, use the interpreted summary when available; otherwise mark the source unclear and ask a review-page clarification.",
+          "If one source contains multiple worksheets or actionable messages, split them into separate commitments only when the evidence identifies distinct actions.",
           "Mark broad goals or tentative items with clarification questions.",
           "Create a conflict timeline and a resolved timeline.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",

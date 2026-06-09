@@ -25,6 +25,10 @@ export type CapturedSourceForAI = {
   sponsorStatus?: string;
   ocrText?: string;
   textractText?: string;
+  sourceSummary?: string;
+  extractedTasks?: string[];
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
 };
 
 export type AIClarificationOption = {

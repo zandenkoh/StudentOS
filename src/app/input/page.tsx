@@ -24,6 +24,10 @@ type InputSource = {
   s3Key?: string;
   provider?: string;
   ocrText?: string;
+  sourceSummary?: string;
+  extractedTasks?: string[];
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
   sponsorStatus?: "cached" | "uploaded" | "extracted" | "fallback" | "error";
 };
 
@@ -52,6 +56,11 @@ type AwsExtractResponse = {
   error?: string;
   text?: string;
   blockCount?: number;
+  summary?: string;
+  extractedTasks?: string[];
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
+  interpretationProvider?: string;
 };
 
 type CachedSourceResponse = {
@@ -65,6 +74,10 @@ type CachedSourceResponse = {
   s3Key?: string;
   provider?: string;
   textractText?: string;
+  sourceSummary?: string;
+  extractedTasks?: string[];
+  needsClarification?: boolean;
+  clarificationPrompt?: string;
   sponsorStatus?: InputSource["sponsorStatus"];
 };
 
@@ -339,24 +352,39 @@ export default function InputPage() {
       let snippet = fallbackSnippetForFile(file);
       let ocrText = "";
       let sponsorStatus: InputSource["sponsorStatus"] = "uploaded";
+      let sourceSummary: string | undefined;
+      let extractedTasks: string[] | undefined;
+      let needsClarification: boolean | undefined;
+      let clarificationPrompt: string | undefined;
 
       if (fileType === "image" || fileType === "pdf") {
         const extractResponse = await fetch("/api/sponsor/aws/extract-source", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key: upload.key }),
+          body: JSON.stringify({
+            key: upload.key,
+            name: file.name,
+            mimeType: file.type,
+            fileType,
+          }),
         });
         const extraction = (await extractResponse.json()) as AwsExtractResponse;
 
-        if (extraction.provider === "aws-textract" && extraction.text) {
-          ocrText = extraction.text;
-          snippet = extraction.text.split("\n").find(Boolean)?.slice(0, 110) || snippet;
+        if (extraction.provider === "aws-textract" && (extraction.text || extraction.summary)) {
+          ocrText = extraction.text || "";
+          sourceSummary = extraction.summary;
+          extractedTasks = extraction.extractedTasks;
+          needsClarification = extraction.needsClarification;
+          clarificationPrompt = extraction.clarificationPrompt;
+          snippet = extraction.summary || (extraction.text ?? "").split("\n").find(Boolean)?.slice(0, 110) || snippet;
           sponsorStatus = "extracted";
           addSponsorTrace({
-            provider: "AWS",
-            action: "Extracted worksheet text with Textract",
+            provider: extraction.interpretationProvider === "vercel-ai-gateway" ? "Vercel AI Gateway" : "AWS",
+            action: extraction.interpretationProvider === "vercel-ai-gateway"
+              ? "Interpreted uploaded source"
+              : "Extracted worksheet text with Textract",
             status: "success",
-            detail: `${extraction.blockCount || 0} Textract blocks returned.`,
+            detail: extraction.summary || `${extraction.blockCount || 0} Textract blocks returned.`,
           });
         } else {
           addSponsorTrace({
@@ -378,6 +406,10 @@ export default function InputPage() {
                 s3Key: upload.key,
                 provider: upload.provider,
                 ocrText,
+                sourceSummary,
+                extractedTasks,
+                needsClarification,
+                clarificationPrompt,
                 sponsorStatus,
               }
             : source,
@@ -493,6 +525,10 @@ export default function InputPage() {
       s3Key: source.s3Key,
       provider: source.provider,
       ocrText: source.textractText,
+      sourceSummary: source.sourceSummary,
+      extractedTasks: source.extractedTasks,
+      needsClarification: source.needsClarification,
+      clarificationPrompt: source.clarificationPrompt,
       sponsorStatus: source.sponsorStatus,
     };
   };
@@ -576,6 +612,10 @@ export default function InputPage() {
       provider: source.provider,
       sponsorStatus: source.sponsorStatus,
       ocrText: source.ocrText,
+      sourceSummary: source.sourceSummary,
+      extractedTasks: source.extractedTasks,
+      needsClarification: source.needsClarification,
+      clarificationPrompt: source.clarificationPrompt,
     }));
 
     window.localStorage.setItem("studentos_captured_sources", JSON.stringify(capturedSources));
@@ -806,6 +846,18 @@ export default function InputPage() {
             <div className="mb-3 rounded-xl border border-sky-100 bg-sky-50 p-3 text-[11px] font-semibold text-sky-800">
               AWS S3 stored this source at <span className="font-mono">{previewSource.s3Key}</span>
               {previewSource.ocrText ? " and Textract extracted text below." : "."}
+            </div>
+          )}
+
+          {previewSource?.sourceSummary && (
+            <div className="mb-3 rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] font-semibold text-emerald-900">
+              <p className="mb-1 text-[10px] uppercase tracking-wider text-emerald-700">
+                Interpreted summary
+              </p>
+              <p>{previewSource.sourceSummary}</p>
+              {previewSource.needsClarification && previewSource.clarificationPrompt ? (
+                <p className="mt-2 text-emerald-800">{previewSource.clarificationPrompt}</p>
+              ) : null}
             </div>
           )}
 

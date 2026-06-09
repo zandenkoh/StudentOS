@@ -30,3 +30,12 @@ export function isVercelAiReady() {
 export function isExaReady() {
   return Boolean(sponsorEnv.useExa && sponsorEnv.exaApiKey);
 }
+
+export function isBedrockReady() {
+  return Boolean(
+    sponsorEnv.useBedrock &&
+      sponsorEnv.bedrockModelId &&
+      process.env.AWS_ACCESS_KEY_ID &&
+      process.env.AWS_SECRET_ACCESS_KEY,
+  );
+}

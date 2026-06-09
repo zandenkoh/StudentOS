@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { detectTextFromS3 } from "@/lib/sponsor-tech/aws-textract";
 import { uploadBufferToS3 } from "@/lib/sponsor-tech/aws-s3";
 import { isAwsReady } from "@/lib/sponsor-tech/env";
+import { interpretSourceAttachment } from "@/lib/sponsor-tech/source-interpreter";
 import {
   loadSourceCache,
   saveSourceCache,
@@ -124,10 +125,30 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
   const cached = manifestRecords[cacheKey];
 
   if (cached?.contentHash === contentHash && cached.s3Key) {
+    if (!cached.sourceSummary && (source.fileType === "image" || source.fileType === "pdf" || source.fileType === "text")) {
+      const interpretation = await interpretSourceAttachment({
+        title: source.title,
+        fileType: source.fileType,
+        mimeType: source.mimeType,
+        s3Key: cached.s3Key,
+        rawText: cached.textractText,
+      });
+
+      return {
+        ...cached,
+        sourceSummary: interpretation.summary,
+        extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+        needsClarification: interpretation.needsClarification,
+        clarificationPrompt: interpretation.clarificationPrompt,
+        sponsorStatus: "cached" as const,
+        snippet: interpretation.summary || cached.textractText?.split("\n").find(Boolean)?.slice(0, 110) || cached.snippet,
+      };
+    }
+
     return {
       ...cached,
       sponsorStatus: "cached" as const,
-      snippet: cached.textractText?.split("\n").find(Boolean)?.slice(0, 110) || cached.snippet,
+      snippet: cached.sourceSummary || cached.textractText?.split("\n").find(Boolean)?.slice(0, 110) || cached.snippet,
     };
   }
 
@@ -157,6 +178,14 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     textractText = buffer.toString("utf8");
   }
 
+  const interpretation = await interpretSourceAttachment({
+    title: source.title,
+    fileType: source.fileType,
+    mimeType: source.mimeType,
+    s3Key,
+    rawText: textractText,
+  });
+
   return {
     sourceId: source.sourceId,
     origin: "initial_packet" as const,
@@ -165,11 +194,15 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     fileType: source.fileType,
     fileSize: source.fileSize,
     filePath: source.publicPath,
-    snippet: textractText.split("\n").find(Boolean)?.slice(0, 110) || source.snippet,
+    snippet: interpretation.summary || textractText.split("\n").find(Boolean)?.slice(0, 110) || source.snippet,
     s3Key,
     contentHash,
     textractText,
     textractBlockCount,
+    sourceSummary: interpretation.summary,
+    extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+    needsClarification: interpretation.needsClarification,
+    clarificationPrompt: interpretation.clarificationPrompt,
     provider,
     sponsorStatus,
     processedAt: new Date().toISOString(),
