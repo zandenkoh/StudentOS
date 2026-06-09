@@ -775,7 +775,7 @@ export default function InputPage() {
             }`}
           >
             <Sparkles className={`size-3.5 ${isInjecting ? "animate-spin" : "text-amber-500"}`} />
-            <span>Import example attachments</span>
+            <span>Load demo packet</span>
           </button>
         </motion.div>
 
@@ -803,7 +803,7 @@ export default function InputPage() {
                 exit={{ opacity: 0 }}
                 className="rounded-[20px] border border-dashed border-neutral-200 p-8 text-center text-xs font-medium text-neutral-400"
               >
-                Inbox is empty. Click &quot;Import student chaos packet&quot; above to load realistic demo files.
+                Inbox is empty. Load the demo packet to see realistic student chaos.
               </motion.div>
             ) : (
               <div className="space-y-2.5">
