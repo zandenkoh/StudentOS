@@ -1905,7 +1905,7 @@ export default function CommitmentsPage() {
       stepLabel={labels[step]}
       progress={progressMap[step]}
       hideHeader={false}
-      sidePanel={step !== "plan" ? <SponsorProofStrip trace={sponsorTrace} /> : undefined}
+      sidePanel={<SponsorProofStrip trace={sponsorTrace} />}
     >
       <div className="safe-bottom-padding px-5 pt-2">
         <>
