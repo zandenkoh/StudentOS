@@ -439,6 +439,7 @@ export default function AgentsThinkingPage() {
         <section className="sticky top-0 z-20 rounded-[8px] border border-neutral-200 bg-white/95 p-3 shadow-[0_12px_30px_rgba(0,0,0,0.05)] backdrop-blur-xl">
           <div className="mb-3 h-2 overflow-hidden rounded-full bg-neutral-100">
             <motion.div
+              data-agent-progress
               className="relative h-full rounded-full bg-ink"
               animate={{ width: `${progressPercent}%` }}
               transition={{ duration: 0.45, ease: "easeOut" }}
@@ -481,13 +482,14 @@ export default function AgentsThinkingPage() {
           </div>
 
           <div
+            data-agent-log-scroller
             ref={logViewportRef}
             onScroll={handleLogScroll}
             onWheel={(event) => pauseLogFollow(event.deltaY < 0)}
             onTouchMove={() => pauseLogFollow(true)}
             className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
           >
-            <ol className="min-w-0 space-y-1">
+            <ol className="min-w-0 space-y-1 pb-[36vh]">
               <AnimatePresence initial={false}>
                 {visibleLogs.map((log, index) => (
                   <AgentLogItem
