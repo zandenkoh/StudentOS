@@ -4,13 +4,9 @@ import { useEffect, useRef, useState, type Ref } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  BrainCircuit,
-  Check,
-  FileSearch,
-  ListChecks,
+  ChevronDown,
   Loader2,
   Server,
-  Sparkles,
   type LucideIcon
 } from "lucide-react";
 
@@ -43,6 +39,9 @@ type AgentLog = {
 };
 
 const REDIRECT_MIN_AT = 1600;
+const TYPE_BASE_DELAY_MS = 13;
+const TYPE_JITTER_MS = 24;
+const LOG_REVEAL_DELAYS_MS = [180, 520, 310, 760, 430, 960, 590, 690, 360];
 const loadingMessages = [
   "Reading submitted sources",
   "Generating focused Exa searches",
@@ -55,27 +54,31 @@ function todayDateId() {
   return new Date().toISOString().slice(0, 10);
 }
 
-const kindIcon: Record<LogKind, LucideIcon> = {
-  thought: BrainCircuit,
-  analysis: FileSearch,
-  tool: Sparkles,
-  decision: ListChecks,
-  footprint: Check
-};
-
-const kindLabel: Record<LogKind, string> = {
-  thought: "Observed",
-  analysis: "Analysing",
-  tool: "Tool call",
-  decision: "Decision",
-  footprint: "Footprint"
-};
-
 function toolColorForProvider(provider: string) {
   if (provider === "AWS") return "text-sky-700";
   if (provider === "Exa") return "text-violet-700";
   if (provider === "Vercel AI Gateway") return "text-neutral-800";
   return "text-neutral-700";
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function revealDelayForLog(log: AgentLog, index: number) {
+  const seed = [...log.id].reduce((total, character) => total + character.charCodeAt(0), 0);
+  return LOG_REVEAL_DELAYS_MS[(seed + index) % LOG_REVEAL_DELAYS_MS.length];
+}
+
+function typeDelayForCharacter(character: string) {
+  if (character === "." || character === "," || character === ";") return 90 + Math.random() * 140;
+  if (character === " ") return 8 + Math.random() * 18;
+  return TYPE_BASE_DELAY_MS + Math.random() * TYPE_JITTER_MS;
+}
+
+function textAt(value: string | undefined, length: number) {
+  if (!value) return value;
+  return value.slice(0, Math.min(value.length, length));
 }
 
 function toClientLog(log: AIAgentLog): AgentLog {
@@ -135,22 +138,7 @@ function isAbortError(error: unknown) {
   );
 }
 
-function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
-  const Icon = kindIcon[kind];
-
-  return (
-    <span
-      className={cn(
-        "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border bg-white",
-        complete ? "border-neutral-300 text-ink" : "border-neutral-200 text-neutral-400"
-      )}
-    >
-      {complete ? <Check className="size-3.5 stroke-[2.5]" /> : <Icon className="size-3.5" />}
-    </span>
-  );
-}
-
-function ToolCall({ log }: { log: AgentLog }) {
+function ToolCall({ log, complete }: { log: AgentLog; complete: boolean }) {
   if (!log.tool) return null;
   const ToolIcon = log.tool.icon;
 
@@ -162,7 +150,7 @@ function ToolCall({ log }: { log: AgentLog }) {
           {log.tool.name}
         </span>
         <span className="shrink-0 text-[11px] font-semibold text-white/55">
-          running
+          {complete ? "done" : "running"}
         </span>
       </div>
       <p className="mt-1.5 text-[12px] leading-snug text-white/72">{log.tool.result}</p>
@@ -183,6 +171,8 @@ function AgentLogItem({
   isActive: boolean;
   activeRef?: Ref<HTMLLIElement>;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
+
   return (
     <motion.li
       ref={activeRef}
@@ -197,25 +187,51 @@ function AgentLogItem({
       )}
     >
       <div className="flex shrink-0 flex-col items-center">
-        <LogMarker kind={log.kind} complete={complete} />
+        <button
+          type="button"
+          onClick={() => setCollapsed((current) => !current)}
+          aria-label={collapsed ? "Expand thought" : "Collapse thought"}
+          aria-expanded={!collapsed}
+          className={cn(
+            "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border bg-white outline-none transition-colors focus-visible:ring-2 focus-visible:ring-neutral-300",
+            complete ? "border-neutral-300 text-ink" : "border-neutral-200 text-neutral-500"
+          )}
+        >
+          <ChevronDown className={cn("size-4 transition-transform", collapsed && "-rotate-90")} />
+        </button>
         {!isLast ? <span className="my-2 w-px flex-1 bg-neutral-200" /> : null}
       </div>
       <article className="min-w-0 flex-1 pb-5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-400">
-            {kindLabel[log.kind]}
-          </span>
-        </div>
-        <h2 className="mt-1 text-[15px] font-semibold leading-snug tracking-tight text-ink">
+        <button
+          type="button"
+          onClick={() => setCollapsed((current) => !current)}
+          aria-expanded={!collapsed}
+          className="block w-full rounded-[7px] text-left outline-none focus-visible:ring-2 focus-visible:ring-neutral-300"
+        >
+        <h2 className="text-[15px] font-semibold leading-snug tracking-tight text-ink">
           {log.title}
         </h2>
-        <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{log.body}</p>
-        {log.detail ? (
-          <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
-            {log.detail}
-          </p>
-        ) : null}
-        <ToolCall log={log} />
+        </button>
+        <AnimatePresence initial={false}>
+          {!collapsed ? (
+            <motion.div
+              key="expanded"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+              className="overflow-hidden"
+            >
+              <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{log.body}</p>
+              {log.detail ? (
+                <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
+                  {log.detail}
+                </p>
+              ) : null}
+              <ToolCall log={log} complete={complete} />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </article>
     </motion.li>
   );
@@ -225,6 +241,7 @@ export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
+  const [displayedLogs, setDisplayedLogs] = useState<AgentLog[]>([]);
   const [sponsorTrace, setSponsorTrace] = useState<AISponsorTraceItem[]>([]);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [analysisFailed, setAnalysisFailed] = useState(false);
@@ -233,6 +250,14 @@ export default function AgentsThinkingPage() {
   const activeLogRef = useRef<HTMLLIElement>(null);
   const shouldFollowLogRef = useRef(true);
   const analysisStartedRef = useRef(false);
+  const presentationRunRef = useRef(0);
+  const presentationProcessingRef = useRef(false);
+  const agentLogsRef = useRef<AgentLog[]>([]);
+  const displayedLogIdsRef = useRef<ReadonlySet<string>>(new Set());
+
+  useEffect(() => {
+    displayedLogIdsRef.current = new Set(displayedLogs.map((log) => log.id));
+  }, [displayedLogs]);
 
   useEffect(() => {
     if (analysisStartedRef.current) return;
@@ -293,6 +318,10 @@ export default function AgentsThinkingPage() {
 
       try {
         setAgentLogs([]);
+        presentationRunRef.current += 1;
+        presentationProcessingRef.current = false;
+        displayedLogIdsRef.current = new Set();
+        setDisplayedLogs([]);
         setAnalysisFailed(false);
         setStreamError(null);
 
@@ -432,9 +461,101 @@ export default function AgentsThinkingPage() {
     };
   }, []);
 
-  const visibleLogs = agentLogs;
+  useEffect(() => {
+    agentLogsRef.current = agentLogs;
+    if (presentationProcessingRef.current) return;
+
+    const runId = presentationRunRef.current;
+    presentationProcessingRef.current = true;
+
+    async function revealLogs() {
+      while (presentationRunRef.current === runId) {
+        const logs = agentLogsRef.current;
+        const nextEntry = logs.find((candidate) => !displayedLogIdsRef.current.has(candidate.id));
+        if (!nextEntry) {
+          presentationProcessingRef.current = false;
+          return;
+        }
+
+        const log = nextEntry;
+        const index = logs.findIndex((candidate) => candidate.id === log.id);
+        if (presentationRunRef.current !== runId) return;
+
+        await sleep(revealDelayForLog(log, index));
+        if (presentationRunRef.current !== runId) return;
+
+        const stagedLog: AgentLog = {
+          ...log,
+          title: "",
+          body: "",
+          detail: textAt(log.detail, 0),
+          tool: log.tool ? { ...log.tool, result: "" } : undefined,
+        };
+        displayedLogIdsRef.current = new Set([...displayedLogIdsRef.current, log.id]);
+        setDisplayedLogs((current) => mergeLog(current, stagedLog));
+
+        const titleLength = log.title.length;
+        const bodyLength = log.body.length;
+        const detailLength = log.detail?.length ?? 0;
+        const toolResultLength = log.tool?.result.length ?? 0;
+        const totalLength = titleLength + bodyLength + detailLength + toolResultLength;
+
+        for (let position = 1; position <= totalLength; position += 1) {
+          if (presentationRunRef.current !== runId) return;
+
+          const titleEnd = Math.min(position, titleLength);
+          const bodyPosition = Math.max(0, position - titleLength);
+          const bodyEnd = Math.min(bodyPosition, bodyLength);
+          const detailPosition = Math.max(0, position - titleLength - bodyLength);
+          const detailEnd = Math.min(detailPosition, detailLength);
+          const toolPosition = Math.max(0, position - titleLength - bodyLength - detailLength);
+          const toolEnd = Math.min(toolPosition, toolResultLength);
+
+          setDisplayedLogs((current) =>
+            mergeLog(current, {
+              ...log,
+              title: textAt(log.title, titleEnd) ?? "",
+              body: textAt(log.body, bodyEnd) ?? "",
+              detail: textAt(log.detail, detailEnd),
+              tool: log.tool
+                ? {
+                    ...log.tool,
+                    result: textAt(log.tool.result, toolEnd) ?? "",
+                  }
+                : undefined,
+            }),
+          );
+
+          const sourceText =
+            position <= titleLength
+              ? log.title
+              : position <= titleLength + bodyLength
+                ? log.body
+                : position <= titleLength + bodyLength + detailLength
+                  ? log.detail ?? ""
+                  : log.tool?.result ?? "";
+          const sourceOffset =
+            position <= titleLength
+              ? position - 1
+              : position <= titleLength + bodyLength
+                ? position - titleLength - 1
+                : position <= titleLength + bodyLength + detailLength
+                  ? position - titleLength - bodyLength - 1
+                  : position - titleLength - bodyLength - detailLength - 1;
+          await sleep(typeDelayForCharacter(sourceText[Math.max(0, sourceOffset)] ?? ""));
+        }
+      }
+
+      presentationProcessingRef.current = false;
+    }
+
+    void revealLogs();
+  }, [agentLogs]);
+
+  const visibleLogs = displayedLogs;
   const activeLog = visibleLogs[visibleLogs.length - 1];
-  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT;
+  const presentationComplete = agentLogs.length > 0 && displayedLogs.length >= agentLogs.length;
+  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT && presentationComplete;
   const done = Boolean(aiFootprint);
   const progressPercent = done ? 100 : Math.min(92, visibleLogs.length ? 12 + visibleLogs.length * 10 : 8);
   const statusLabel = analysisFailed ? "Error" : done ? "Done" : "Live";

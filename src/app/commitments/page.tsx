@@ -11,6 +11,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Sparkles,
   Trash2
 } from "lucide-react";
 
@@ -18,7 +19,7 @@ import { AppShell } from "@/components/app-shell";
 import { AgentActivityPanel } from "@/components/agent-activity-panel";
 import { BottomActionBar } from "@/components/bottom-action-bar";
 import { BottomSheet } from "@/components/bottom-sheet";
-import { PrimaryButton } from "@/components/buttons";
+import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import {
   ClarificationBottomSheet,
   type ClarificationAnswers,
@@ -1904,7 +1905,7 @@ export default function CommitmentsPage() {
       stepLabel={labels[step]}
       progress={progressMap[step]}
       hideHeader={false}
-      sidePanel={<SponsorProofStrip trace={sponsorTrace} />}
+      sidePanel={step !== "plan" ? <SponsorProofStrip trace={sponsorTrace} /> : undefined}
     >
       <div className="safe-bottom-padding px-5 pt-2">
         <>
@@ -2049,9 +2050,13 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
-              <div className="lg:hidden">
-                <SponsorProofStrip trace={sponsorTrace} />
-              </div>
+              <SecondaryButton onClick={() => setReasoningOpen(true)} className="h-[48px] w-full justify-between rounded-[18px] px-4">
+                <span className="inline-flex items-center gap-2">
+                  <Sparkles className="size-4" />
+                  Why this plan?
+                </span>
+                <ChevronRight className="size-4 text-neutral-400" />
+              </SecondaryButton>
               <FocusActionCard
                 conflictResolved={hasConfirmedConflict && conflictResolved}
                 onExplain={() => setReasoningOpen(true)}
@@ -2086,7 +2091,6 @@ export default function CommitmentsPage() {
       {step === "plan" ? (
         <BottomActionBar
           onExport={() => setExportOpen(true)}
-          onReasoning={() => setReasoningOpen(true)}
           onAddTask={openAddSource}
         />
       ) : null}
@@ -2378,7 +2382,17 @@ export default function CommitmentsPage() {
         conflictResolved={hasConfirmedConflict && conflictResolved}
         onViewFinalPlan={() => {
           setExportOpen(false);
-          resetScreenScroll();
+          window.localStorage.setItem(
+            "studentos_end_summary",
+            JSON.stringify({
+              focusTitle: focusTask?.title ?? "Review current plan",
+              scheduledBlockCount: planTasks.length,
+              conflictResolved: hasConfirmedConflict && conflictResolved,
+              roadmapAdded,
+              addedTaskApplied,
+            }),
+          );
+          router.push("/end");
         }}
         onStartOver={reset}
         onSaved={() => {

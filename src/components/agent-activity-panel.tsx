@@ -575,8 +575,8 @@ export function AgentActivityPanel({
           className={cn(
             "fixed z-30 lg:hidden",
             mobileRaised
-              ? "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+13.75rem)]"
-              : "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+8.75rem)]",
+              ? "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+10.25rem)]"
+              : "bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+5.6rem)]",
             mobileOpen
               ? "left-1/2 w-[calc(100%-2rem)] max-w-[430px] -translate-x-1/2"
               : "left-4 w-[min(10rem,calc(100%-2rem))]",

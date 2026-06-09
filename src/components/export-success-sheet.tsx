@@ -2,22 +2,33 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
+import { CalendarCheck, CalendarDays, CheckCircle2, Clock3, RotateCcw, Sparkles } from "lucide-react";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 
 const beforeItems = [
-  "Screenshots",
-  "PDF deadlines",
+  "Screenshot deadline",
+  "PDF worksheet",
   "Chat conflict",
-  "Loose goal"
+  "Loose coding goal",
+  "Voice note",
+  "Tuition block"
 ];
 
 const beforePositions = [
   "left-2 top-3 rotate-[-6deg]",
   "right-2 top-8 rotate-[5deg]",
-  "left-8 bottom-14 rotate-[7deg]",
-  "right-8 bottom-5 rotate-[-5deg]"
+  "left-4 top-[92px] rotate-[7deg]",
+  "right-5 top-[116px] rotate-[-5deg]",
+  "left-10 bottom-9 rotate-[4deg]",
+  "right-7 bottom-7 rotate-[-7deg]"
+];
+
+const buildRows = [
+  { time: "3:30 PM", title: "Finish Physics worksheet" },
+  { time: "4:10 PM", title: "Message teammate" },
+  { time: "7:45 PM", title: "Revision block" },
+  { time: "Future", title: "Coding roadmap sessions" }
 ];
 
 export function ExportSuccessSheet({
@@ -44,7 +55,7 @@ export function ExportSuccessSheet({
   conflictResolved?: boolean;
 }) {
   const [saved, setSaved] = useState(false);
-  const [stage, setStage] = useState<"preview" | "clumping" | "reveal">("preview");
+  const [stage, setStage] = useState<"preview" | "collecting" | "building" | "reveal">("preview");
   const previewItems = [
     "Current focus block",
     ...(includeAddedTask ? ["Added task block"] : []),
@@ -70,12 +81,18 @@ export function ExportSuccessSheet({
   useEffect(() => {
     if (!saved) return;
 
-    setStage("clumping");
+    setStage("collecting");
+    const buildTimer = window.setTimeout(() => {
+      setStage("building");
+    }, 1250);
     const revealTimer = window.setTimeout(() => {
       setStage("reveal");
-    }, 760);
+    }, 2700);
 
-    return () => window.clearTimeout(revealTimer);
+    return () => {
+      window.clearTimeout(buildTimer);
+      window.clearTimeout(revealTimer);
+    };
   }, [saved]);
 
   const saveCalendar = () => {
@@ -95,7 +112,7 @@ export function ExportSuccessSheet({
       }
     >
       <div className="space-y-4">
-        <div className="relative min-h-[250px] overflow-hidden rounded-[24px] border border-neutral-200 bg-[#FAF9F6] p-4">
+        <div className="relative min-h-[330px] overflow-hidden rounded-[24px] border border-neutral-200 bg-[#FAF9F6] p-4">
           <AnimatePresence mode="wait">
             {!saved ? (
               <motion.div
@@ -124,9 +141,9 @@ export function ExportSuccessSheet({
                   ))}
                 </div>
               </motion.div>
-            ) : stage === "clumping" ? (
+            ) : stage === "collecting" ? (
               <motion.div
-                key="clumping"
+                key="collecting"
                 className="absolute inset-0 overflow-hidden"
                 initial={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -134,16 +151,22 @@ export function ExportSuccessSheet({
                 <motion.div
                   initial={{ y: "-12%", opacity: 0 }}
                   animate={{ y: ["-12%", "106%"], opacity: [0, 1, 1, 0] }}
-                  transition={{ duration: 0.72, ease: "easeInOut" }}
+                  transition={{ duration: 1.1, ease: "easeInOut" }}
                   className="absolute left-0 right-0 top-0 z-20 h-2.5 bg-gradient-to-r from-transparent via-ink/25 to-transparent blur-[1px]"
+                />
+                <motion.div
+                  className="absolute left-1/2 top-1/2 z-0 size-24 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-300"
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: [0.7, 1.25, 1.55], opacity: [0, 0.45, 0] }}
+                  transition={{ duration: 1.15, ease: "easeOut" }}
                 />
                 {beforeItems.map((item, index) => (
                   <motion.div
                     key={item}
                     className={`absolute z-10 rounded-[18px] border border-neutral-200/90 bg-white/95 px-3 py-2 text-xs font-bold text-ink shadow-soft ${beforePositions[index]}`}
                     initial={{ opacity: 1, scale: 1, x: 0, y: 0 }}
-                    animate={{ opacity: 0, scale: 0.22, x: index % 2 === 0 ? 120 : -120, y: index < 2 ? 86 : -86, rotate: 0 }}
-                    transition={{ duration: 0.72, ease: "easeInOut", delay: index * 0.025 }}
+                    animate={{ opacity: 0, scale: 0.18, x: index % 2 === 0 ? 122 : -122, y: index < 2 ? 122 : index < 4 ? 22 : -92, rotate: 0 }}
+                    transition={{ duration: 1.05, ease: "easeInOut", delay: index * 0.055 }}
                   >
                     {item}
                   </motion.div>
@@ -152,10 +175,61 @@ export function ExportSuccessSheet({
                   className="absolute left-1/2 top-1/2 flex size-16 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-ink text-white shadow-lift"
                   initial={{ scale: 0.75, opacity: 0 }}
                   animate={{ scale: [0.75, 1.08, 1], opacity: [0, 1, 1] }}
-                  transition={{ duration: 0.52, ease: "easeOut", delay: 0.22 }}
+                  transition={{ duration: 0.7, ease: "easeOut", delay: 0.36 }}
                 >
                   <Sparkles className="size-6" />
                 </motion.div>
+                <motion.p
+                  className="absolute bottom-5 left-0 right-0 text-center text-xs font-bold uppercase tracking-[0.14em] text-neutral-400"
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.45 }}
+                >
+                  Collecting the mess
+                </motion.p>
+              </motion.div>
+            ) : stage === "building" ? (
+              <motion.div
+                key="building"
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="space-y-4"
+              >
+                <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                  <CalendarCheck className="size-4" />
+                  Building calendar blocks
+                </div>
+                <div className="rounded-[22px] bg-white p-3 shadow-[0_8px_24px_rgba(0,0,0,0.035)]">
+                  <div className="space-y-2">
+                    {buildRows.map((row, index) => (
+                      <motion.div
+                        key={row.title}
+                        initial={{ opacity: 0, x: -14 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: index * 0.18 }}
+                        className="grid grid-cols-[58px_1fr] items-center gap-3 rounded-[16px] bg-neutral-50 px-3 py-2.5"
+                      >
+                        <span className="text-[11px] font-bold text-neutral-400">{row.time}</span>
+                        <span className="text-sm font-semibold text-ink">{row.title}</span>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                  <div className="h-px bg-neutral-200" />
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1.25, ease: "linear", repeat: Infinity }}
+                    className="flex size-10 items-center justify-center rounded-full bg-ink text-white"
+                  >
+                    <Clock3 className="size-4" />
+                  </motion.div>
+                  <div className="h-px bg-neutral-200" />
+                </div>
+                <p className="text-center text-xs font-bold uppercase tracking-[0.14em] text-neutral-400">
+                  Resolving order, deadlines, and follow-ups
+                </p>
               </motion.div>
             ) : (
               <motion.div
@@ -223,7 +297,7 @@ export function ExportSuccessSheet({
             <>
               <PrimaryButton onClick={onViewFinalPlan ?? onClose}>
                 <CheckCircle2 className="size-4" />
-                View final plan
+                View ending
               </PrimaryButton>
               <SecondaryButton onClick={onStartOver ?? onClose} className="w-full">
                 <RotateCcw className="size-4" />
@@ -232,7 +306,7 @@ export function ExportSuccessSheet({
             </>
           ) : saved ? (
             <PrimaryButton disabled className="col-span-2">
-              Saving calendar...
+              {stage === "collecting" ? "Collecting inputs..." : "Building calendar..."}
             </PrimaryButton>
           ) : (
             <>
