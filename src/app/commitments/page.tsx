@@ -716,10 +716,15 @@ export default function CommitmentsPage() {
     setCommitments((current) =>
       current.map((item) => {
         if (item.id === target.commitmentId && resolved) {
+          const resolvedState =
+            resolved.state === "needs_clarification" || resolved.state === "unsure"
+              ? "resolved"
+              : resolved.state ?? "confirmed";
+
           return {
             ...item,
             ...resolved,
-            state: resolved.state ?? "confirmed",
+            state: resolvedState,
             explanation:
               resolved.explanation ??
               `Clarified from answer: ${selectedOption?.label ?? selectedAnswer ?? "confirmed"}.`,
