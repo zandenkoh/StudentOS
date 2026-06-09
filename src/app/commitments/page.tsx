@@ -55,6 +55,7 @@ import {
 import type {
   AIConflictAnalysis,
   AIClarificationQuestion,
+  CapturedSourceForAI,
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
 
@@ -188,8 +189,110 @@ const commitmentTypes: Commitment["type"][] = ["task", "event", "deadline", "goa
 const fallbackPlanReasoning =
   "StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept fixed commitments stable, handled the CCA clash, moved flexible revision later, and scheduled your coding roadmap across future days.";
 
+const commitmentSourceKeywords: Record<string, RegExp> = {
+  physics: /physics|homework|worksheet|chapter|teacher/i,
+  cca: /cca|briefing|announcement/i,
+  competition: /competition|submission|portal|web/i,
+  coding: /coding|python|goal|data-handling/i,
+  team: /voice|teammate|team|project|whatsapp/i,
+};
+
 function capitalize(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function sourceTextForMatch(source: CapturedSourceForAI) {
+  return normalizeSearchText(
+    [
+      source.id,
+      source.title,
+      source.source,
+      source.snippet,
+      source.sourceSummary,
+      source.ocrText,
+      source.textractText,
+      source.extractedTasks?.join(" "),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+function previewFromCapturedSource(source: CapturedSourceForAI): SourcePreview {
+  const rawFileType = source.fileType?.toLowerCase();
+  const isImage =
+    rawFileType === "image" || /\.(png|jpe?g|webp|gif|heic)$/i.test(source.title);
+  const isAudio = rawFileType === "audio";
+  const isLink = rawFileType === "link" || /^https?:\/\//i.test(source.source);
+  const snippet =
+    source.sourceSummary ||
+    source.snippet ||
+    source.ocrText ||
+    source.textractText ||
+    "Original source";
+
+  return {
+    title: source.title,
+    source: source.source,
+    fileSize: source.fileSize ?? (source.s3Key ? "AWS source" : "Source"),
+    fileType: isImage ? "image" : isAudio ? "audio" : isLink ? "link" : "text",
+    snippet,
+    filePath: source.filePath,
+  };
+}
+
+function resolveCommitmentSourcePreview(
+  commitment: Commitment,
+  footprint?: StudentOSAgentFootprint | null,
+) {
+  const staticPreview = commitmentSourcePreviews[commitment.id];
+  const sources = footprint?.sources ?? [];
+
+  if (sources.length === 0) return staticPreview ?? null;
+
+  const commitmentText = normalizeSearchText(
+    [commitment.id, commitment.title, commitment.source, commitment.explanation].join(" "),
+  );
+  const sourceLabel = normalizeSearchText(commitment.source);
+  const keywordMatcher = commitmentSourceKeywords[commitment.id];
+
+  const rankedSources = sources
+    .map((source) => {
+      const searchable = sourceTextForMatch(source);
+      let score = 0;
+
+      if (source.id === commitment.id) score += 12;
+      if (source.id.includes(commitment.id) || commitment.id.includes(source.id)) score += 8;
+      if (sourceLabel && searchable.includes(sourceLabel)) score += 5;
+      if (keywordMatcher?.test(searchable)) score += 5;
+
+      for (const token of commitmentText.split(" ").filter((token) => token.length > 3)) {
+        if (searchable.includes(token)) score += 1;
+      }
+
+      return { source, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  const matchedSource = rankedSources.find((item) => item.score >= 5)?.source;
+
+  if (!matchedSource) return staticPreview ?? null;
+
+  const matchedPreview = previewFromCapturedSource(matchedSource);
+
+  if (
+    staticPreview?.fileType === "image" &&
+    matchedPreview.fileType !== "image" &&
+    !matchedPreview.filePath
+  ) {
+    return staticPreview;
+  }
+
+  return matchedPreview;
 }
 
 function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
@@ -1003,6 +1106,23 @@ export default function CommitmentsPage() {
     });
   }
 
+  function openSourcePreview(commitment: Commitment, options?: { closeEditor?: boolean }) {
+    const preview =
+      resolveCommitmentSourcePreview(commitment, aiFootprint) ?? {
+        title: commitment.source,
+        source: "Captured source",
+        fileSize: "Source",
+        fileType: "text" as const,
+        snippet: commitment.explanation,
+      };
+
+    if (options?.closeEditor) {
+      setEditing(null);
+    }
+
+    setSourcePreview(preview);
+  }
+
   function saveEdit() {
     if (!editing) return;
     setCommitments((current) =>
@@ -1060,9 +1180,7 @@ export default function CommitmentsPage() {
                       key={commitment.id}
                       commitment={commitment}
                       onClick={() => openCommitmentItem(commitment)}
-                      onSourceClick={() => {
-                        setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
-                      }}
+                      onSourceClick={() => openSourcePreview(commitment)}
                     />
                   ))}
                 </section>
@@ -1079,9 +1197,7 @@ export default function CommitmentsPage() {
                       key={commitment.id}
                       commitment={commitment}
                       onClick={() => openCommitmentItem(commitment)}
-                      onSourceClick={() => {
-                        setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
-                      }}
+                      onSourceClick={() => openSourcePreview(commitment)}
                     />
                   ))}
                 </section>
@@ -1292,7 +1408,7 @@ export default function CommitmentsPage() {
             </div>
             <button
               type="button"
-              onClick={() => setSourcePreview(commitmentSourcePreviews[editing.id] ?? null)}
+              onClick={() => openSourcePreview(editing, { closeEditor: true })}
               className="flex min-h-12 w-full items-center justify-between rounded-[18px] border border-neutral-200 px-4 py-3 text-left text-[15px] font-semibold"
             >
               <span>
