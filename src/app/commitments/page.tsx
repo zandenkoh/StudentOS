@@ -11,7 +11,6 @@ import {
   FileText,
   Globe2,
   Image as ImageIcon,
-  Loader2,
   Paperclip,
   Pencil,
   Plus,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
+import { AgentActivityPanel } from "@/components/agent-activity-panel";
 import { BottomActionBar } from "@/components/bottom-action-bar";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton } from "@/components/buttons";
@@ -53,6 +53,21 @@ import {
   type PlanTaskSection,
   type TimelineEvent
 } from "@/lib/demo-data";
+import {
+  appendAgentRunEvent,
+  appendAgentRunTrace,
+  completeAgentRun,
+  createAgentEvent,
+  createAgentRun,
+  diffCommitments,
+  diffPlanTasks,
+  loadAgentRuns,
+  saveAgentRuns,
+  upsertAgentRun,
+  type AgentActivityRun,
+  type AgentActivityStreamEvent,
+  type AgentRunStatus,
+} from "@/lib/agent-activity";
 import type {
   AIConflictAnalysis,
   AIClarificationQuestion,
@@ -210,7 +225,7 @@ type PlanDayResponse = {
   trace?: SponsorTraceItem[];
 };
 
-type ReplanTrigger = "clarification" | "manual_conflict";
+type ReplanTrigger = "clarification" | "manual_conflict" | "add_task";
 
 type ReplanAgentResponse = {
   provider: "vercel-ai-gateway" | "fallback";
@@ -1115,6 +1130,54 @@ function upsertClarifiedCommitmentTask(
   return [...tasks.slice(0, futureIndex), task, ...tasks.slice(futureIndex)];
 }
 
+function commitmentsWithAddedCommitment(current: Commitment[], commitment: Commitment) {
+  if (current.some((item) => item.id === commitment.id)) return current;
+  return [...current, commitment];
+}
+
+function planTasksWithAddedTask(
+  current: DemoPlanTask[],
+  commitment: Commitment,
+  task: DemoPlanTask,
+) {
+  if (current.some((item) => item.id === task.id) || commitment.state === "needs_clarification") {
+    return current;
+  }
+
+  const updatedTasks = current.map((item) =>
+    item.id === "coding-practice"
+      ? {
+          ...item,
+          timeLabel: "9:45-10:45 PM",
+          reason: `Moved later after ${commitment.title}`,
+          scheduleRationale:
+            `Coding practice moves to 9:45 PM because ${commitment.title} now needs the earlier flexible slot.`,
+          updated: true,
+        }
+      : item,
+  );
+  const codingIndex = updatedTasks.findIndex((item) => item.id === "coding-practice");
+
+  if (codingIndex < 0) {
+    const firstFutureIndex = updatedTasks.findIndex(
+      (item) => item.section === "subsequent_days",
+    );
+    if (firstFutureIndex < 0) return [...updatedTasks, task];
+
+    return [
+      ...updatedTasks.slice(0, firstFutureIndex),
+      task,
+      ...updatedTasks.slice(firstFutureIndex),
+    ];
+  }
+
+  return [
+    ...updatedTasks.slice(0, codingIndex),
+    task,
+    ...updatedTasks.slice(codingIndex),
+  ];
+}
+
 function persistCommitments(commitments: Commitment[]) {
   window.localStorage.setItem(SAVED_COMMITMENTS_KEY, JSON.stringify(commitments));
 }
@@ -1168,17 +1231,6 @@ function persistFlowState(state: {
   window.localStorage.setItem(SAVED_FLOW_STATE_KEY, JSON.stringify({ ...current, ...state }));
 }
 
-function AgentReplanStatus({ active, status }: { active: boolean; status: string | null }) {
-  if (!active && !status) return null;
-
-  return (
-    <div className="flex items-center gap-3 rounded-[18px] border border-emerald-100 bg-emerald-50 px-4 py-3 text-[13px] font-semibold leading-5 text-emerald-900">
-      {active ? <Loader2 className="size-4 shrink-0 animate-spin text-emerald-700" /> : <CheckCircle2 className="size-4 shrink-0 text-emerald-700" />}
-      <span>{status ?? "Agent replanning complete."}</span>
-    </div>
-  );
-}
-
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
@@ -1221,7 +1273,7 @@ export default function CommitmentsPage() {
   const [sponsorTrace, setSponsorTrace] = useState<SponsorTraceItem[]>([]);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
   const [replanLoading, setReplanLoading] = useState(false);
-  const [replanStatus, setReplanStatus] = useState<string | null>(null);
+  const [agentRuns, setAgentRuns] = useState<AgentActivityRun[]>([]);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
   const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
@@ -1302,6 +1354,8 @@ export default function CommitmentsPage() {
 
   useEffect(() => {
     try {
+      setAgentRuns(loadAgentRuns());
+
       let persistedTrace: SponsorTraceItem[] = [];
       const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
       if (rawTrace) {
@@ -1431,6 +1485,62 @@ export default function CommitmentsPage() {
     }
   }, []);
 
+  const commitAgentRuns = useCallback((updater: (runs: AgentActivityRun[]) => AgentActivityRun[]) => {
+    setAgentRuns((current) => {
+      const next = updater(current);
+      saveAgentRuns(next);
+      return next;
+    });
+  }, []);
+
+  function updateAgentRun(runId: string, updater: (run: AgentActivityRun) => AgentActivityRun) {
+    commitAgentRuns((runs) => {
+      const existing = runs.find((run) => run.runId === runId);
+      if (!existing) return runs;
+      return upsertAgentRun(runs, updater(existing));
+    });
+  }
+
+  function beginAgentRun(trigger: ReplanTrigger) {
+    const meta: Record<ReplanTrigger, { agentName: string; title: string; body: string }> = {
+      add_task: {
+        agentName: "Add-task agent",
+        title: "Add-task agent started",
+        body: "StudentOS is reading the added task and preparing to update commitments and plan tasks.",
+      },
+      manual_conflict: {
+        agentName: "Manual conflict replanning agent",
+        title: "Manual instruction received",
+        body: "StudentOS is treating the custom prompt as a high-priority scheduling constraint.",
+      },
+      clarification: {
+        agentName: "Clarification replanning agent",
+        title: "Clarification agent started",
+        body: "StudentOS is applying the clarified answer before rebuilding the affected plan items.",
+      },
+    };
+    const selected = meta[trigger];
+    const run = createAgentRun({
+      agentName: selected.agentName,
+      trigger,
+      currentStep: selected.title,
+    });
+    const startedRun = appendAgentRunEvent(
+      run,
+      createAgentEvent({
+        id: `${run.runId}-started`,
+        kind: "observed",
+        title: selected.title,
+        body: selected.body,
+        provider: "StudentOS",
+        status: "running",
+      }),
+    );
+
+    commitAgentRuns((runs) => upsertAgentRun(runs, startedRun));
+    return startedRun;
+  }
+
   const addSponsorTrace = useCallback((item: SponsorTraceItem) => {
     const existing = window.localStorage.getItem("studentos_sponsor_trace");
     let trace: SponsorTraceItem[] = [];
@@ -1508,6 +1618,10 @@ export default function CommitmentsPage() {
     manualInstruction,
     nextConflictResolved = conflictResolved,
     nextResolutionMode = resolutionMode,
+    beforeCommitments = commitments,
+    beforePlanTasks = planTasks,
+    runId,
+    sourceContext,
   }: {
     trigger: ReplanTrigger;
     nextCommitments?: Commitment[];
@@ -1516,20 +1630,23 @@ export default function CommitmentsPage() {
     manualInstruction?: string;
     nextConflictResolved?: boolean;
     nextResolutionMode?: ResolutionMode;
+    beforeCommitments?: Commitment[];
+    beforePlanTasks?: DemoPlanTask[];
+    runId?: string;
+    sourceContext?: Record<string, unknown>;
   }) {
-    const status =
-      trigger === "manual_conflict"
-        ? "Agent is rebuilding the schedule from your manual instruction..."
-        : "Agent is reviewing clarification answers and rescheduling...";
+    const activeRunId = runId ?? beginAgentRun(trigger).runId;
 
     setReplanLoading(true);
     setAiPlanLoading(true);
-    setReplanStatus(status);
 
     try {
-      const response = await fetch("/api/sponsor/ai/replan", {
+      const response = await fetch("/api/sponsor/ai/replan?stream=1", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
         body: JSON.stringify({
           trigger,
           currentDate: "2026-06-09",
@@ -1547,27 +1664,149 @@ export default function CommitmentsPage() {
             addedSource: addedSourceText ?? undefined,
             addedSourceKey,
             addedCommitment: addedInterpretation?.commitment,
+            ...sourceContext,
           },
         }),
       });
 
-      const result = (await response.json()) as ReplanAgentResponse;
-      if (!response.ok) throw new Error("Replanning route returned an error.");
+      if (!response.ok) {
+        let message = "Replanning route returned an error.";
+
+        try {
+          const payload = (await response.json()) as { detail?: string; error?: string };
+          message = payload.detail ?? payload.error ?? message;
+        } catch {
+          // Keep the route-level message when the error body is not JSON.
+        }
+
+        throw new Error(message);
+      }
+
+      if (!response.body) throw new Error("Replanning stream was not available.");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalResult: ReplanAgentResponse | null = null;
+      let streamError = "";
+
+      const handleStreamEvent = (event: AgentActivityStreamEvent) => {
+        if (event.type === "event") {
+          updateAgentRun(activeRunId, (run) => appendAgentRunEvent(run, event.event));
+          return;
+        }
+
+        if (event.type === "trace") {
+          addSponsorTrace(event.trace);
+          updateAgentRun(activeRunId, (run) => appendAgentRunTrace(run, event.trace));
+          return;
+        }
+
+        if (event.type === "result") {
+          finalResult = event.result as ReplanAgentResponse;
+          return;
+        }
+
+        streamError = event.error;
+      };
+
+      const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        handleStreamEvent(JSON.parse(trimmed) as AgentActivityStreamEvent);
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        lines.forEach(processLine);
+      }
+
+      buffer += decoder.decode();
+      processLine(buffer);
+
+      if (!finalResult) {
+        throw new Error(streamError || "Replanning stream ended before the final result.");
+      }
+
+      const result = finalResult as ReplanAgentResponse;
+      const afterTasks = enrichPlanTasksWithRationales(withoutCompletedTasks(result.planTasks));
+      const changedCommitments = diffCommitments(beforeCommitments, result.commitments);
+      const changedPlanTasks = diffPlanTasks(beforePlanTasks, afterTasks);
+      const runStatus: AgentRunStatus =
+        result.status === "success"
+          ? "success"
+          : result.status === "error"
+            ? "error"
+            : "fallback";
+      const fallbackReason = result.trace?.find((item) => item.status === "fallback")?.detail;
 
       applyReplanResult(result);
-      showToast(trigger === "manual_conflict" ? "Schedule rebuilt from instruction" : "Schedule updated from clarification");
+      updateAgentRun(activeRunId, (run) =>
+        completeAgentRun(run, {
+          status: runStatus,
+          currentStep:
+            runStatus === "success"
+              ? "Plan updated"
+              : runStatus === "fallback"
+                ? "Fallback applied"
+                : "Replanning error",
+          changedCommitments,
+          changedPlanTasks,
+          fallbackReason,
+        }),
+      );
+      showToast(
+        trigger === "manual_conflict"
+          ? "Schedule rebuilt from instruction"
+          : trigger === "add_task"
+            ? "Plan updated with added task"
+            : "Schedule updated from clarification",
+      );
     } catch (error) {
+      const detail = error instanceof Error ? error.message : "Replanning failed.";
+
       addSponsorTrace({
         provider: "StudentOS",
-        action: trigger === "manual_conflict" ? "Agent replanned manual conflict" : "Agent replanned after clarification",
+        action:
+          trigger === "manual_conflict"
+            ? "Agent replanned manual conflict"
+            : trigger === "add_task"
+              ? "Agent replanned added task"
+              : "Agent replanned after clarification",
         status: "error",
-        detail: error instanceof Error ? error.message : "Replanning failed.",
+        detail,
       });
+      updateAgentRun(activeRunId, (run) =>
+        completeAgentRun(
+          appendAgentRunEvent(
+            run,
+            createAgentEvent({
+              id: `${activeRunId}-client-error`,
+              kind: "error",
+              title: "Replanning failed",
+              body: detail,
+              provider: "StudentOS",
+              status: "error",
+            }),
+            "Replanning failed",
+          ),
+          {
+            status: "error",
+            currentStep: "Replanning failed",
+            error: detail,
+          },
+        ),
+      );
       showToast("Replanning failed; kept current plan");
     } finally {
       setReplanLoading(false);
       setAiPlanLoading(false);
-      window.setTimeout(() => setReplanStatus(null), 1800);
     }
   }
 
@@ -1868,6 +2107,8 @@ export default function CommitmentsPage() {
       nextCommitments,
       nextPlanTasks,
       nextClarificationAnswers: nextClarificationRecords,
+      beforeCommitments: commitments,
+      beforePlanTasks: planTasks,
     });
   }
 
@@ -1923,6 +2164,8 @@ export default function CommitmentsPage() {
       manualInstruction: instruction,
       nextConflictResolved: true,
       nextResolutionMode: "manual",
+      beforeCommitments: commitments,
+      beforePlanTasks: planTasks,
     });
   }
 
@@ -1948,7 +2191,20 @@ export default function CommitmentsPage() {
     if (sourceProcessing) return;
 
     const text = sourceDraft.trim();
+    if (!text) {
+      showToast("Add a task first");
+      return;
+    }
+
     const interpretation = interpretAddedSource(text);
+    const { commitment, task, clarificationQuestion } = interpretation;
+    const beforeCommitments = commitments;
+    const beforePlanTasks = planTasks;
+    const nextCommitments = commitmentsWithAddedCommitment(commitments, commitment);
+    const nextPlanTasks = planTasksWithAddedTask(planTasks, commitment, task);
+    const run = beginAgentRun("add_task");
+    let nextSourceKey: string | null = null;
+
     setSourceProcessing(true);
     setSourceDraft(text);
     setAddedSourceText(text);
@@ -1966,21 +2222,110 @@ export default function CommitmentsPage() {
       });
       const result = (await response.json()) as ProcessTextSourceResponse;
 
-      result.trace?.forEach(addSponsorTrace);
-      setAddedSourceKey(result.source?.s3Key ?? null);
+      result.trace?.forEach((trace) => {
+        addSponsorTrace(trace);
+        updateAgentRun(run.runId, (currentRun) => appendAgentRunTrace(currentRun, trace));
+      });
+      if ((!result.trace || result.trace.length === 0) && result.warning) {
+        const fallbackTrace: SponsorTraceItem = {
+          provider: "AWS",
+          action: "Stored added source",
+          status: "fallback",
+          detail: result.warning,
+        };
+
+        addSponsorTrace(fallbackTrace);
+        updateAgentRun(run.runId, (currentRun) => appendAgentRunTrace(currentRun, fallbackTrace));
+      }
+      nextSourceKey = result.source?.s3Key ?? null;
+      setAddedSourceKey(nextSourceKey);
     } catch (error) {
-      addSponsorTrace({
+      const fallbackTrace: SponsorTraceItem = {
         provider: "AWS",
         action: "Stored added source",
         status: "fallback",
         detail: error instanceof Error ? error.message : "Added source storage failed.",
-      });
+      };
+
+      addSponsorTrace(fallbackTrace);
+      updateAgentRun(run.runId, (currentRun) => appendAgentRunTrace(currentRun, fallbackTrace));
       setAddedSourceKey(null);
     } finally {
       setSourceProcessing(false);
       setAddSourceOpen(false);
-      setImpactOpen(true);
     }
+
+    if (clarificationQuestion) {
+      setAiFootprint((current) => {
+        const nextQuestion = {
+          ...clarificationQuestion,
+          options: clarificationQuestion.options ?? [],
+        };
+
+        if (!current) {
+          return {
+            createdAt: new Date().toISOString(),
+            currentDate: "2026-06-09",
+            provider: "fallback",
+            status: "fallback",
+            sourceSummary: {
+              totalSources: 1,
+              realSources: 1,
+              ocrReadySources: 0,
+            },
+            sources: [],
+            commitments: [commitment],
+            clarificationQuestions: [nextQuestion],
+            timelineEvents,
+            resolvedTimelineEvents,
+            conflict: defaultConflictAnalysis,
+            planTasks: initialPlanTasks,
+            roadmapSteps: [],
+            rationale: {
+              summary: "Additional item needs clarification before scheduling.",
+              bullets: ["The added text did not include enough scheduling detail."],
+            },
+            agentLogs: [],
+            sponsorTrace: [],
+          };
+        }
+
+        return {
+          ...current,
+          clarificationQuestions: [
+            ...current.clarificationQuestions.filter(
+              (item) => item.commitmentId !== commitment.id,
+            ),
+            nextQuestion,
+          ],
+        };
+      });
+    }
+
+    setChemistryAdded(true);
+    setAiPlan(null);
+    aiPlanRequestStarted.current = false;
+    window.localStorage.setItem("studentos_extra_source_added", commitment.id);
+    persistFlowState({ chemistryAdded: true });
+
+    void runAgentReplan({
+      trigger: "add_task",
+      nextCommitments,
+      nextPlanTasks,
+      runId: run.runId,
+      beforeCommitments,
+      beforePlanTasks,
+      sourceContext: {
+        addedSource: text,
+        addedSourceKey: nextSourceKey ?? undefined,
+        addedCommitment: commitment,
+        addedPlanTask: task,
+      },
+    }).then(() => {
+      if (commitment.state === "needs_clarification") {
+        setClarifying({ kind: "general", commitmentId: commitment.id });
+      }
+    });
   }
 
   function updatePlanWithChemistry() {
@@ -2289,7 +2634,6 @@ export default function CommitmentsPage() {
               <div className="lg:hidden">
                 <SponsorProofStrip trace={sponsorTrace} />
               </div>
-              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <div className="space-y-6 pb-8">
                 <section className="space-y-3">
                   <div className="px-1">
@@ -2375,7 +2719,6 @@ export default function CommitmentsPage() {
               <div className="lg:hidden">
                 <SponsorProofStrip trace={sponsorTrace} />
               </div>
-              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <ConflictSummaryCard
                 resolved={conflictResolved}
                 resolutionMode={resolutionMode}
@@ -2420,7 +2763,6 @@ export default function CommitmentsPage() {
               <div className="lg:hidden">
                 <SponsorProofStrip trace={sponsorTrace} />
               </div>
-              <AgentReplanStatus active={replanLoading} status={replanStatus} />
               <FocusActionCard
                 conflictResolved={hasConfirmedConflict && conflictResolved}
                 onExplain={() => setReasoningOpen(true)}
@@ -2448,6 +2790,7 @@ export default function CommitmentsPage() {
         </>
       </div>
 
+      <AgentActivityPanel runs={agentRuns} mobileRaised={step === "plan"} />
       <AddSourceButton onClick={openAddSource} raised={step === "plan"} />
 
       {step === "plan" ? (
