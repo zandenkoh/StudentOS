@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  FileText, Image, Globe2,
+  AudioLines, CalendarDays, FileText, Image, Globe2, MessageSquare,
   Paperclip, ArrowUp, X, Play, Pause, Volume2, Sparkles, ChevronRight,
   type LucideIcon
 } from "lucide-react";
@@ -24,70 +24,69 @@ type InputSource = {
 
 const exampleSources: InputSource[] = [
   {
-    id: "goal-demo",
-    icon: FileText,
-    title: "goalDemo.txt",
-    source: "Assets File",
-    snippet: "I currently have zero experience coding with python. I want to be proficient in data-handling Python libraries by the end of this year.",
-    fileSize: "1 KB",
-    fileType: "text",
-    filePath: "/goalDemo.txt"
-  },
-  {
-    id: "wa-image",
+    id: "whatsapp-screenshot",
     icon: Image,
-    title: "IMG-20260609-WA0004.jpg",
-    source: "WhatsApp Image",
-    snippet: "Extracted chat screenshot with team updates",
+    title: "WhatsApp project chat.jpg",
+    source: "WhatsApp Screenshot",
+    snippet: "Team chat: project meeting may move because Sarah has CCA and tuition.",
     fileSize: "185 KB",
     fileType: "image",
     filePath: "/IMG-20260609-WA0004.jpg"
   },
   {
-    id: "physics-screenshot",
-    icon: Image,
-    title: "Screenshot 2026-06-09 121842.jpg",
-    source: "Desktop Screenshot",
-    snippet: "Physics assignment portal and due details",
-    fileSize: "324 KB",
-    fileType: "image",
-    filePath: "/Screenshot%202026-06-09%20121842.jpg"
+    id: "physics-homework-pdf",
+    icon: FileText,
+    title: "Physics Chapter 12 homework.pdf",
+    source: "Homework PDF",
+    snippet: "Worksheet due tomorrow 8 AM with Chapter 12 induction questions.",
+    fileSize: "2.1 MB",
+    fileType: "pdf"
   },
   {
-    id: "cca-screenshot",
-    icon: Image,
-    title: "Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
-    source: "Mobile Screenshot",
-    snippet: "CCA notification chat announcement",
-    fileSize: "492 KB",
-    fileType: "image",
-    filePath: "/Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg"
+    id: "team-voice-note",
+    icon: AudioLines,
+    title: "Teammate voice note.m4a",
+    source: "Voice Note",
+    snippet: "1:24 transcript: ask if the project meeting can move to tomorrow morning.",
+    fileSize: "1:24",
+    fileType: "audio"
   },
   {
-    id: "tuition-screenshot",
-    icon: Image,
-    title: "Screenshot 2026-06-09 123905.jpg",
-    source: "Desktop Screenshot",
-    snippet: "Tuition calendar timetable schedule",
+    id: "calendar-conflict",
+    icon: CalendarDays,
+    title: "Tuition calendar clash.png",
+    source: "Calendar Conflict",
+    snippet: "Tuition is fixed from 4:30-6:30 PM, overlapping the CCA briefing.",
     fileSize: "210 KB",
     fileType: "image",
     filePath: "/Screenshot%202026-06-09%20123905.jpg"
   },
   {
-    id: "sticky-chemistry",
-    icon: Sparkles,
-    title: "Chemistry Lab prep",
-    source: "Sticky Note",
-    snippet: "Revise stoichiometry calculations for the lab report due tomorrow.",
-    fileSize: "12 KB",
-    fileType: "text"
+    id: "cca-screenshot",
+    icon: MessageSquare,
+    title: "CCA announcement screenshot.jpg",
+    source: "CCA Announcement",
+    snippet: "Briefing starts at 5:30 PM today in the auditorium.",
+    fileSize: "492 KB",
+    fileType: "image",
+    filePath: "/Screenshot_2026-06-04-08-22-40-94_6012fa4d4ddec268fc5c7112cbb265e7.jpg"
   },
   {
-    id: "sticky-teammate",
-    icon: Sparkles,
-    title: "Follow-up",
-    source: "Sticky Note",
-    snippet: "Ask teammate about slide deck design reviews.",
+    id: "coding-goal",
+    icon: FileText,
+    title: "goalDemo.txt",
+    source: "Long-term Coding Goal",
+    snippet: "I have zero Python experience and want to be proficient with data-handling libraries by year end.",
+    fileSize: "1 KB",
+    fileType: "text",
+    filePath: "/goalDemo.txt"
+  },
+  {
+    id: "team-project-message",
+    icon: MessageSquare,
+    title: "Team project follow-up",
+    source: "Team Message",
+    snippet: "Ask teammate first before locking tonight's project discussion.",
     fileSize: "8 KB",
     fileType: "text"
   }
@@ -258,7 +257,7 @@ export default function InputPage() {
             Drop the mess here
           </h1>
           <p className="text-[13px] font-medium text-muted">
-            Add your scattered sources or inject the demo inputs to see the magic.
+            Add your scattered sources or import the demo packet.
           </p>
         </div>
 
@@ -302,7 +301,7 @@ export default function InputPage() {
           </div>
         </div>
 
-        {/* Attach Example Input Button */}
+        {/* Import Demo Packet Button */}
         <div className="mt-4 flex justify-center">
           <button
             disabled={isInjecting}
@@ -314,7 +313,7 @@ export default function InputPage() {
             }`}
           >
             <Sparkles className={`size-3.5 ${isInjecting ? "animate-spin" : "text-amber-500"}`} />
-            <span>Attach example input</span>
+            <span>Import student chaos packet</span>
           </button>
         </div>
 
@@ -342,7 +341,7 @@ export default function InputPage() {
                 exit={{ opacity: 0 }}
                 className="rounded-[20px] border border-dashed border-neutral-200 p-8 text-center text-xs font-medium text-neutral-400"
               >
-                Inbox is empty. Click &quot;Attach example input&quot; above to load realistic demo files.
+                Inbox is empty. Click &quot;Import student chaos packet&quot; above to load realistic demo files.
               </motion.div>
             ) : (
               <div className="space-y-2.5">

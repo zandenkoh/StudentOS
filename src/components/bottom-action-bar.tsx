@@ -17,9 +17,13 @@ export function BottomActionBar({
         Export to Calendar
       </PrimaryButton>
       <div className="mt-3 grid grid-cols-2 gap-3">
-        <SecondaryButton className="w-full">
+        <SecondaryButton
+          disabled
+          aria-disabled="true"
+          className="w-full cursor-not-allowed border-neutral-100 bg-neutral-50 text-neutral-400 shadow-none"
+        >
           <MessageSquare className="size-4" />
-          Send reminder
+          Reminder soon
         </SecondaryButton>
         <SecondaryButton onClick={onReasoning} className="w-full">
           <Sparkles className="size-4" />

@@ -8,10 +8,7 @@ import {
   CalendarDays,
   Check,
   Clock3,
-  Database,
   FileSearch,
-  FileText,
-  Globe2,
   Image,
   ListChecks,
   Sparkles,
@@ -38,153 +35,58 @@ type AgentLog = {
   };
 };
 
-const FINISH_AT = 33500;
+const FINISH_AT = 10000;
 
 const logs: AgentLog[] = [
   {
-    id: "open",
+    id: "read",
     at: 0,
     kind: "thought",
-    title: "Reading the uploaded pile",
-    body: "I am treating every file as evidence, not as a task list yet. First I need to understand what is fixed, what is optional, and what depends on another person.",
-    detail: "Sources queued: goalDemo.txt, WhatsApp image, physics portal screenshot, CCA notice, tuition timetable, chemistry note, teammate follow-up."
+    title: "Reading uploaded sources",
+    body: "Scanning the chaos packet across chat screenshots, homework PDF, voice note, calendar image, CCA notice, coding goal, and team message.",
+    detail: "7 sources queued. StudentOS is separating evidence from noise."
   },
   {
-    id: "text",
-    at: 2200,
+    id: "extract",
+    at: 2000,
     kind: "tool",
-    title: "Calling document reader",
-    body: "Opening goalDemo.txt and extracting the long-term learning goal before scheduling any daily work.",
+    title: "Extracting commitments",
+    body: "Pulling out items that create a deadline, meeting, follow-up, or recurring study block.",
     tool: {
-      name: "Document scan",
-      icon: FileText,
-      color: "text-sky-600",
-      result: "Python data-handling goal found"
-    }
-  },
-  {
-    id: "goal",
-    at: 4300,
-    kind: "analysis",
-    title: "Interpreting the learning commitment",
-    body: "The Python goal is not a single task. I am turning it into a recurring study track with small weekly blocks, because the uploaded note says the user is starting from zero experience.",
-    detail: "Commitment candidate: become proficient with Python data libraries by year end."
-  },
-  {
-    id: "vision",
-    at: 6500,
-    kind: "tool",
-    title: "Calling image understanding",
-    body: "Scanning the screenshots for dates, class names, timetable blocks, and messages that look like commitments.",
-    tool: {
-      name: "Image OCR",
+      name: "OCR + transcript scan",
       icon: Image,
-      color: "text-violet-600",
-      result: "4 screenshots parsed"
+      color: "text-neutral-700",
+      result: "5 commitments found"
     }
   },
   {
-    id: "whatsapp",
-    at: 8900,
+    id: "ambiguity",
+    at: 4000,
     kind: "analysis",
-    title: "Separating chat noise from real obligations",
-    body: "The WhatsApp material looks like a mix of announcements and coordination. I am only keeping items that create a time, deliverable, or follow-up expectation.",
-    detail: "Tentative item held for clarification: ask teammate about slide deck design reviews."
+    title: "Resolving ambiguous items",
+    body: "Marking the coding goal and team message as questions so the next screen can clarify them quickly instead of guessing.",
+    detail: "Open questions prepared: target coding outcome, whether the team meeting is confirmed."
   },
   {
     id: "calendar",
-    at: 11200,
+    at: 6100,
     kind: "tool",
-    title: "Calling calendar matcher",
-    body: "Comparing extracted times against the tuition timetable and school commitments so fixed events do not get moved.",
+    title: "Checking calendar conflicts",
+    body: "Comparing fixed tuition against the CCA briefing and flexible evening work blocks.",
     tool: {
       name: "Calendar check",
       icon: CalendarDays,
-      color: "text-emerald-600",
-      result: "Tuition conflict detected"
+      color: "text-neutral-700",
+      result: "CCA conflict detected"
     }
   },
   {
-    id: "conflict",
-    at: 13400,
-    kind: "thought",
-    title: "Thinking through the conflict",
-    body: "CCA briefing appears to overlap with tuition. I am checking whether it should be moved, shortened, delegated, or converted into a follow-up rather than forcing the user to choose blindly.",
-    detail: "Fixed commitment protected: tuition. Flexible commitment candidate: briefing follow-up."
-  },
-  {
-    id: "web",
-    at: 15700,
-    kind: "tool",
-    title: "Calling web search",
-    body: "Looking for external context only where the uploaded content needs verification. I am not using search to invent extra commitments.",
-    tool: {
-      name: "Web search",
-      icon: Globe2,
-      color: "text-blue-600",
-      result: "No extra commitments added"
-    }
-  },
-  {
-    id: "physics",
-    at: 17900,
-    kind: "analysis",
-    title: "Ranking academic urgency",
-    body: "The physics screenshot looks deadline-driven, so I am treating it as a near-term deliverable. It gets higher priority than open-ended practice but lower priority than immovable calendar blocks.",
-    detail: "Commitment candidate: physics assignment portal item with due details."
-  },
-  {
-    id: "chem",
-    at: 20300,
-    kind: "decision",
-    title: "Converting notes into actions",
-    body: "Chemistry lab prep is being kept as a short study action, not a vague reminder. The useful wording is concrete: revise stoichiometry calculations for the lab report due tomorrow.",
-    detail: "Action size reduced so it can fit around fixed events."
-  },
-  {
-    id: "memory",
-    at: 22700,
-    kind: "tool",
-    title: "Writing working memory",
-    body: "Saving the extracted commitments, source links, confidence, and open questions into a footprint for the next screen.",
-    tool: {
-      name: "Local memory",
-      icon: Database,
-      color: "text-amber-600",
-      result: "Footprint prepared"
-    }
-  },
-  {
-    id: "confidence",
-    at: 24900,
-    kind: "analysis",
-    title: "Assigning confidence levels",
-    body: "I am marking direct evidence as confirmed, chat-derived items as needs clarification, and vague reminders as editable suggestions. This keeps the commitment list useful without pretending every extraction is certain.",
-    detail: "Confirmed: tuition, physics, chemistry prep. Needs clarification: teammate follow-up. Long-term: Python goal."
-  },
-  {
-    id: "footprint",
-    at: 27400,
+    id: "plan",
+    at: 8200,
     kind: "footprint",
-    title: "Footprint created",
-    body: "The next page can now show commitments with source traces, conflict reasoning, and the exact unresolved items that still need the user's decision.",
-    detail: "studentos_commitment_footprint saved in this browser session."
-  },
-  {
-    id: "ready",
-    at: 30100,
-    kind: "decision",
-    title: "Preparing the commitments page",
-    body: "I have enough evidence to show the user a clean list without asking them to re-upload anything. Final step is handing off the footprint to the commitments workflow.",
-    detail: "Redirecting automatically when the analysis completes."
-  },
-  {
-    id: "done",
-    at: 32400,
-    kind: "decision",
-    title: "Done",
-    body: "Commitments are ready for review.",
-    detail: "Moving to /commitments."
+    title: "Building executable day plan",
+    body: "Saving the clean commitment footprint so the review, conflict solver, and plan can pick up without another upload.",
+    detail: "Redirecting to /commitments."
   }
 ];
 
@@ -326,26 +228,25 @@ export default function AgentsThinkingPage() {
         JSON.stringify({
           createdAt: new Date().toISOString(),
           sources: [
-            "goalDemo.txt",
-            "WhatsApp image",
-            "physics portal screenshot",
-            "CCA notification screenshot",
-            "tuition timetable screenshot",
-            "chemistry lab note",
-            "teammate follow-up note"
+            "WhatsApp project chat screenshot",
+            "Physics Chapter 12 homework PDF",
+            "Teammate voice note",
+            "Tuition calendar conflict",
+            "CCA announcement screenshot",
+            "goalDemo.txt coding goal",
+            "Team project follow-up message"
           ],
           commitments: [
             "Python data-handling learning goal",
             "Physics assignment deadline",
             "Tuition timetable block",
             "CCA briefing conflict",
-            "Chemistry lab prep",
             "Teammate slide deck follow-up"
           ],
           nextRoute: "/commitments"
         })
       );
-    }, 27400);
+    }, 8200);
 
     const redirectTimer = window.setTimeout(() => {
       router.push("/commitments");
@@ -385,8 +286,8 @@ export default function AgentsThinkingPage() {
           <div className="mt-4 grid grid-cols-3 gap-2">
             {[
               ["Sources", "7"],
-              ["Found", "6"],
-              ["Open", "1"]
+              ["Found", "5"],
+              ["Open", "2"]
             ].map(([label, value]) => (
               <div key={label} className="rounded-[8px] border border-neutral-100 bg-neutral-50 px-3 py-2">
                 <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-neutral-400">{label}</p>

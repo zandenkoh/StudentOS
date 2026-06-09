@@ -3,16 +3,16 @@
 import { RotateCcw } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
+import { clearStudentOSDemoState } from "@/lib/demo-state";
 import { cn } from "@/lib/utils";
 
 export function AppShell({
   children,
-  onAgentClick: _onAgentClick,
   onReset,
   stepLabel,
   progress,
-  route: _route = "main",
   hideHeader = false
 }: {
   children: ReactNode;
@@ -23,6 +23,17 @@ export function AppShell({
   route?: "main" | "goal";
   hideHeader?: boolean;
 }) {
+  const router = useRouter();
+
+  function handleReset() {
+    clearStudentOSDemoState();
+    if (onReset) {
+      onReset();
+      return;
+    }
+    router.replace("/");
+  }
+
   return (
     <main className="min-h-dvh bg-paper text-ink">
       <div className="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.03)]">
@@ -36,15 +47,13 @@ export function AppShell({
                 </span>
               </Link>
               <div className="flex items-center gap-2">
-                {onReset ? (
-                  <button
-                    onClick={onReset}
-                    aria-label="Reset demo"
-                    className="flex size-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:bg-neutral-50 transition-colors"
-                  >
-                    <RotateCcw className="size-4" />
-                  </button>
-                ) : null}
+                <button
+                  onClick={handleReset}
+                  aria-label="Reset demo"
+                  className="flex size-9 items-center justify-center rounded-full border border-neutral-200 text-neutral-500 hover:bg-neutral-50 transition-colors"
+                >
+                  <RotateCcw className="size-4" />
+                </button>
               </div>
             </div>
             {typeof progress === "number" ? (

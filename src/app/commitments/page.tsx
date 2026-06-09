@@ -1,9 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { AudioLines, CheckCircle2, ChevronRight, FileText, Globe2, Pencil, Trash2 } from "lucide-react";
+import {
+  ArrowUp,
+  AudioLines,
+  CheckCircle2,
+  ChevronRight,
+  FileText,
+  Globe2,
+  Image as ImageIcon,
+  Paperclip,
+  Pencil,
+  Plus,
+  Trash2
+} from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { BottomActionBar } from "@/components/bottom-action-bar";
@@ -56,6 +68,18 @@ type EditDraft = {
   title: string;
   type: Commitment["type"];
   estimatedDuration: string;
+};
+
+type PlanItem = {
+  title: string;
+  meta: string;
+  badge?: string;
+  highlight?: boolean;
+};
+
+type PlanDisplaySection = {
+  title: string;
+  items: PlanItem[];
 };
 
 const commitmentSourcePreviews: Record<string, SourcePreview> = {
@@ -190,6 +214,34 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
   );
 }
 
+function AddSourceButton({
+  onClick,
+  raised
+}: {
+  onClick: () => void;
+  raised: boolean;
+}) {
+  return (
+    <div
+      className="pointer-events-none fixed left-1/2 z-40 flex w-full max-w-[430px] -translate-x-1/2 justify-end px-4"
+      style={{
+        bottom: raised
+          ? "calc(max(0.75rem, env(safe-area-inset-bottom)) + 10.25rem)"
+          : "calc(max(0.75rem, env(safe-area-inset-bottom)) + 5.6rem)"
+      }}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-bold text-ink shadow-[0_12px_35px_rgba(0,0,0,0.12)]"
+      >
+        <Plus className="size-4" />
+        Add source
+      </button>
+    </div>
+  );
+}
+
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
@@ -204,13 +256,60 @@ export default function CommitmentsPage() {
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const [conflictResolved, setConflictResolved] = useState(false);
-  const [toast, setToast] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [addSourceOpen, setAddSourceOpen] = useState(false);
+  const [sourceDraft, setSourceDraft] = useState("");
+  const [impactOpen, setImpactOpen] = useState(false);
+  const [chemistryAdded, setChemistryAdded] = useState(false);
 
   const unresolvedCount = commitments.filter(
     (item) => item.state === "needs_clarification" || item.state === "unsure"
   ).length;
+  const displayedPlanSections = useMemo<PlanDisplaySection[]>(() => {
+    if (!chemistryAdded) return planSections;
+
+    return planSections.map((section) => {
+      if (section.title === "Do next") {
+        return {
+          ...section,
+          items: [
+            {
+              title: "Chemistry worksheet",
+              meta: "30 min · Due tonight before 8 PM",
+              badge: "Updated",
+              highlight: true
+            },
+            ...section.items
+          ]
+        };
+      }
+
+      if (section.title === "Do later") {
+        return {
+          ...section,
+          items: section.items.map((item) =>
+            item.title === "Coding practice"
+              ? {
+                  ...item,
+                  meta: "9:45 PM · Moved later after Chemistry",
+                  badge: "Updated",
+                  highlight: true
+                }
+              : item
+          )
+        };
+      }
+
+      return section;
+    });
+  }, [chemistryAdded]);
+
+  function showToast(message: string) {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage(null), 1800);
+  }
 
   function clarify(kind: "goal" | "team") {
     setCommitments((current) =>
@@ -246,12 +345,29 @@ export default function CommitmentsPage() {
       return;
     }
     setConflictResolved(true);
-    setToast(true);
-    window.setTimeout(() => setToast(false), 1800);
+    showToast("Plan updated");
   }
 
   function reset() {
     router.push("/");
+  }
+
+  function openAddSource() {
+    setSourceDraft("");
+    setAddSourceOpen(true);
+  }
+
+  function submitAdditionalSource() {
+    setSourceDraft((current) => current.trim() || "Chemistry worksheet due 8 PM tonight");
+    setAddSourceOpen(false);
+    setImpactOpen(true);
+  }
+
+  function updatePlanWithChemistry() {
+    setChemistryAdded(true);
+    window.localStorage.setItem("studentos_extra_source_added", "chemistry_worksheet_due_8pm");
+    setImpactOpen(false);
+    showToast("Plan updated");
   }
 
   function openEditor(commitment: Commitment) {
@@ -384,7 +500,7 @@ export default function CommitmentsPage() {
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
                     conflictResolved 
                       ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
-                      : "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                      : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
                   }`}
                 >
                   <span>Continue to plan</span>
@@ -405,7 +521,7 @@ export default function CommitmentsPage() {
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
               <FocusActionCard onExplain={() => setReasoningOpen(true)} />
               <div className="space-y-6">
-                {planSections.map((section) => (
+                {displayedPlanSections.map((section) => (
                   <PlanSection key={section.title} title={section.title} items={section.items} />
                 ))}
               </div>
@@ -413,6 +529,8 @@ export default function CommitmentsPage() {
           )}
         </AnimatePresence>
       </div>
+
+      <AddSourceButton onClick={openAddSource} raised={step === "plan"} />
 
       {step === "plan" ? (
         <BottomActionBar onExport={() => setExportOpen(true)} onReasoning={() => setReasoningOpen(true)} />
@@ -537,19 +655,113 @@ export default function CommitmentsPage() {
         open={reasoningOpen}
         onClose={() => setReasoningOpen(false)}
         title="Why this plan?"
-        subtitle="StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept tuition fixed, handled the CCA clash by asking for notes, moved flexible revision later, and split your coding goal into weekly blocks."
+        subtitle={`StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept tuition fixed, handled the CCA clash by asking for notes, moved flexible revision later,${chemistryAdded ? " inserted Chemistry before 8 PM," : ""} and split your coding goal into weekly blocks.`}
       >
         <div className="flex flex-wrap gap-2">
-          {["Urgency", "Fixed events", "Energy", "Deadline", "Weekly goal"].map((chip) => (
+          {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Weekly goal"].map((chip) => (
             <SourceChip key={chip}>{chip}</SourceChip>
           ))}
         </div>
       </BottomSheet>
 
-      <ExportSuccessSheet open={exportOpen} onClose={() => setExportOpen(false)} />
+      <BottomSheet
+        open={addSourceOpen}
+        onClose={() => setAddSourceOpen(false)}
+        title="Add source"
+        subtitle="Add another screenshot, PDF, message, or note..."
+      >
+        <div className="space-y-4">
+          <textarea
+            value={sourceDraft}
+            onChange={(event) => setSourceDraft(event.target.value)}
+            rows={4}
+            placeholder="Paste a message, task, deadline, or reminder..."
+            className="min-h-28 w-full resize-none rounded-[22px] border border-neutral-200 bg-white px-4 py-3 text-[15px] font-semibold leading-6 text-ink outline-none placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-0"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="flex size-11 items-center justify-center rounded-full border border-neutral-200 bg-neutral-50 text-neutral-500"
+                aria-label="Attach file"
+              >
+                <Paperclip className="size-4.5" />
+              </button>
+              <button
+                type="button"
+                className="flex size-11 items-center justify-center rounded-full border border-neutral-200 bg-neutral-50 text-neutral-500"
+                aria-label="Add photo"
+              >
+                <ImageIcon className="size-4.5" />
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={submitAdditionalSource}
+              className="flex size-12 items-center justify-center rounded-full bg-ink text-white shadow-soft"
+              aria-label="Add source"
+            >
+              <ArrowUp className="size-5 stroke-[2.5]" />
+            </button>
+          </div>
+          <div className="rounded-[18px] border border-neutral-100 bg-neutral-50 p-3 text-xs font-semibold leading-5 text-neutral-500">
+            Demo source used: Chemistry worksheet due 8 PM tonight.
+          </div>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet
+        open={impactOpen}
+        onClose={() => setImpactOpen(false)}
+        title="1 new commitment found"
+        subtitle="This affects today’s plan."
+      >
+        <div className="space-y-4">
+          <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">Added</p>
+            <div className="mt-3 flex items-center gap-3 rounded-2xl bg-neutral-50 px-3 py-2 text-sm font-semibold text-ink">
+              <span className="size-1.5 rounded-full bg-ink" />
+              Chemistry worksheet due 8 PM
+            </div>
+          </div>
+
+          <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">Plan impact</p>
+            <div className="mt-3 space-y-2">
+              {[
+                "Move coding practice later",
+                "Keep Physics worksheet as first focus block",
+                "Add Chemistry worksheet before 8 PM"
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-3 rounded-2xl bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-700">
+                  <span className="size-1.5 rounded-full bg-ink" />
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <PrimaryButton onClick={updatePlanWithChemistry}>Update plan</PrimaryButton>
+            <button
+              type="button"
+              onClick={() => setImpactOpen(false)}
+              className="inline-flex h-[60px] w-full items-center justify-center rounded-full border border-neutral-200 bg-white px-5 text-[15px] font-semibold text-ink shadow-[0_10px_35px_rgba(0,0,0,0.04)] transition hover:bg-neutral-50"
+            >
+              Keep current plan
+            </button>
+          </div>
+        </div>
+      </BottomSheet>
+
+      <ExportSuccessSheet
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+        includeChemistry={chemistryAdded}
+      />
 
       <AnimatePresence>
-        {toast ? (
+        {toastMessage ? (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -557,7 +769,7 @@ export default function CommitmentsPage() {
             className="fixed-bottom-toast flex items-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-white shadow-lift animate-bounce"
           >
             <CheckCircle2 className="size-4" />
-            Plan updated
+            {toastMessage}
           </motion.div>
         ) : null}
       </AnimatePresence>
