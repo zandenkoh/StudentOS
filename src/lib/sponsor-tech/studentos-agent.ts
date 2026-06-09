@@ -2,7 +2,7 @@ import "server-only";
 
 import { generateText } from "ai";
 import { z } from "zod";
-import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
+import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
@@ -31,6 +31,7 @@ const SourceSchema = z.object({
   extractedTasks: z.array(z.string()).optional(),
   needsClarification: z.boolean().optional(),
   clarificationPrompt: z.string().optional(),
+  durationSeconds: z.number().optional(),
 });
 
 const CommitmentSchema = z.object({
@@ -783,6 +784,27 @@ function researchContextEvidence(sources: CapturedSourceForAI[]) {
   );
 }
 
+function researchEvidencePacket(sources: CapturedSourceForAI[]) {
+  return sources
+    .map((source, index) =>
+      [
+        `Source ${index + 1}: ${source.title}`,
+        source.source ? `Source type: ${source.source}` : undefined,
+        source.snippet ? `Student note: ${source.snippet}` : undefined,
+        source.sourceSummary ? `Interpreted summary: ${source.sourceSummary}` : undefined,
+        source.extractedTasks?.length ? `Extracted tasks: ${source.extractedTasks.join("; ")}` : undefined,
+        source.clarificationPrompt ? `Clarification needed: ${source.clarificationPrompt}` : undefined,
+        source.ocrText ? `OCR text: ${source.ocrText.slice(0, 1200)}` : undefined,
+        source.textractText ? `Textract text: ${source.textractText.slice(0, 1200)}` : undefined,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    )
+    .filter((text) => text.trim().length >= 12)
+    .join("\n\n")
+    .slice(0, 5000);
+}
+
 function defaultObservableLogs(
   sources: CapturedSourceForAI[],
   reason: string,
@@ -850,6 +872,362 @@ function defaultObservableLogs(
   ];
 }
 
+const demoPacketSourceIds = new Set([
+  "whatsapp-screenshot",
+  "physics-homework-pdf",
+  "team-voice-note",
+  "calendar-conflict",
+  "cca-screenshot",
+  "coding-goal",
+  "team-project-message",
+]);
+
+function looksLikeDemoPacket(sources: CapturedSourceForAI[]) {
+  const knownIdCount = sources.filter((source) => demoPacketSourceIds.has(source.id)).length;
+  const demoText = sources.map(sourceText).join("\n");
+  const knownTopicCount = [
+    /physics worksheet/i,
+    /cca briefing/i,
+    /tuition/i,
+    /goalDemo\.txt/i,
+    /python data-handling|coding by december/i,
+  ].filter((pattern) => pattern.test(demoText)).length;
+
+  return knownIdCount >= 3 || (sources.length >= 4 && knownTopicCount >= 3);
+}
+
+function compactFallbackCopy(value: string, maxLength: number) {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...` : text;
+}
+
+function cleanFallbackItemText(value: string) {
+  return compactFallbackCopy(
+    value
+      .replace(/^(source|source type|student note|manual input|goal command|interpreted summary|ocr text|textract text|extracted tasks?):\s*/i, "")
+      .replace(/^[\-•*]\s*/, "")
+      .trim(),
+    96,
+  );
+}
+
+function sourceFallbackItems(sources: CapturedSourceForAI[]) {
+  const items: Array<{ source: CapturedSourceForAI | undefined; text: string; index: number }> = [];
+  const seen = new Set<string>();
+
+  sources.forEach((source) => {
+    const extractedTasks = source.extractedTasks?.map(cleanFallbackItemText).filter(Boolean) ?? [];
+    const sourceLines = sourceText(source)
+      .split(/\n|;|[•*]\s+|(?:^|\s)\d+[.)]\s+/)
+      .map(cleanFallbackItemText)
+      .filter((line) => line.length >= 4)
+      .filter((line) => !/^(typed note|manual goal|manual input|goal command|upload|aws s3|aws textract)$/i.test(line));
+    const candidates = extractedTasks.length ? extractedTasks : sourceLines;
+
+    candidates.forEach((candidate) => {
+      const key = candidate.toLowerCase();
+      if (seen.has(key) || items.length >= 6) return;
+      seen.add(key);
+      items.push({ source, text: candidate, index: items.length });
+    });
+  });
+
+  if (items.length) return items;
+
+  return [
+    {
+      source: sources[0],
+      text: sources[0] ? cleanFallbackItemText(sourceText(sources[0])) : "Review captured student input",
+      index: 0,
+    },
+  ];
+}
+
+function fallbackCommitmentType(text: string) {
+  if (/\b(roadmap|learn|zero\s+to\s+hero|prepare|preparation|course|skill|goal|proficient|master|build|portfolio)\b/i.test(text)) {
+    return "goal" as const;
+  }
+  if (/\b(deadline|due|submit|submission|by\s+\d|before|tonight|tomorrow)\b/i.test(text)) {
+    return "deadline" as const;
+  }
+  if (/\b(hackathon|competition|contest|challenge|meeting|briefing|class|tuition|event|workshop|conference|webinar)\b/i.test(text)) {
+    return "event" as const;
+  }
+  return "task" as const;
+}
+
+function fallbackEstimatedDuration(type: ReturnType<typeof fallbackCommitmentType>) {
+  if (type === "goal") return "2 sessions/week";
+  if (type === "event") return "Confirm duration";
+  if (type === "deadline") return "45min";
+  return "30min";
+}
+
+function fallbackCommitmentState(type: ReturnType<typeof fallbackCommitmentType>, text: string) {
+  if (type === "goal" || /\b(hackathon|competition|contest|challenge)\b/i.test(text)) {
+    return "needs_clarification" as const;
+  }
+  return "confirmed" as const;
+}
+
+function sourceDrivenTrace(
+  reason: string,
+  goalResearch?: StudentOSAgentFootprint["goalResearch"],
+): StudentOSAgentFootprint["sponsorTrace"] {
+  const trace: StudentOSAgentFootprint["sponsorTrace"] = [
+    {
+      provider: "Vercel AI Gateway",
+      action: "Generated student chaos analysis fallback",
+      status: "fallback",
+      detail: reason,
+    },
+  ];
+
+  if (goalResearch) {
+    trace.unshift({
+      provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
+      action: "Deep researched planning context",
+      status: "success",
+      detail: `${goalResearch.searchQueries?.length ?? 1} Exa searches and ${goalResearch.citations.length} citations returned for ${goalResearch.query}.`,
+    });
+  }
+
+  return trace;
+}
+
+function sourceDrivenFallbackFootprint(
+  input: AnalyseStudentChaosRequest,
+  reason: string,
+  goalResearch?: StudentOSAgentFootprint["goalResearch"],
+  agentLogs?: AIAgentLog[],
+): StudentOSAgentFootprint {
+  const sources = input.sources;
+  const evidenceItems = sourceFallbackItems(sources);
+  const commitments = evidenceItems.map(({ source, text, index }) => {
+    const type = fallbackCommitmentType(text);
+    const title = compactFallbackCopy(text, 72);
+
+    return {
+      id: `${slugFrom(title, "commitment")}-${index + 1}`,
+      title,
+      type,
+      source: source?.source || source?.title || "Submitted source",
+      confidence: source?.sourceSummary || source?.ocrText || source?.textractText ? 78 : 68,
+      estimatedDuration: fallbackEstimatedDuration(type),
+      state: fallbackCommitmentState(type, text),
+      explanation: "Created from the submitted source text because the live planner could not complete this run.",
+    };
+  });
+  const firstCommitment = commitments[0];
+  const roadmapBase =
+    commitments.find((commitment) => commitment.type === "goal") ??
+    commitments.find((commitment) => /\b(hackathon|competition|contest|challenge)\b/i.test(commitment.title)) ??
+    firstCommitment;
+  const roadmapGoalId = slugFrom(roadmapBase.title, "submitted-goal");
+  const roadmapTitle = roadmapBase.type === "goal"
+    ? roadmapBase.title
+    : `Prepare for ${roadmapBase.title}`;
+  const planSlots = ["3:30-4:00 PM", "4:15-4:45 PM", "5:00-5:30 PM", "7:30-8:00 PM", "8:15-8:45 PM", "9:00-9:30 PM"];
+  const planTasks = commitments.slice(0, 6).map((commitment, index) => ({
+    id: `${commitment.id}-task`,
+    title: commitment.type === "event" && commitment.state !== "confirmed"
+      ? `Confirm details for ${commitment.title}`
+      : commitment.title,
+    section: index === 0 ? "do_now" as const : index <= 2 ? "do_next" as const : "subsequent_days" as const,
+    estimatedMinutes: commitment.type === "goal" ? 30 : 25,
+    timeLabel: planSlots[index] ?? "9:00-9:30 PM",
+    scheduledDate: index <= 2 ? "" : "This week",
+    scheduledDateId: "",
+    deadline: "",
+    deadlineDateId: "",
+    reason: "Keeps the submitted item visible even when live planning falls back.",
+    scheduleRationale: "StudentOS uses a conservative short work block until exact deadlines, event details, and workload are confirmed.",
+    source: commitment.source,
+    goalId: commitment.type === "goal" ? roadmapGoalId : "",
+    isRoadmapTask: commitment.type === "goal",
+  }));
+  const timelineEvents = [
+    ...planTasks.slice(0, 3).map((task, index) => ({
+      id: `${task.id}-timeline`,
+      time: task.timeLabel?.split("-")[0] ?? ["3:30 PM", "4:15 PM", "5:00 PM"][index],
+      title: task.title,
+      duration: task.timeLabel,
+      chip: index === 0 ? "Focus" : "Flexible",
+      tone: index === 0 ? "priority" as const : undefined,
+      scheduleRationale: task.scheduleRationale,
+    })),
+    {
+      id: "fallback-review-buffer",
+      time: "9:30 PM",
+      title: "Review plan details",
+      duration: "9:30-9:45 PM",
+      chip: "Buffer",
+      scheduleRationale: "A review buffer catches missing deadlines or event details before the schedule is locked.",
+    },
+    {
+      id: "fallback-context-check",
+      time: "9:45 PM",
+      title: "Check external context",
+      duration: "9:45-10:00 PM",
+      chip: "Research",
+      scheduleRationale: "This short check keeps external event or roadmap assumptions from becoming stale.",
+    },
+  ].slice(0, Math.max(3, Math.min(5, planTasks.length + 2)));
+  const clarificationTarget =
+    commitments.find((commitment) => commitment.state === "needs_clarification") ?? firstCommitment;
+  const clarificationKind = clarificationTarget.type === "goal" ? "goal" as const : "general" as const;
+  const clarificationQuestions = [
+    {
+      id: `clarify-${clarificationTarget.id}`,
+      commitmentId: clarificationTarget.id,
+      kind: clarificationKind,
+      title: `Clarify ${compactFallbackCopy(clarificationTarget.title, 36)}`,
+      subtitle: "StudentOS needs one detail before locking the schedule.",
+      question: clarificationKind === "goal"
+        ? "What should the first concrete outcome be?"
+        : "Which detail should StudentOS confirm first?",
+      options: clarificationKind === "goal"
+        ? [
+            { label: "Find official rules", recommended: true },
+            { label: "Build first prototype" },
+            { label: "Learn basics first" },
+            { label: "Need to decide" },
+          ]
+        : [
+            { label: "Deadline" },
+            { label: "Exact time", recommended: true },
+            { label: "Requirements" },
+            { label: "Need to ask" },
+          ],
+      customPlaceholder: "Add exact details here...",
+      resolvedCommitment: {
+        title: clarificationTarget.title,
+        state: "confirmed" as const,
+        confidence: 82,
+        estimatedDuration: clarificationTarget.estimatedDuration,
+        explanation: "Clarified from the student's answer.",
+      },
+    },
+  ];
+  const roadmapSteps = [
+    {
+      id: `${roadmapGoalId}-scope`,
+      goalId: roadmapGoalId,
+      title: "Confirm source requirements",
+      description: goalResearch
+        ? "Use Exa context and the submitted note to verify official rules, deadlines, and deliverables."
+        : "Verify the exact requirement, deadline, and expected output before scheduling deeper work.",
+      scheduledDate: "This week",
+      tasks: splitLongStudyTasks([
+        {
+          id: `${roadmapGoalId}-confirm-requirements`,
+          title: `Confirm requirements for ${compactFallbackCopy(roadmapTitle, 42)}`,
+          section: "subsequent_days" as const,
+          estimatedMinutes: 30,
+          scheduledDate: "This week",
+          reason: "Avoids building a roadmap from an ambiguous source.",
+          source: roadmapBase.source,
+          goalId: roadmapGoalId,
+          isRoadmapTask: true,
+        },
+      ]),
+      status: "scheduled" as const,
+    },
+    {
+      id: `${roadmapGoalId}-foundation`,
+      goalId: roadmapGoalId,
+      title: "Build the first foundation block",
+      description: "Create a small beginner-friendly work block that moves the submitted goal forward.",
+      scheduledDateRange: "Next 7 days",
+      tasks: splitLongStudyTasks([
+        {
+          id: `${roadmapGoalId}-foundation-session`,
+          title: `Start ${compactFallbackCopy(roadmapTitle, 48)}`,
+          section: "subsequent_days" as const,
+          estimatedMinutes: 45,
+          scheduledDate: "Next 7 days",
+          reason: "Turns the broad item into a visible first session.",
+          source: roadmapBase.source,
+          goalId: roadmapGoalId,
+          isRoadmapTask: true,
+        },
+      ]),
+      status: "upcoming" as const,
+    },
+    {
+      id: `${roadmapGoalId}-deliverable`,
+      goalId: roadmapGoalId,
+      title: "Package the first deliverable",
+      description: "Reserve time to produce something reviewable instead of only reading or researching.",
+      scheduledDateRange: "After foundation",
+      tasks: splitLongStudyTasks([
+        {
+          id: `${roadmapGoalId}-deliverable-session`,
+          title: `Create first deliverable for ${compactFallbackCopy(roadmapTitle, 36)}`,
+          section: "subsequent_days" as const,
+          estimatedMinutes: 45,
+          scheduledDate: "After foundation",
+          reason: "Keeps preparation output-oriented.",
+          source: roadmapBase.source,
+          goalId: roadmapGoalId,
+          isRoadmapTask: true,
+        },
+      ]),
+      status: "upcoming" as const,
+    },
+  ];
+
+  return {
+    createdAt: new Date().toISOString(),
+    currentDate: input.currentDate,
+    provider: "fallback",
+    status: "fallback",
+    sourceSummary: sourceStats(sources),
+    sources,
+    commitments,
+    clarificationQuestions,
+    timelineEvents,
+    resolvedTimelineEvents: timelineEvents,
+    conflict: {
+      title: "No confirmed conflict from submitted sources",
+      unresolvedSummary: "The fallback planner did not find two fixed overlapping time ranges in the submitted evidence.",
+      resolvedTitle: "Timing kept flexible",
+      resolvedSummary: "StudentOS keeps the submitted items visible and asks for missing timing details before locking the plan.",
+      fixedEventTitle: firstCommitment.title,
+      fixedEventTime: "Time to confirm",
+      conflictingEventTitle: "No confirmed overlap",
+      conflictingEventTime: "Not confirmed",
+      overlapLabel: "Not confirmed",
+      impactLabel: "Confirm details",
+      resolvedImpactLabel: "Plan can proceed",
+      recommendationSummary: `Confirm the most important missing details for ${firstCommitment.title} before treating the schedule as final.`,
+      recommendedActions: [
+        `Confirm exact requirements for ${compactFallbackCopy(firstCommitment.title, 38)}`,
+        "Keep flexible work movable until deadlines are verified",
+        "Use researched context before sizing long preparation work",
+      ],
+      manualActions: [
+        "Add exact deadline or event time",
+        "Mark any fixed calendar block manually",
+        "Split large preparation work into shorter sessions",
+      ],
+    },
+    planTasks: splitLongStudyTasks(planTasks),
+    roadmapSteps,
+    rationale: {
+      summary: "StudentOS used the submitted source text to build a conservative fallback plan instead of substituting demo commitments.",
+      bullets: [
+        "Every fallback commitment is derived from the captured source packet.",
+        "Unclear external context stays as a clarification instead of becoming a fake fixed event.",
+        "Broad preparation work becomes short roadmap sessions while details are confirmed.",
+      ],
+    },
+    goalResearch,
+    agentLogs: agentLogs?.length ? agentLogs : defaultObservableLogs(sources, reason, goalResearch),
+    sponsorTrace: sourceDrivenTrace(reason, goalResearch),
+  };
+}
+
 function fallbackFootprint(
   input: AnalyseStudentChaosRequest,
   reason: string,
@@ -857,6 +1235,11 @@ function fallbackFootprint(
   agentLogs?: AIAgentLog[],
 ): StudentOSAgentFootprint {
   const sources = input.sources;
+
+  if (!looksLikeDemoPacket(sources)) {
+    return sourceDrivenFallbackFootprint(input, reason, goalResearch, agentLogs);
+  }
+
   const trace: StudentOSAgentFootprint["sponsorTrace"] = [
     {
       provider: "Vercel AI Gateway",
@@ -1097,9 +1480,14 @@ async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<Stud
 
   if (!researchContext || !isExaReady()) return undefined;
 
+  const queryPlan = await generateResearchQueryPlan(researchEvidencePacket(sources) || researchContext);
+
   return withTimeout(
-    deepResearchGoal(researchContext.slice(0, 1200)),
-    8000,
+    deepResearchGoal(queryPlan.subject, {
+      searchQueries: queryPlan.queries,
+      model: queryPlan.model,
+    }),
+    16000,
     "Exa fast context research",
   );
 }
@@ -1274,6 +1662,8 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
         },
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
+          "Treat the submitted source text as the source of truth. For short manual inputs, preserve the exact named event, subject, or roadmap target in commitments, roadmap steps, and plan tasks.",
+          "Never use built-in demo details such as Physics worksheet, CCA briefing, tuition, Python coding by December, Sarah, or the 11 June competition unless those exact details are explicitly present in the submitted sources.",
           "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
           "If OCR only shows an exam cover page, worksheet cover page, candidate instructions, names, class fields, or index-number boilerplate, do not invent the worksheet task. Create one unclear commitment and ask enough clarification questions to schedule it later, including which worksheet/page/question numbers and when it is due if missing.",
           "If OCR appears to have dropped Chinese or other non-English text, use the interpreted summary when available; otherwise mark the source unclear and ask a review-page clarification.",
@@ -1389,8 +1779,22 @@ export async function analyseStudentChaos(
     detail: contextCandidate && !isExaReady() ? "Exa is not configured, so research will be skipped." : undefined,
   });
 
+  if (contextCandidate && isExaReady()) {
+    await emitLog({
+      id: "research-query-planning",
+      kind: "tool",
+      title: "Generating research queries",
+      body: "Analysing source evidence before calling Exa, so the search is not just the raw user prompt.",
+      tool: {
+        provider: isVercelAiReady() ? "Vercel AI Gateway" : "StudentOS",
+        result: "Preparing focused Exa queries from OCR, interpretations, and manual notes.",
+      },
+    });
+  }
+
   try {
     goalResearch = await researchGoalContext(sources);
+    const searchQueryPreview = goalResearch?.searchQueries?.slice(0, 3).join(" | ");
     const trace: AISponsorTraceItem = {
       provider: goalResearch?.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched planning context",
@@ -1409,7 +1813,7 @@ export async function analyseStudentChaos(
         : "Continuing with the submitted evidence only.",
       tool: {
         provider: "Exa",
-        result: trace.detail,
+        result: searchQueryPreview || trace.detail,
       },
     });
   } catch (error) {

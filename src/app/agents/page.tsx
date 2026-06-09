@@ -8,6 +8,7 @@ import {
   Check,
   FileSearch,
   ListChecks,
+  Loader2,
   Server,
   Sparkles,
   type LucideIcon
@@ -41,7 +42,14 @@ type AgentLog = {
 };
 
 const REDIRECT_MIN_AT = 1600;
-const ANALYSIS_TIMEOUT_MS = 34000;
+const ANALYSIS_TIMEOUT_MS = 60000;
+const loadingMessages = [
+  "Reading submitted sources",
+  "Generating focused Exa searches",
+  "Waiting on research results",
+  "Building commitments and roadmap",
+  "Validating the final footprint",
+];
 
 const kindIcon: Record<LogKind, LucideIcon> = {
   thought: BrainCircuit,
@@ -372,7 +380,9 @@ export default function AgentsThinkingPage() {
   const done = Boolean(aiFootprint);
   const progressPercent = done ? 100 : Math.min(92, visibleLogs.length ? 12 + visibleLogs.length * 10 : 8);
   const statusLabel = analysisFailed ? "Error" : done ? "Done" : "Live";
-  const activeTitle = streamError ?? activeLog?.title ?? "Connecting to analysis stream";
+  const elapsedSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
+  const loadingMessage = loadingMessages[Math.floor(elapsedMs / 3500) % loadingMessages.length];
+  const activeTitle = streamError ?? activeLog?.title ?? loadingMessage;
 
   useEffect(() => {
     if (!shouldFollowLogRef.current) return;
@@ -440,17 +450,26 @@ export default function AgentsThinkingPage() {
               <h1 className="text-[19px] font-bold leading-tight tracking-tight text-ink">
                 Agent is building your map
               </h1>
-              <p className="mt-1 truncate text-[13px] font-medium text-neutral-500">
-                {activeTitle}
+              <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[13px] font-medium text-neutral-500">
+                {!done && !analysisFailed ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                ) : null}
+                <span className="min-w-0 truncate">
+                  {!done && !analysisFailed ? `${activeTitle} · ${elapsedSeconds}s` : activeTitle}
+                </span>
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-2.5 py-1.5">
-              <span
-                className={cn(
-                  "size-1.5 rounded-full animate-pulse",
-                  analysisFailed ? "bg-red-500" : "bg-emerald-500"
-                )}
-              />
+              {!done && !analysisFailed ? (
+                <Loader2 className="size-3.5 animate-spin text-emerald-600" />
+              ) : (
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    analysisFailed ? "bg-red-500" : "bg-emerald-500"
+                  )}
+                />
+              )}
               <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">
                 {statusLabel}
               </span>
@@ -483,6 +502,16 @@ export default function AgentsThinkingPage() {
             className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
           >
             <ol className="min-w-0 space-y-1 pb-[36vh]">
+              {!visibleLogs.length ? (
+                <motion.li
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex items-center gap-3 rounded-[8px] bg-neutral-50 px-3 py-3 text-[13px] font-semibold text-neutral-600"
+                >
+                  <Loader2 className="size-4 animate-spin text-neutral-500" />
+                  <span>{loadingMessage}</span>
+                </motion.li>
+              ) : null}
               <AnimatePresence initial={false}>
                 {visibleLogs.map((log, index) => (
                   <AgentLogItem

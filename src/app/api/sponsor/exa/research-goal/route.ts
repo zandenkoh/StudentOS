@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
+import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
 
 export const runtime = "nodejs";
 export const maxDuration = 35;
@@ -36,12 +36,16 @@ export async function POST(req: Request) {
           ...parsed.data.clarificationAnswers.map((item) => `Q: ${item.question}\nA: ${item.answer}`),
         ].join("\n")
       : parsed.data.goal;
-    const result = await deepResearchGoal(goal);
+    const queryPlan = await generateResearchQueryPlan(goal);
+    const result = await deepResearchGoal(queryPlan.subject, {
+      searchQueries: queryPlan.queries,
+      model: queryPlan.model,
+    });
 
     return NextResponse.json({
       provider: "exa",
       status: "success",
-      query: parsed.data.goal,
+      query: result.query,
       model: result.model,
       summary: result.summary,
       sections: result.sections,
@@ -54,7 +58,7 @@ export async function POST(req: Request) {
           provider: "Exa",
           action: "Deep researched goal context",
           status: "success",
-          detail: `${result.searchQueries.length} Exa searches, ${result.citations.length} citations.`,
+          detail: `${result.searchQueries.length} focused Exa searches, ${result.citations.length} citations.`,
         },
       ],
     });

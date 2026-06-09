@@ -110,6 +110,7 @@ type SourcePreview = {
   fileType: "image" | "text" | "link" | "audio";
   snippet: string;
   filePath?: string;
+  durationSeconds?: number;
 };
 
 type EditDraft = {
@@ -294,6 +295,7 @@ function previewFromCapturedSource(source: CapturedSourceForAI): SourcePreview {
     fileType: isImage ? "image" : isAudio ? "audio" : isLink ? "link" : "text",
     snippet,
     filePath: source.filePath,
+    durationSeconds: source.durationSeconds,
   };
 }
 
@@ -389,6 +391,13 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
   }
 
   if (preview.fileType === "audio") {
+    const formatAudioDuration = (secs?: number) => {
+      if (!secs) return "1:24";
+      const minutes = Math.floor(secs / 60);
+      const seconds = secs % 60;
+      return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+    };
+
     return (
       <div className="w-full pb-4">
         <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4">
@@ -397,8 +406,10 @@ function CommitmentSourcePreview({ preview }: { preview: SourcePreview }) {
               <AudioLines className="size-5" />
             </span>
             <div>
-              <p className="text-sm font-bold text-ink">Teammate Voice Note</p>
-              <p className="text-xs font-semibold text-neutral-400">Transcript summary · 1:24</p>
+              <p className="text-sm font-bold text-ink">{preview.title}</p>
+              <p className="text-xs font-semibold text-neutral-400">
+                Transcript summary · {preview.durationSeconds ? formatAudioDuration(preview.durationSeconds) : preview.fileSize || "1:24"}
+              </p>
             </div>
           </div>
           <div className="rounded-xl border border-neutral-200 bg-white p-3.5 shadow-sm">

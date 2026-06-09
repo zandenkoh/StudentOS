@@ -6,7 +6,7 @@ import {
 import type { AnalyseStudentChaosStreamEvent } from "@/lib/studentos-ai-types";
 
 export const runtime = "nodejs";
-export const maxDuration = 35;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   let requestBody: unknown;

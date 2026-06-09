@@ -12,6 +12,34 @@ import { AppShell } from "@/components/app-shell";
 import { BottomSheet } from "@/components/bottom-sheet";
 import type { CapturedSourceForAI } from "@/lib/studentos-ai-types";
 
+interface SpeechRecognitionEvent {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      [index: number]: {
+        transcript: string;
+      };
+      isFinal: boolean;
+    };
+  };
+}
+
+interface SpeechRecognitionErrorEvent {
+  error: string;
+}
+
+interface ISpeechRecognition {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: (event: SpeechRecognitionEvent) => void;
+  onerror: (event: SpeechRecognitionErrorEvent) => void;
+  start: () => void;
+  stop: () => void;
+}
+
+
 type InputSource = {
   id: string;
   icon: LucideIcon;
@@ -29,6 +57,7 @@ type InputSource = {
   needsClarification?: boolean;
   clarificationPrompt?: string;
   sponsorStatus?: "cached" | "uploaded" | "extracted" | "fallback" | "error";
+  durationSeconds?: number;
 };
 
 type SponsorTraceItem = {
@@ -201,6 +230,10 @@ export default function InputPage() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingStreamRef = useRef<MediaStream | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const speechRecognitionRef = useRef<ISpeechRecognition | null>(null);
+  const transcriptionRef = useRef<string>("");
+  const recordingStartTimeRef = useRef<number>(0);
 
   // Auto-grow textarea
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -233,9 +266,9 @@ export default function InputPage() {
     ]);
   }, []);
 
-  // Audio simulation
+  // Audio simulation (only for demo team-voice-note without a real filePath)
   useEffect(() => {
-    if (audioPlaying) {
+    if (audioPlaying && (!previewSource || !previewSource.filePath)) {
       audioIntervalRef.current = setInterval(() => {
         setAudioTime((prev) => {
           if (prev >= 84) {
@@ -252,7 +285,7 @@ export default function InputPage() {
     return () => {
       if (audioIntervalRef.current) clearInterval(audioIntervalRef.current);
     };
-  }, [audioPlaying]);
+  }, [audioPlaying, previewSource]);
 
   useEffect(() => {
     return () => {
@@ -264,7 +297,32 @@ export default function InputPage() {
   }, []);
 
   const handlePlayPause = () => {
-    setAudioPlaying(!audioPlaying);
+    if (!previewSource) return;
+
+    if (previewSource.filePath) {
+      if (!audioRef.current) {
+        audioRef.current = new Audio(previewSource.filePath);
+        audioRef.current.addEventListener("timeupdate", () => {
+          if (audioRef.current) {
+            setAudioTime(Math.floor(audioRef.current.currentTime));
+          }
+        });
+        audioRef.current.addEventListener("ended", () => {
+          setAudioPlaying(false);
+          setAudioTime(0);
+        });
+      }
+
+      if (audioPlaying) {
+        audioRef.current.pause();
+        setAudioPlaying(false);
+      } else {
+        audioRef.current.play().catch((err) => console.error("Audio playback error:", err));
+        setAudioPlaying(true);
+      }
+    } else {
+      setAudioPlaying(!audioPlaying);
+    }
   };
 
   const formatAudioTime = (secs: number) => {
@@ -501,6 +559,9 @@ export default function InputPage() {
 
     if (isRecording) {
       mediaRecorderRef.current?.stop();
+      if (speechRecognitionRef.current) {
+        speechRecognitionRef.current.stop();
+      }
       return;
     }
 
@@ -516,6 +577,44 @@ export default function InputPage() {
       recordingChunksRef.current = [];
       recordingStreamRef.current = stream;
       mediaRecorderRef.current = recorder;
+      
+      // Initialize speech recognition
+      transcriptionRef.current = "";
+      recordingStartTimeRef.current = Date.now();
+      
+      const SpeechRecognitionClass = (window as Window & {
+        SpeechRecognition?: new () => ISpeechRecognition;
+        webkitSpeechRecognition?: new () => ISpeechRecognition;
+      }).SpeechRecognition || (window as Window & {
+        SpeechRecognition?: new () => ISpeechRecognition;
+        webkitSpeechRecognition?: new () => ISpeechRecognition;
+      }).webkitSpeechRecognition;
+
+      if (SpeechRecognitionClass) {
+        try {
+          const recognition = new SpeechRecognitionClass();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = "en-US";
+
+          recognition.onresult = (event: SpeechRecognitionEvent) => {
+            let accumulatedTranscript = "";
+            for (let i = 0; i < event.results.length; i++) {
+              accumulatedTranscript += event.results[i][0].transcript;
+            }
+            transcriptionRef.current = accumulatedTranscript.trim();
+          };
+
+          recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
+            console.error("Speech recognition error:", e.error);
+          };
+
+          recognition.start();
+          speechRecognitionRef.current = recognition;
+        } catch (recognitionErr) {
+          console.error("Failed to start SpeechRecognition:", recognitionErr);
+        }
+      }
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -528,21 +627,31 @@ export default function InputPage() {
           type: recorder.mimeType || "audio/webm",
         });
 
+        const durationMs = Date.now() - recordingStartTimeRef.current;
+        const durationSeconds = Math.max(1, Math.round(durationMs / 1000));
+        const audioUrl = URL.createObjectURL(recordingBlob);
+        const transcriptText = transcriptionRef.current.trim();
+
         if (recordingBlob.size > 0) {
           const newSource: InputSource = {
             id: `voice-recording-${Date.now()}`,
             icon: AudioLines,
-            title: "Recorded voice note.webm",
+            title: `Voice recording (${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}).webm`,
             source: "Voice Recording",
-            snippet: "New voice note captured and queued for transcription.",
+            snippet: transcriptText || "No voice transcription captured.",
             fileSize: formatFileSize(recordingBlob.size),
             fileType: "audio",
+            filePath: audioUrl,
+            ocrText: transcriptText || undefined,
+            sourceSummary: transcriptText ? `Transcribed Voice Note: "${transcriptText}"` : undefined,
+            durationSeconds: durationSeconds,
           };
           setSources((prev) => [newSource, ...prev]);
         }
 
         recordingChunksRef.current = [];
         mediaRecorderRef.current = null;
+        speechRecognitionRef.current = null;
         setIsRecording(false);
         stopRecordingTracks();
       };
@@ -672,6 +781,7 @@ export default function InputPage() {
       extractedTasks: source.extractedTasks,
       needsClarification: source.needsClarification,
       clarificationPrompt: source.clarificationPrompt,
+      durationSeconds: source.durationSeconds,
     }));
 
     window.localStorage.setItem("studentos_captured_sources", JSON.stringify(capturedSources));
@@ -902,7 +1012,13 @@ export default function InputPage() {
         open={previewSource !== null}
         title={previewSource?.title ?? "File Preview"}
         subtitle={previewSource ? `${previewSource.source} · ${previewSource.fileSize}` : undefined}
-        onClose={() => setPreviewSource(null)}
+        onClose={() => {
+          if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current = null;
+          }
+          setPreviewSource(null);
+        }}
       >
         <div className="w-full pb-4">
           {previewSource?.s3Key && (
@@ -997,9 +1113,15 @@ export default function InputPage() {
                   <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 mb-1.5">
                     <span className="flex items-center gap-1">
                       <Volume2 className="size-3 text-neutral-400" />
-                      Teammate Voice Note
+                      {previewSource.title}
                     </span>
-                    <span>{formatAudioTime(audioTime)} / 1:24</span>
+                    <span>
+                      {formatAudioTime(audioTime)} / {
+                        previewSource.filePath
+                          ? formatAudioTime(previewSource.durationSeconds || 0)
+                          : "1:24"
+                      }
+                    </span>
                   </div>
                   
                   {/* Waveform Visualization */}
@@ -1031,7 +1153,11 @@ export default function InputPage() {
                   TRANSCRIPT SUMMARY
                 </p>
                 <p className="text-xs font-semibold text-neutral-600 leading-relaxed italic">
-                  &quot;Hey, about the project meeting tonight, Sarah mentioned she has a CCA briefing at 5:30 PM and tuition before that, so we might need to reschedule. Can we push to tomorrow morning?&quot;
+                  {previewSource.filePath ? (
+                    `"${previewSource.ocrText || previewSource.snippet || "No transcription captured."}"`
+                  ) : (
+                    `"Hey, about the project meeting tonight, Sarah mentioned she has a CCA briefing at 5:30 PM and tuition before that, so we might need to reschedule. Can we push to tomorrow morning?"`
+                  )}
                 </p>
               </div>
             </div>

@@ -29,6 +29,7 @@ export type CapturedSourceForAI = {
   extractedTasks?: string[];
   needsClarification?: boolean;
   clarificationPrompt?: string;
+  durationSeconds?: number;
 };
 
 export type AIClarificationOption = {

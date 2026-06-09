@@ -1,6 +1,8 @@
 import "server-only";
 
-import { isExaReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { generateText, Output } from "ai";
+import { z } from "zod";
+import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { compactResearchCopy } from "@/lib/sponsor-tech/research-format";
 
 export type ExaSearchResult = {
@@ -33,6 +35,18 @@ export type DeepGoalResearch = {
     title: string;
     url: string;
   }>;
+};
+
+const ResearchQueryPlanSchema = z.object({
+  subject: z.string().min(3).max(180),
+  contextSummary: z.string().min(5).max(320),
+  researchGoals: z.array(z.string().min(3).max(120)).min(1).max(5),
+  queries: z.array(z.string().min(4).max(160)).min(2).max(5),
+});
+
+export type ResearchQueryPlan = z.infer<typeof ResearchQueryPlanSchema> & {
+  provider: "vercel-ai-gateway" | "heuristic";
+  model?: string;
 };
 
 export async function exaSearch(
@@ -100,6 +114,104 @@ type ResearchFocus =
 
 function cleanedResearchPrompt(goal: string) {
   return goal.trim().replace(/\s+/g, " ");
+}
+
+function compactEvidence(value: string, maxLength = 3500) {
+  const text = value.replace(/\n{3,}/g, "\n\n").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function cleanQuery(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .trim()
+    .slice(0, 160);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+function evidenceLines(evidence: string) {
+  const metadataOnly = /^(source|title|student note|manual input|goal command|interpretation|interpreted summary|ocr|textract|aws textract|extracted tasks?)$/i;
+
+  return evidence
+    .split(/\n|[•*]\s+|(?:^|\s)\d+[.)]\s+/)
+    .map((line) =>
+      line
+        .replace(/^(source|title|student note|manual input|goal command|interpretation|interpreted summary|ocr|textract|extracted tasks?):\s*/i, "")
+        .replace(/\s+/g, " ")
+        .trim(),
+    )
+    .filter((line) => line.length >= 4 && !metadataOnly.test(line))
+    .filter((line) => !/^(typed note|manual goal|added source|uploaded file queued|source uploaded)$/i.test(line));
+}
+
+function extractEventSubject(text: string) {
+  const match =
+    text.match(/\b([A-Za-z0-9][A-Za-z0-9+#.&-]*(?:\s+[A-Za-z0-9][A-Za-z0-9+#.&-]*){0,5}\s+(?:hackathon|competition|contest|challenge|olympiad|conference|tournament))\b/i) ??
+    text.match(/\b((?:hackathon|competition|contest|challenge|olympiad|conference|tournament)\s+[A-Za-z0-9][A-Za-z0-9+#.&-]*(?:\s+[A-Za-z0-9][A-Za-z0-9+#.&-]*){0,5})\b/i);
+
+  return match?.[1]?.replace(/\s+/g, " ").trim();
+}
+
+function extractSkillSubject(text: string) {
+  const match = text.match(/\b(html|css|javascript|typescript|python|react|next\.?js|node\.?js|data\s+handling|machine\s+learning|ai|design|pitching|prototype|frontend|backend)\b/i);
+  if (!match) return undefined;
+
+  const skill = match[1].replace(/\s+/g, " ");
+  if (/\bzero\s+to\s+hero\b/i.test(text)) return `${skill} zero to hero`;
+  if (/\bbeginner|from scratch|no experience\b/i.test(text)) return `${skill} beginner`;
+  return skill;
+}
+
+function uniqueQueries(queries: string[]) {
+  const seen = new Set<string>();
+
+  return queries
+    .map(cleanQuery)
+    .filter(Boolean)
+    .filter((query) => {
+      const key = query.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 5);
+}
+
+function normalizeResearchQueryPlan(
+  plan: z.infer<typeof ResearchQueryPlanSchema>,
+  provider: ResearchQueryPlan["provider"],
+  model?: string,
+): ResearchQueryPlan {
+  const queries = uniqueQueries(plan.queries);
+  const subject = compactResearchCopy(cleanedResearchPrompt(plan.subject), 180);
+
+  return {
+    subject,
+    contextSummary: compactResearchCopy(plan.contextSummary, 320),
+    researchGoals: plan.researchGoals.map((goal) => compactResearchCopy(goal, 120)).slice(0, 5),
+    queries: queries.length >= 2 ? queries : uniqueQueries([...queries, ...presetQueries(subject)]).slice(0, 3),
+    provider,
+    model,
+  };
 }
 
 function quotedOrNamedSubject(goal: string) {
@@ -180,6 +292,97 @@ function presetQueries(goal: string) {
   }
 }
 
+export function heuristicResearchQueryPlan(evidence: string): ResearchQueryPlan {
+  const lines = evidenceLines(evidence);
+  const joinedEvidence = lines.join(" ");
+  const eventSubject = extractEventSubject(joinedEvidence);
+  const skillSubject = extractSkillSubject(joinedEvidence);
+  const strongestLine =
+    lines
+      .filter((line) => /(goal|learn|roadmap|prepare|preparation|hackathon|competition|contest|challenge|deadline|eligibility|criteria|deliverable|html|python|javascript|course|project)/i.test(line))
+      .sort((a, b) => b.length - a.length)[0] ??
+    lines.sort((a, b) => b.length - a.length)[0] ??
+    "student commitment";
+  const subject = eventSubject && skillSubject
+    ? `${skillSubject} preparation for ${eventSubject}`
+    : eventSubject ?? quotedOrNamedSubject(strongestLine);
+  const queries = eventSubject
+    ? uniqueQueries([
+        `${eventSubject} official rules eligibility deadline`,
+        `${eventSubject} judging criteria tracks deliverables`,
+        `${eventSubject} registration timeline prizes`,
+        ...(skillSubject
+          ? [
+              `${skillSubject} hackathon preparation roadmap beginner projects`,
+              `${skillSubject} prototype checklist hackathon beginner`,
+            ]
+          : []),
+      ])
+    : uniqueQueries(presetQueries(subject));
+
+  return normalizeResearchQueryPlan(
+    {
+      subject,
+      contextSummary: compactResearchCopy(strongestLine, 300),
+      researchGoals: [
+        "Identify official source details, dates, eligibility, and scope.",
+        "Find workload, requirements, criteria, and deliverables that affect scheduling.",
+        "Translate external context into realistic preparation milestones.",
+      ],
+      queries,
+    },
+    "heuristic",
+  );
+}
+
+export async function generateResearchQueryPlan(evidence: string): Promise<ResearchQueryPlan> {
+  const fallback = heuristicResearchQueryPlan(evidence);
+
+  if (!isVercelAiReady()) return fallback;
+
+  try {
+    const { output } = await withTimeout(
+      generateText({
+        model: sponsorEnv.aiGatewayResearchModel,
+        output: Output.object({ schema: ResearchQueryPlanSchema }),
+        system: [
+          "You are the StudentOS research-query planner.",
+          "Your job is to read OCR, Textract interpretations, and manual student notes, then create useful web search queries.",
+          "Do not reuse the whole source packet as a query.",
+          "Prefer official pages, exact event names, deadlines, eligibility, criteria, deliverables, workload, and beginner roadmap context.",
+          "Return concise queries that Exa can search directly.",
+        ].join("\n"),
+        prompt: JSON.stringify(
+          {
+            sourceEvidence: compactEvidence(evidence),
+            outputRules: [
+              "subject should be the concise researched topic, not the full evidence packet.",
+              "queries must be different from each other and must not be full pasted user input unless the input is already a concise proper noun.",
+              "For hackathons or competitions, include official rules/deadline and judging/deliverables queries.",
+              "For learning or preparation goals, include roadmap, prerequisites, project, and time-commitment queries.",
+              "Use 2-5 queries.",
+            ],
+            outputShape: {
+              subject: "string",
+              contextSummary: "string",
+              researchGoals: ["string"],
+              queries: ["string"],
+            },
+          },
+          null,
+          2,
+        ),
+      }),
+      6500,
+      "Research query planner",
+    );
+
+    return normalizeResearchQueryPlan(output, "vercel-ai-gateway", sponsorEnv.aiGatewayResearchModel);
+  } catch {
+    return fallback;
+  }
+}
+
 function snippetsFor(results: ExaSearchResult[], patterns: RegExp[]) {
   const seen = new Set<string>();
 
@@ -216,12 +419,17 @@ function uniqueSnippets(results: ExaSearchResult[]) {
     .slice(0, 4);
 }
 
-export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> {
+export async function deepResearchGoal(
+  goal: string,
+  options: { searchQueries?: string[]; model?: string } = {},
+): Promise<DeepGoalResearch> {
   if (!isExaReady()) {
     throw new Error("USE_REAL_EXA is disabled or EXA_API_KEY is missing.");
   }
 
-  const queries = presetQueries(goal);
+  const queries = options.searchQueries?.length
+    ? uniqueQueries(options.searchQueries)
+    : presetQueries(goal);
   const settledResponses = await Promise.allSettled(
     queries.map((query) => exaSearch(query, { numResults: 4, maxCharacters: 550, timeoutMs: 6500 })),
   );
@@ -246,6 +454,7 @@ export async function deepResearchGoal(goal: string): Promise<DeepGoalResearch> 
   return {
     query: goal,
     summary: snippets.slice(0, 2).join(" ") || "Exa returned research context for this goal.",
+    model: options.model,
     searchQueries: queries,
     sections: [
       {
