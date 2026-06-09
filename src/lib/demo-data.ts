@@ -91,6 +91,7 @@ export type TimelineEvent = {
   chip: string;
   tone?: "conflict" | "success" | "priority";
   conflictGroupId?: string;
+  scheduleRationale?: string;
 };
 
 export type PlanTaskSection = "do_now" | "do_next" | "subsequent_days";
@@ -107,6 +108,7 @@ export type DemoPlanTask = {
   deadline?: string;
   deadlineDateId?: string;
   reason?: string;
+  scheduleRationale?: string;
   source?: string;
   goalId?: string;
   isRoadmapTask?: boolean;
@@ -341,14 +343,23 @@ export const agentLogs: AgentLog[] = [
 ];
 
 export const timelineEvents: TimelineEvent[] = [
-  { id: "revision", time: "3:30 PM", title: "Revision block", chip: "Flexible" },
+  {
+    id: "revision",
+    time: "3:30 PM",
+    title: "Revision block",
+    chip: "Flexible",
+    scheduleRationale:
+      "StudentOS initially treats revision as the movable buffer because it has no hard attendance window; it can slide later if fixed events or urgent homework need the afternoon."
+  },
   {
     id: "tuition",
     time: "4:30 PM",
     title: "Tuition",
     duration: "4:30-6:30 PM",
     chip: "Fixed",
-    conflictGroupId: "tuition-cca"
+    conflictGroupId: "tuition-cca",
+    scheduleRationale:
+      "Tuition stays at 4:30-6:30 PM because it is a fixed calendar block with an external teacher; moving flexible study or requesting CCA notes costs less than breaking this commitment."
   },
   {
     id: "cca",
@@ -357,31 +368,89 @@ export const timelineEvents: TimelineEvent[] = [
     duration: "5:30-6:15 PM",
     chip: "Needs decision",
     tone: "conflict",
-    conflictGroupId: "tuition-cca"
+    conflictGroupId: "tuition-cca",
+    scheduleRationale:
+      "StudentOS flags the CCA briefing instead of force-scheduling it because it overlaps tuition; the optimal action is to resolve the clash before pretending both can be attended."
   },
-  { id: "dinner", time: "7:00 PM", title: "Dinner", chip: "Fixed" },
+  {
+    id: "dinner",
+    time: "7:00 PM",
+    title: "Dinner",
+    chip: "Fixed",
+    scheduleRationale:
+      "Dinner is kept at 7:00 PM as a recovery boundary so the later Physics and coding blocks are not pushed into a low-energy stretch."
+  },
   {
     id: "physics",
     time: "8:00 PM",
     title: "Physics worksheet",
     chip: "High priority",
-    tone: "priority"
+    tone: "priority",
+    scheduleRationale:
+      "Physics is placed at 8:00 PM after fixed evening commitments because it is due tomorrow morning and still needs enough alert time for careful problem-solving."
   },
   {
     id: "coding",
     time: "9:00 PM",
     title: "Coding practice",
-    chip: "Weekly goal"
+    chip: "Weekly goal",
+    scheduleRationale:
+      "Coding practice sits at 9:00 PM because it is important but not urgent; it can use the later evening once deadline work and fixed events are protected."
   }
 ];
 
 export const resolvedTimelineEvents: TimelineEvent[] = [
-  { id: "tuition", time: "4:30 PM", title: "Tuition", duration: "4:30-6:30 PM", chip: "Fixed" },
-  { id: "notes", time: "6:40 PM", title: "Get CCA briefing notes", chip: "Handled", tone: "success" },
-  { id: "dinner", time: "7:00 PM", title: "Dinner", chip: "Fixed" },
-  { id: "revision", time: "7:45 PM", title: "Revision block", chip: "Moved" },
-  { id: "physics", time: "8:00 PM", title: "Physics worksheet", chip: "High priority", tone: "priority" },
-  { id: "coding", time: "9:00 PM", title: "Coding practice", chip: "Weekly goal" }
+  {
+    id: "tuition",
+    time: "4:30 PM",
+    title: "Tuition",
+    duration: "4:30-6:30 PM",
+    chip: "Fixed",
+    scheduleRationale:
+      "Tuition remains at 4:30-6:30 PM because it is the least flexible block; StudentOS resolves the clash around it instead of moving the external appointment."
+  },
+  {
+    id: "notes",
+    time: "6:40 PM",
+    title: "Get CCA briefing notes",
+    chip: "Handled",
+    tone: "success",
+    scheduleRationale:
+      "The notes request is placed right after tuition because the CCA briefing has just ended, so the update is fresh while the action still stays short and low-effort."
+  },
+  {
+    id: "dinner",
+    time: "7:00 PM",
+    title: "Dinner",
+    chip: "Fixed",
+    scheduleRationale:
+      "Dinner stays at 7:00 PM to create a clean reset before cognitively heavier Physics work."
+  },
+  {
+    id: "revision",
+    time: "7:45 PM",
+    title: "Revision block",
+    chip: "Moved",
+    scheduleRationale:
+      "Revision moves after dinner because it is flexible and lighter than the urgent Physics worksheet; this avoids crowding the tuition conflict window."
+  },
+  {
+    id: "physics",
+    time: "8:00 PM",
+    title: "Physics worksheet",
+    chip: "High priority",
+    tone: "priority",
+    scheduleRationale:
+      "Physics is scheduled before late-night fatigue sets in because the worksheet is due tomorrow morning and needs careful thought rather than tired guessing."
+  },
+  {
+    id: "coding",
+    time: "9:00 PM",
+    title: "Coding practice",
+    chip: "Weekly goal",
+    scheduleRationale:
+      "Coding practice is later because it supports a December goal, so it should not steal the student’s best focus from tomorrow’s Physics deadline."
+  }
 ];
 
 export const manualResolvedTimelineEvents: TimelineEvent[] = [
@@ -391,28 +460,43 @@ export const manualResolvedTimelineEvents: TimelineEvent[] = [
     title: "Tuition rescheduled",
     duration: "6:20-7:50 PM",
     chip: "Rescheduled",
-    tone: "success"
+    tone: "success",
+    scheduleRationale:
+      "Tuition is moved after CCA because the manual instruction makes the briefing fixed and the Physics extension opens enough evening slack."
   },
   {
     id: "cca",
     time: "5:30 PM",
     title: "CCA briefing",
     duration: "5:30-6:15 PM",
-    chip: "Fixed"
+    chip: "Fixed",
+    scheduleRationale:
+      "CCA remains at 5:30 PM because the user explicitly protected it; StudentOS moves tuition instead of treating the briefing as optional."
   },
   {
     id: "physics-extension",
     time: "16 Jun",
     title: "Physics worksheet deadline",
     chip: "Extension recorded",
-    tone: "success"
+    tone: "success",
+    scheduleRationale:
+      "The Physics deadline moves to 16 June because the teacher granted an extension, so it no longer needs the most urgent slot tonight."
   },
-  { id: "dinner", time: "8:00 PM", title: "Dinner", chip: "Fixed" },
+  {
+    id: "dinner",
+    time: "8:00 PM",
+    title: "Dinner",
+    chip: "Fixed",
+    scheduleRationale:
+      "Dinner shifts to 8:00 PM because rescheduled tuition now occupies the earlier recovery window."
+  },
   {
     id: "coding",
     time: "9:00 PM",
     title: "Coding practice",
-    chip: "Weekly goal"
+    chip: "Weekly goal",
+    scheduleRationale:
+      "Coding remains at 9:00 PM because the urgent Physics pressure is reduced, but the roadmap still benefits from a small consistent evening block."
   }
 ];
 
@@ -439,6 +523,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "tomorrow 8 AM",
     deadlineDateId: "2026-06-10",
     reason: "Submit before school",
+    scheduleRationale:
+      "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.",
     source: "Screenshot"
   },
   {
@@ -448,6 +534,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     estimatedMinutes: 3,
     timeLabel: "After Physics",
     reason: "Draft ready",
+    scheduleRationale:
+      "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.",
     source: "Voice note"
   },
   {
@@ -457,6 +545,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     estimatedMinutes: 5,
     timeLabel: "Before briefing",
     reason: "Resolves the CCA and tuition clash",
+    scheduleRationale:
+      "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.",
     source: "CCA announcement"
   },
   {
@@ -465,6 +555,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     section: "do_next",
     timeLabel: "4:30-6:30 PM",
     reason: "Fixed calendar block",
+    scheduleRationale:
+      "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.",
     source: "Calendar"
   },
   {
@@ -474,6 +566,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     estimatedMinutes: 45,
     timeLabel: "7:45 PM",
     reason: "Moved after dinner",
+    scheduleRationale:
+      "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.",
     source: "Plan"
   },
   {
@@ -485,6 +579,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "December",
     deadlineDateId: "2026-12-31",
     reason: "Weekly goal started",
+    scheduleRationale:
+      "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.",
     source: "Goal",
     goalId: "learn-coding",
     isRoadmapTask: true
@@ -499,6 +595,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "December",
     deadlineDateId: "2026-12-31",
     reason: "First scheduled step for the coding goal",
+    scheduleRationale:
+      "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.",
     source: "Goal roadmap",
     goalId: "learn-coding",
     isRoadmapTask: true
@@ -513,6 +611,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "December",
     deadlineDateId: "2026-12-31",
     reason: "Turns the broad goal into a concrete build",
+    scheduleRationale:
+      "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.",
     source: "Goal roadmap",
     goalId: "learn-coding",
     isRoadmapTask: true
@@ -527,6 +627,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "next Friday",
     deadlineDateId: "2026-06-19",
     reason: "Keeps next week’s Physics revision from becoming urgent",
+    scheduleRationale:
+      "Circuits revision is scheduled on 16 June to create a buffer before the Friday deadline while avoiding the overloaded conflict day.",
     source: "Homework PDF"
   },
   {
@@ -539,6 +641,8 @@ export const initialPlanTasks: DemoPlanTask[] = [
     deadline: "19 June",
     deadlineDateId: "2026-06-19",
     reason: "Prep before the rescheduled team discussion",
+    scheduleRationale:
+      "Project meeting prep lands on 18 June because it is close enough to the 19 June discussion to stay relevant without competing with immediate homework.",
     source: "Team message"
   }
 ];

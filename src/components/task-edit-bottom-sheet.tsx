@@ -10,6 +10,10 @@ function currentScheduleLabel(task: DemoPlanTask) {
   return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? "Not scheduled";
 }
 
+function scheduleRationale(task: DemoPlanTask) {
+  return task.scheduleRationale ?? task.reason ?? "StudentOS placed this task where it best fits the current deadlines, fixed events, and available energy.";
+}
+
 export function TaskEditBottomSheet({
   task,
   dateOptions,
@@ -68,6 +72,15 @@ export function TaskEditBottomSheet({
                 </p>
               </div>
             </div>
+          </div>
+
+          <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+              Rationale for Schedule
+            </p>
+            <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
+              {scheduleRationale(task)}
+            </p>
           </div>
 
           {futureTask ? (

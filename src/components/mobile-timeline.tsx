@@ -130,7 +130,7 @@ export function MobileTimeline({
                 {group.events.map((event) => (
                   <TimelineRow
                     key={event.id}
-                    event={event}
+                    event={{ ...event, tone: undefined }}
                     onEventClick={onEventClick}
                   />
                 ))}

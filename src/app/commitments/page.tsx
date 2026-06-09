@@ -493,6 +493,74 @@ function baseTaskTitle(title: string) {
   return title.replace(/\s+— Session \d+$/, "");
 }
 
+function scheduleLabelForTask(task: DemoPlanTask) {
+  return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? "the selected slot";
+}
+
+const defaultScheduleRationales: Record<string, string> = {
+  "physics-focus":
+    "StudentOS makes Physics the immediate focus because it is due tomorrow at 8 AM and needs the clearest remaining attention before the evening gets fragmented.",
+  "message-teammate":
+    "The teammate message is placed after Physics because it is a 3 minute clarification task that should not interrupt the high-focus deadline work.",
+  "cca-notes":
+    "StudentOS schedules this before the briefing so the CCA lead can capture notes during the event while the student stays in tuition.",
+  tuition:
+    "Tuition is kept at 4:30-6:30 PM because it is externally fixed; the planner moves flexible work around it instead of pretending it can bend.",
+  revision:
+    "Revision moves to 7:45 PM because it is flexible and lighter than deadline homework, making it a better post-dinner block.",
+  "coding-practice":
+    "Coding practice is scheduled at 9:00 PM because it advances the December goal without stealing the student’s strongest focus from tomorrow’s Physics deadline.",
+  "coding-fundamentals-session-1":
+    "The first coding fundamentals session starts on 17 June so the student gets a near-term next action after immediate school deadlines clear.",
+  "mini-project-brief":
+    "The mini-project brief is placed on 24 June after a fundamentals session so the student defines a build only after getting basic syntax context.",
+  "physics-circuits":
+    "Circuits revision is scheduled on 16 June to create a buffer before the Friday deadline while avoiding the overloaded conflict day.",
+  "project-meeting-prep":
+    "Project meeting prep lands on 18 June because it is close enough to the 19 June discussion to stay relevant without competing with immediate homework.",
+};
+
+function defaultScheduleRationale(task: DemoPlanTask) {
+  const baseId = task.id.replace(/-session-\d+$/, "");
+  if (defaultScheduleRationales[task.id]) return defaultScheduleRationales[task.id];
+  if (defaultScheduleRationales[baseId]) return defaultScheduleRationales[baseId];
+  return `StudentOS placed ${baseTaskTitle(task.title)} at ${scheduleLabelForTask(task)} because that slot best balances urgency, fixed events, and the student's likely energy.`;
+}
+
+function enrichPlanTasksWithRationales(tasks: DemoPlanTask[]) {
+  return tasks.map((task) => ({
+    ...task,
+    scheduleRationale: task.scheduleRationale ?? defaultScheduleRationale(task),
+  }));
+}
+
+function scheduleRationaleForTask(task: DemoPlanTask) {
+  return task.scheduleRationale ?? defaultScheduleRationale(task);
+}
+
+function taskForTimelineEvent(event: TimelineEvent | null, tasks: DemoPlanTask[]) {
+  if (!event) return undefined;
+
+  const aliases: Record<string, string[]> = {
+    coding: ["coding-practice"],
+    notes: ["cca-notes"],
+    physics: ["physics-focus"],
+  };
+  const candidates = [event.id, ...(aliases[event.id] ?? [])];
+  return tasks.find((task) => candidates.includes(task.id));
+}
+
+function scheduleRationaleForEvent(event: TimelineEvent | null, tasks: DemoPlanTask[]) {
+  if (!event) return "";
+  const matchingTask = taskForTimelineEvent(event, tasks);
+  return matchingTask ? scheduleRationaleForTask(matchingTask) : event.scheduleRationale ?? "StudentOS placed this block around fixed events, urgency, and the student’s remaining focus for the day.";
+}
+
+function movedScheduleRationale(task: DemoPlanTask, schedule: string) {
+  const deadline = task.deadline ? ` before ${task.deadline}` : "";
+  return `StudentOS moved ${baseTaskTitle(task.title)} to ${schedule} because it still fits${deadline} while reducing pressure on the original slot.`;
+}
+
 function questionForSheet(question?: AIClarificationQuestion): ClarificationQuestion[] | undefined {
   if (!question) return undefined;
 
@@ -535,7 +603,9 @@ export default function CommitmentsPage() {
   const [chemistryAdded, setChemistryAdded] = useState(false);
   const [roadmapAdded, setRoadmapAdded] = useState(true);
   const [planHydrated, setPlanHydrated] = useState(false);
-  const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(initialPlanTasks);
+  const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(() =>
+    enrichPlanTasksWithRationales(initialPlanTasks)
+  );
   const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
   const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
   const [aiPlanLoading, setAiPlanLoading] = useState(false);
@@ -570,6 +640,10 @@ export default function CommitmentsPage() {
     if (!selectedTaskForEdit) return null;
     return planTasks.find((task) => task.id === selectedTaskForEdit.id) ?? selectedTaskForEdit;
   }, [planTasks, selectedTaskForEdit]);
+  const selectedEventRationale = useMemo(
+    () => scheduleRationaleForEvent(selectedEvent, planTasks),
+    [planTasks, selectedEvent],
+  );
   const canScheduleEarlier = canMoveTaskDate(selectedTask, -1);
   const canScheduleLater = canMoveTaskDate(selectedTask, 1);
   const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanReasoning;
@@ -615,7 +689,7 @@ export default function CommitmentsPage() {
           loadedFootprint = true;
           setAiFootprint(parsedFootprint);
           setCommitments(parsedFootprint.commitments);
-          setPlanTasks(parsedFootprint.planTasks);
+          setPlanTasks(enrichPlanTasksWithRationales(parsedFootprint.planTasks));
           setBaseTimeline(parsedFootprint.timelineEvents);
           setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
           setConflictAnalysis(parsedFootprint.conflict);
@@ -640,7 +714,7 @@ export default function CommitmentsPage() {
       if (!loadedFootprint && savedPlan) {
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
         if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
-          setPlanTasks(parsedPlan);
+          setPlanTasks(enrichPlanTasksWithRationales(parsedPlan));
         }
       }
 
@@ -657,7 +731,7 @@ export default function CommitmentsPage() {
         setResolutionMode("recommended");
       }
     } catch {
-      setPlanTasks(initialPlanTasks);
+      setPlanTasks(enrichPlanTasksWithRationales(initialPlanTasks));
     } finally {
       setPlanHydrated(true);
     }
@@ -967,6 +1041,8 @@ export default function CommitmentsPage() {
       deadline: "8 PM tonight",
       deadlineDateId: "2026-06-09",
       reason: "New commitment inserted before the evening deadline",
+      scheduleRationale:
+        "Chemistry is inserted before 8 PM because it has a same-day deadline; coding moves later because goal practice is less urgent and can tolerate night fatigue better than deadline work.",
       source: "Added task",
       updated: true
     };
@@ -980,6 +1056,8 @@ export default function CommitmentsPage() {
               ...task,
               timeLabel: "9:45 PM",
               reason: "Moved later after Chemistry",
+              scheduleRationale:
+                "Coding practice moves to 9:45 PM because Chemistry now owns the pre-8 PM deadline slot, while coding remains a lower-urgency December goal block.",
               updated: true
             }
           : task
@@ -1025,6 +1103,7 @@ export default function CommitmentsPage() {
               scheduledDateId: date.id,
               scheduledDate: date.label,
               scheduledDateRange: undefined,
+              scheduleRationale: movedScheduleRationale(task, date.label),
               updated: true
             }
           : task
@@ -1063,6 +1142,7 @@ export default function CommitmentsPage() {
       id: `${selectedTask.id}-session-1`,
       title: `${baseTitle} — Session 1`,
       estimatedMinutes: firstDuration,
+      scheduleRationale: `StudentOS keeps the first half on ${scheduleLabelForTask(selectedTask)} so progress starts in the original slot without overloading one session.`,
       updated: true
     };
     const sessionTwo: DemoPlanTask = {
@@ -1079,6 +1159,7 @@ export default function CommitmentsPage() {
           : selectedTask.timeLabel
             ? "Next session"
             : undefined,
+      scheduleRationale: `StudentOS places the second half on ${nextDate?.label ?? scheduleLabelForTask(selectedTask)} so the task gets recovery space instead of becoming one long low-quality block.`,
       updated: true
     };
 
@@ -1446,9 +1527,7 @@ export default function CommitmentsPage() {
               Rationale for Schedule
             </p>
             <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
-              {conflictResolved
-                ? "This block is now handled in the rebuilt schedule."
-                : "This block is part of the CCA and tuition clash."}
+              {selectedEventRationale}
             </p>
           </div>
           {!conflictResolved ? (

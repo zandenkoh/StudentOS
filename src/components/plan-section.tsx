@@ -10,6 +10,10 @@ function scheduleLabel(task: DemoPlanTask) {
   return task.scheduledDateRange ?? task.scheduledDate ?? task.timeLabel ?? null;
 }
 
+function scheduleRationale(task: DemoPlanTask) {
+  return task.scheduleRationale ?? task.reason ?? null;
+}
+
 function PlanTaskCard({
   task,
   future,
@@ -21,6 +25,7 @@ function PlanTaskCard({
 }) {
   const schedule = scheduleLabel(task);
   const duration = durationLabel(task);
+  const rationale = scheduleRationale(task);
 
   return (
     <button
@@ -77,8 +82,8 @@ function PlanTaskCard({
                   {duration}
                 </p>
               ) : null}
-              {task.reason ? (
-                <p className="text-[13px] leading-5 text-muted">{task.reason}</p>
+              {rationale ? (
+                <p className="text-[13px] leading-5 text-muted">{rationale}</p>
               ) : null}
             </div>
           ) : (
@@ -91,7 +96,7 @@ function PlanTaskCard({
               ) : null}
               {duration ? <span>{duration}</span> : null}
               {task.deadline ? <span>Deadline: {task.deadline}</span> : null}
-              {task.reason ? <span>{task.reason}</span> : null}
+              {rationale ? <span>{rationale}</span> : null}
             </div>
           )}
         </div>

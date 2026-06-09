@@ -6,6 +6,7 @@ export const sponsorEnv = {
   useBedrock: process.env.USE_REAL_BEDROCK === "true",
   aiGatewayModel: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4-mini",
   aiGatewayFallbackModel: process.env.AI_GATEWAY_FALLBACK_MODEL || "openai/gpt-5.1-instant",
+  aiGatewayResearchModel: process.env.AI_GATEWAY_RESEARCH_MODEL || "anthropic/claude-sonnet-4.6",
   exaApiKey: process.env.EXA_API_KEY,
   awsRegion: process.env.AWS_REGION || "us-west-2",
   awsTextractRegion: process.env.AWS_TEXTRACT_REGION || process.env.AWS_REGION || "us-west-2",

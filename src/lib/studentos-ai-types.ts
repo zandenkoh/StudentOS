@@ -90,6 +90,17 @@ export type AIAgentLog = {
 export type AIGoalResearch = {
   query: string;
   summary: string;
+  model?: string;
+  searchQueries?: string[];
+  sections?: Array<{
+    title: string;
+    bullets: string[];
+  }>;
+  clarificationQuestions?: Array<{
+    question: string;
+    why: string;
+  }>;
+  researchGaps?: string[];
   citations: Array<{
     title: string;
     url: string;

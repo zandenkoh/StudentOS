@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Clock3, Route } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Clock3, ExternalLink, HelpCircle, Route, Search } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
@@ -121,17 +121,66 @@ export default function RoadmapPage() {
           </div>
 
           {goalResearch ? (
-            <div className="mt-3 rounded-2xl border border-violet-100 bg-violet-50 p-3">
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-violet-700">
-                Live context from Exa
-              </p>
-              <p className="mt-2 text-[13px] font-semibold leading-5 text-violet-950">
+            <div className="mt-3 rounded-2xl border border-neutral-200 bg-neutral-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-500">
+                  <Search className="size-3.5" />
+                  Deep context from Exa
+                </p>
+                <SourceChip tone="success">
+                  {goalResearch.searchQueries?.length ?? 1} searches
+                </SourceChip>
+              </div>
+              <p className="mt-2 text-[13px] font-semibold leading-5 text-ink">
                 {goalResearch.summary}
               </p>
+
+              {goalResearch.sections?.length ? (
+                <div className="mt-3 space-y-3">
+                  {goalResearch.sections.slice(0, 3).map((section) => (
+                    <div key={section.title} className="border-t border-neutral-200 pt-3">
+                      <p className="text-[13px] font-bold text-ink">{section.title}</p>
+                      <ul className="mt-1 space-y-1">
+                        {section.bullets.slice(0, 3).map((bullet) => (
+                          <li key={bullet} className="text-[12px] leading-5 text-neutral-600">
+                            {bullet}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {goalResearch.clarificationQuestions?.length ? (
+                <div className="mt-3 border-t border-neutral-200 pt-3">
+                  <p className="flex items-center gap-1.5 text-[13px] font-bold text-ink">
+                    <HelpCircle className="size-4" />
+                    Questions before finalizing
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {goalResearch.clarificationQuestions.slice(0, 3).map((item) => (
+                      <li key={item.question} className="text-[12px] leading-5 text-neutral-600">
+                        {item.question}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
               {goalResearch.citations.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {goalResearch.citations.slice(0, 2).map((citation) => (
-                    <SourceChip key={citation.url}>{citation.title}</SourceChip>
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-neutral-200 pt-3">
+                  {goalResearch.citations.slice(0, 4).map((citation) => (
+                    <a
+                      key={citation.url}
+                      href={citation.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex max-w-full items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-600"
+                    >
+                      <span className="truncate">{citation.title}</span>
+                      <ExternalLink className="size-3 shrink-0" />
+                    </a>
                   ))}
                 </div>
               ) : null}

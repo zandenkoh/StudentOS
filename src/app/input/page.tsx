@@ -187,6 +187,24 @@ export default function InputPage() {
     }
   }, [inputText]);
 
+  useEffect(() => {
+    const savedGoal = window.localStorage.getItem("studentos_manual_goal")?.trim();
+
+    if (!savedGoal) return;
+
+    setSources([
+      {
+        id: "manual-goal",
+        icon: FileText,
+        title: "Manual goal",
+        source: "Goal Command",
+        snippet: savedGoal,
+        fileSize: `${Math.max(1, Math.round(savedGoal.length * 0.1))} KB`,
+        fileType: "text",
+      },
+    ]);
+  }, []);
+
   // Audio simulation
   useEffect(() => {
     if (audioPlaying) {

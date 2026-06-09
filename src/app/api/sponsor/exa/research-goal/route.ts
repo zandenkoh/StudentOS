@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { exaSearch } from "@/lib/sponsor-tech/exa";
+import { deepResearchGoal } from "@/lib/sponsor-tech/exa";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 const RequestSchema = z.object({
   goal: z.string().min(1),
+  clarificationAnswers: z.array(z.object({
+    question: z.string(),
+    answer: z.string(),
+  })).optional(),
 });
 
 export async function POST(req: Request) {
@@ -24,29 +29,32 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await exaSearch(parsed.data.goal);
-    const results = result.results ?? [];
+    const goal = parsed.data.clarificationAnswers?.length
+      ? [
+          parsed.data.goal,
+          "Clarification answers:",
+          ...parsed.data.clarificationAnswers.map((item) => `Q: ${item.question}\nA: ${item.answer}`),
+        ].join("\n")
+      : parsed.data.goal;
+    const result = await deepResearchGoal(goal);
 
     return NextResponse.json({
       provider: "exa",
       status: "success",
       query: parsed.data.goal,
-      summary: results
-        .slice(0, 3)
-        .map((item) => item.highlights?.[0] || item.text || item.title)
-        .filter(Boolean)
-        .join(" ")
-        .slice(0, 700),
-      citations: results
-        .filter((item) => item.title && item.url)
-        .slice(0, 4)
-        .map((item) => ({ title: item.title, url: item.url })),
+      model: result.model,
+      summary: result.summary,
+      sections: result.sections,
+      clarificationQuestions: result.clarificationQuestions,
+      researchGaps: result.researchGaps,
+      searchQueries: result.searchQueries,
+      citations: result.citations,
       trace: [
         {
-          provider: "Exa",
-          action: "Researched broad goal context",
+          provider: result.model ? "Vercel AI Gateway + Exa" : "Exa",
+          action: "Deep researched goal context",
           status: "success",
-          detail: `${results.length} Exa results returned.`,
+          detail: `${result.searchQueries.length} Exa searches, ${result.citations.length} citations.`,
         },
       ],
     });
@@ -56,6 +64,15 @@ export async function POST(req: Request) {
       status: "fallback",
       query: parsed.data.goal,
       summary: "Exa research unavailable; StudentOS will keep the fallback roadmap.",
+      sections: [],
+      clarificationQuestions: [
+        {
+          question: "Which exact event page or organizer should StudentOS use?",
+          why: "The exact source controls eligibility, deadlines, and judging criteria.",
+        },
+      ],
+      researchGaps: ["Deep Exa research did not complete."],
+      searchQueries: [],
       citations: [],
       trace: [
         {

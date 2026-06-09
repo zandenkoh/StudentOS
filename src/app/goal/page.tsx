@@ -10,11 +10,15 @@ export default function GoalPage() {
   const [goal, setGoal] = useState(
     "I want to become proficient with Python data-handling libraries by the end of this year."
   );
+  const submitGoal = () => {
+    window.localStorage.setItem("studentos_manual_goal", goal.trim());
+    router.push("/input");
+  };
 
   return (
     <AppShell stepLabel="Manual Goal" progress={0.22} route="goal">
       <div className="safe-bottom-padding px-5 pt-2">
-        <GoalCommandInput value={goal} onChange={setGoal} onSubmit={() => router.push("/input")} />
+        <GoalCommandInput value={goal} onChange={setGoal} onSubmit={submitGoal} />
       </div>
     </AppShell>
   );
