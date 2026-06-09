@@ -28,10 +28,12 @@ export function GoalCommandInput({
         onChange={(event) => onChange(event.target.value)}
         className="min-h-36 w-full resize-none rounded-[22px] border border-neutral-200 bg-white p-4 text-[18px] font-semibold leading-7 outline-none placeholder:text-neutral-300 focus:border-neutral-400 focus:ring-0"
       />
-      <PrimaryButton onClick={onSubmit} className="mt-4">
-        <Sparkles className="size-4" />
-        Plan this goal
-      </PrimaryButton>
+      <div className="fixed-bottom-action">
+        <PrimaryButton onClick={onSubmit}>
+          <Sparkles className="size-4" />
+          Plan this goal
+        </PrimaryButton>
+      </div>
       <p className="mt-4 text-[13px] leading-5 text-muted">
         StudentOS will clarify the goal, break it down, and schedule it around your week.
       </p>

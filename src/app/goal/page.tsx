@@ -51,7 +51,7 @@ export default function GoalPage() {
 
   return (
     <AppShell route="goal" stepLabel="/goal" progress={stage === "input" ? 0.25 : stage === "identified" ? 0.55 : 1}>
-      <div className="px-5 pb-24">
+      <div className="safe-bottom-padding px-5">
         <AnimatePresence mode="wait">
           {stage === "input" ? (
             <motion.div
@@ -134,7 +134,7 @@ export default function GoalPage() {
                     ]}
                   />
 
-                  <div className="flex flex-col gap-3">
+                  <div className="fixed-bottom-action flex flex-col gap-3">
                     <PrimaryButton onClick={() => setAdded(true)}>
                       <CalendarPlus className="size-4" />
                       Add to weekly plan
@@ -145,7 +145,9 @@ export default function GoalPage() {
                   </div>
                 </>
               ) : (
-                <PrimaryButton onClick={() => setSheetOpen(true)}>Clarify goal</PrimaryButton>
+                <div className="fixed-bottom-action">
+                  <PrimaryButton onClick={() => setSheetOpen(true)}>Clarify goal</PrimaryButton>
+                </div>
               )}
             </motion.div>
           )}
@@ -165,7 +167,7 @@ export default function GoalPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-white shadow-lift"
+            className="fixed-bottom-toast flex items-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-white shadow-lift"
           >
             <CheckCircle2 className="size-4" />
             Weekly plan updated

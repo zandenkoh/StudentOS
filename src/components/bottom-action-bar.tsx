@@ -11,7 +11,7 @@ export function BottomActionBar({
   onReasoning: () => void;
 }) {
   return (
-    <div className="sticky bottom-0 z-20 border-t border-neutral-100 bg-white/88 p-4 backdrop-blur-xl">
+    <div className="fixed-bottom-action">
       <PrimaryButton onClick={onExport}>
         <CalendarPlus className="size-4" />
         Export to Calendar
