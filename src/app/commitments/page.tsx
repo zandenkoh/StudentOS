@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -26,18 +26,25 @@ import { CommitmentCard } from "@/components/commitment-card";
 import { ConflictSummaryCard } from "@/components/conflict-summary-card";
 import { ExportSuccessSheet } from "@/components/export-success-sheet";
 import { FocusActionCard } from "@/components/focus-action-card";
+import { GoalRoadmapCard } from "@/components/goal-roadmap-card";
+import { ManualConflictSheet } from "@/components/manual-conflict-sheet";
 import { MobileTimeline } from "@/components/mobile-timeline";
 import { PlanSection } from "@/components/plan-section";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { ScreenHeader } from "@/components/screen-header";
 import { SourceChip } from "@/components/source-chip";
+import { TaskEditBottomSheet } from "@/components/task-edit-bottom-sheet";
 
 import {
   baseCommitments,
-  planSections,
+  demoScheduleDateOptions,
+  initialPlanTasks,
+  manualResolvedTimelineEvents,
   resolvedTimelineEvents,
   timelineEvents,
   type Commitment,
+  type DemoPlanTask,
+  type PlanTaskSection,
   type TimelineEvent
 } from "@/lib/demo-data";
 
@@ -70,17 +77,22 @@ type EditDraft = {
   estimatedDuration: string;
 };
 
-type PlanItem = {
-  title: string;
-  meta: string;
-  badge?: string;
-  highlight?: boolean;
-};
-
 type PlanDisplaySection = {
   title: string;
-  items: PlanItem[];
+  section: PlanTaskSection;
+  items: DemoPlanTask[];
 };
+
+type ResolutionMode = "recommended" | "manual" | null;
+
+const MANUAL_CONFLICT_INSTRUCTION =
+  "Physics teacher has granted extension for worksheet deadline to 16 June. Reschedule tuition accordingly, so that it no longer clashes with CCA briefing.";
+
+const planSectionOrder: Array<{ title: string; section: PlanTaskSection }> = [
+  { title: "Do now", section: "do_now" },
+  { title: "Do next", section: "do_next" },
+  { title: "Subsequent days", section: "subsequent_days" }
+];
 
 const commitmentSourcePreviews: Record<string, SourcePreview> = {
   physics: {
@@ -236,10 +248,94 @@ function AddSourceButton({
         className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-bold text-ink shadow-[0_12px_35px_rgba(0,0,0,0.12)]"
       >
         <Plus className="size-4" />
-        Add source
+        Add task
       </button>
     </div>
   );
+}
+
+function GoalCandidateCard({
+  commitment,
+  onClick,
+  onSourceClick
+}: {
+  commitment: Commitment;
+  onClick: () => void;
+  onSourceClick?: () => void;
+}) {
+  const needsDirection = commitment.state === "needs_clarification";
+
+  return (
+    <motion.div
+      layout
+      whileTap={{ scale: 0.985 }}
+      onClick={onClick}
+      className="w-full cursor-pointer rounded-[24px] border border-neutral-200 bg-white p-4 text-left shadow-[0_12px_45px_rgba(0,0,0,0.045)] transition hover:bg-neutral-50"
+    >
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <SourceChip>Goal</SourceChip>
+            <SourceChip tone={needsDirection ? "danger" : "success"}>
+              {needsDirection ? "Needs direction" : "Roadmap ready"}
+            </SourceChip>
+          </div>
+          <p className="text-[16px] font-semibold leading-5 text-ink">
+            {commitment.title}
+          </p>
+          <p className="mt-2 text-[13px] leading-5 text-muted">
+            StudentOS will break this into scheduled steps.
+          </p>
+        </div>
+        <ChevronRight className="mt-1 size-5 shrink-0 text-neutral-300" />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onSourceClick?.();
+          }}
+          className="rounded-full transition hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-ink/20"
+          aria-label={`Open source for ${commitment.title}`}
+        >
+          <SourceChip>{commitment.source}</SourceChip>
+        </button>
+        <SourceChip>{commitment.estimatedDuration}</SourceChip>
+      </div>
+      <p
+        className={`mt-3 text-xs font-semibold ${
+          needsDirection ? "text-red-700" : "text-emerald-700"
+        }`}
+      >
+        {needsDirection ? "Tap to clarify roadmap" : "Roadmap ready"}
+      </p>
+    </motion.div>
+  );
+}
+
+function dateOptionFor(dateId: string) {
+  return demoScheduleDateOptions.find((date) => date.id === dateId);
+}
+
+function dateIndexFor(task: DemoPlanTask | null) {
+  if (!task?.scheduledDateId) return -1;
+  return demoScheduleDateOptions.findIndex((date) => date.id === task.scheduledDateId);
+}
+
+function canMoveTaskDate(task: DemoPlanTask | null, direction: -1 | 1) {
+  const currentIndex = dateIndexFor(task);
+  if (currentIndex < 0) return false;
+  const nextDate = demoScheduleDateOptions[currentIndex + direction];
+  if (!nextDate) return false;
+  if (direction > 0 && task?.deadlineDateId && nextDate.id > task.deadlineDateId) {
+    return false;
+  }
+  return true;
+}
+
+function baseTaskTitle(title: string) {
+  return title.replace(/\s+— Session \d+$/, "");
 }
 
 export default function CommitmentsPage() {
@@ -256,6 +352,11 @@ export default function CommitmentsPage() {
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
   const [conflictResolved, setConflictResolved] = useState(false);
+  const [resolutionMode, setResolutionMode] = useState<ResolutionMode>(null);
+  const [manualConflictOpen, setManualConflictOpen] = useState(false);
+  const [manualConflictInstruction, setManualConflictInstruction] = useState(
+    MANUAL_CONFLICT_INSTRUCTION
+  );
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [reasoningOpen, setReasoningOpen] = useState(false);
@@ -263,48 +364,67 @@ export default function CommitmentsPage() {
   const [sourceDraft, setSourceDraft] = useState("");
   const [impactOpen, setImpactOpen] = useState(false);
   const [chemistryAdded, setChemistryAdded] = useState(false);
+  const [roadmapAdded, setRoadmapAdded] = useState(true);
+  const [planHydrated, setPlanHydrated] = useState(false);
+  const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(initialPlanTasks);
+  const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
 
   const unresolvedCount = commitments.filter(
     (item) => item.state === "needs_clarification" || item.state === "unsure"
   ).length;
   const displayedPlanSections = useMemo<PlanDisplaySection[]>(() => {
-    if (!chemistryAdded) return planSections;
+    return planSectionOrder.map((section) => ({
+      ...section,
+      items: planTasks.filter((task) => task.section === section.section)
+    }));
+  }, [planTasks]);
+  const commitmentItems = commitments.filter((item) => item.type !== "goal");
+  const goalItems = commitments.filter((item) => item.type === "goal");
+  const visibleTimelineEvents = !conflictResolved
+    ? timelineEvents
+    : resolutionMode === "manual"
+      ? manualResolvedTimelineEvents
+      : resolvedTimelineEvents;
+  const selectedTask = useMemo(() => {
+    if (!selectedTaskForEdit) return null;
+    return planTasks.find((task) => task.id === selectedTaskForEdit.id) ?? selectedTaskForEdit;
+  }, [planTasks, selectedTaskForEdit]);
+  const canScheduleEarlier = canMoveTaskDate(selectedTask, -1);
+  const canScheduleLater = canMoveTaskDate(selectedTask, 1);
 
-    return planSections.map((section) => {
-      if (section.title === "Do next") {
-        return {
-          ...section,
-          items: [
-            {
-              title: "Chemistry worksheet",
-              meta: "30 min · Due tonight before 8 PM",
-              badge: "Updated",
-              highlight: true
-            },
-            ...section.items
-          ]
-        };
+  useEffect(() => {
+    try {
+      const savedPlan = window.localStorage.getItem("studentos_plan_overrides");
+      if (savedPlan) {
+        const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
+        if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
+          setPlanTasks(parsedPlan);
+        }
       }
 
-      if (section.title === "Do later") {
-        return {
-          ...section,
-          items: section.items.map((item) =>
-            item.title === "Coding practice"
-              ? {
-                  ...item,
-                  meta: "9:45 PM · Moved later after Chemistry",
-                  badge: "Updated",
-                  highlight: true
-                }
-              : item
-          )
-        };
+      if (window.localStorage.getItem("studentos_extra_source_added")) {
+        setChemistryAdded(true);
       }
 
-      return section;
-    });
-  }, [chemistryAdded]);
+      window.localStorage.setItem("studentos_roadmap_added", "true");
+      setRoadmapAdded(true);
+
+      if (window.localStorage.getItem("studentos_resume_step") === "plan") {
+        setStep("plan");
+        setConflictResolved(true);
+        setResolutionMode("recommended");
+      }
+    } catch {
+      setPlanTasks(initialPlanTasks);
+    } finally {
+      setPlanHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!planHydrated) return;
+    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
+  }, [planHydrated, planTasks]);
 
   function showToast(message: string) {
     setToastMessage(message);
@@ -319,8 +439,8 @@ export default function CommitmentsPage() {
             ...item,
             state: "confirmed",
             confidence: 92,
-            estimatedDuration: "5hr/week",
-            explanation: "Broken into weekly coding blocks."
+            estimatedDuration: "2 sessions/week",
+            explanation: "Roadmap ready: 6 steps scheduled across Jun-Dec."
           };
         }
         if (kind === "team" && item.id === "team") {
@@ -339,13 +459,31 @@ export default function CommitmentsPage() {
     setClarifying(null);
   }
 
-  function applyConflictPlan() {
-    if (conflictResolved) {
+  function applySuggestedConflict(continueToPlan = false) {
+    if (!conflictResolved) {
+      setConflictResolved(true);
+      setResolutionMode("recommended");
+      showToast("Suggested deconflict applied");
+    }
+
+    if (continueToPlan) {
       setStep("plan");
+    }
+  }
+
+  function applyManualInstruction() {
+    setConflictResolved(true);
+    setResolutionMode("manual");
+    setManualConflictOpen(false);
+    showToast("Manual instruction applied");
+  }
+
+  function applyAndContinue() {
+    if (!conflictResolved) {
+      applySuggestedConflict(true);
       return;
     }
-    setConflictResolved(true);
-    showToast("Plan updated");
+    setStep("plan");
   }
 
   function reset() {
@@ -364,10 +502,147 @@ export default function CommitmentsPage() {
   }
 
   function updatePlanWithChemistry() {
+    if (chemistryAdded) {
+      setImpactOpen(false);
+      showToast("Chemistry already in plan");
+      return;
+    }
+
+    const chemistryTask: DemoPlanTask = {
+      id: "chemistry-worksheet",
+      title: "Chemistry worksheet",
+      section: "do_next",
+      estimatedMinutes: 30,
+      timeLabel: "Before 8 PM",
+      deadline: "8 PM tonight",
+      deadlineDateId: "2026-06-09",
+      reason: "New commitment inserted before the evening deadline",
+      source: "Added task",
+      updated: true
+    };
+
+    setPlanTasks((current) => {
+      if (current.some((task) => task.id === chemistryTask.id)) return current;
+
+      const updatedTasks = current.map((task) =>
+        task.id === "coding-practice"
+          ? {
+              ...task,
+              timeLabel: "9:45 PM",
+              reason: "Moved later after Chemistry",
+              updated: true
+            }
+          : task
+      );
+      const codingIndex = updatedTasks.findIndex((task) => task.id === "coding-practice");
+
+      if (codingIndex < 0) {
+        const firstFutureIndex = updatedTasks.findIndex(
+          (task) => task.section === "subsequent_days"
+        );
+        if (firstFutureIndex < 0) return [...updatedTasks, chemistryTask];
+        return [
+          ...updatedTasks.slice(0, firstFutureIndex),
+          chemistryTask,
+          ...updatedTasks.slice(firstFutureIndex)
+        ];
+      }
+
+      return [
+        ...updatedTasks.slice(0, codingIndex),
+        chemistryTask,
+        ...updatedTasks.slice(codingIndex)
+      ];
+    });
     setChemistryAdded(true);
     window.localStorage.setItem("studentos_extra_source_added", "chemistry_worksheet_due_8pm");
     setImpactOpen(false);
     showToast("Plan updated");
+  }
+
+  function updateSelectedTaskDate(dateId: string) {
+    if (!selectedTask) return;
+    const date = dateOptionFor(dateId);
+    if (!date) return;
+
+    setPlanTasks((current) =>
+      current.map((task) =>
+        task.id === selectedTask.id
+          ? {
+              ...task,
+              scheduledDateId: date.id,
+              scheduledDate: date.label,
+              scheduledDateRange: undefined,
+              updated: true
+            }
+          : task
+      )
+    );
+    showToast("Schedule updated");
+  }
+
+  function moveSelectedTaskDate(direction: -1 | 1) {
+    if (!selectedTask) return;
+    const currentIndex = dateIndexFor(selectedTask);
+    const nextDate = demoScheduleDateOptions[currentIndex + direction];
+    if (!nextDate) return;
+    if (direction > 0 && selectedTask.deadlineDateId && nextDate.id > selectedTask.deadlineDateId) {
+      return;
+    }
+    updateSelectedTaskDate(nextDate.id);
+  }
+
+  function splitSelectedTask() {
+    if (!selectedTask) return;
+
+    const baseTitle = baseTaskTitle(selectedTask.title);
+    const firstDuration = selectedTask.estimatedMinutes
+      ? Math.ceil(selectedTask.estimatedMinutes / 2)
+      : undefined;
+    const secondDuration = selectedTask.estimatedMinutes
+      ? Math.floor(selectedTask.estimatedMinutes / 2)
+      : undefined;
+    const nextDateIndex = dateIndexFor(selectedTask) + 1;
+    const nextDate = selectedTask.section === "subsequent_days"
+      ? demoScheduleDateOptions[nextDateIndex]
+      : undefined;
+    const sessionOne: DemoPlanTask = {
+      ...selectedTask,
+      id: `${selectedTask.id}-session-1`,
+      title: `${baseTitle} — Session 1`,
+      estimatedMinutes: firstDuration,
+      updated: true
+    };
+    const sessionTwo: DemoPlanTask = {
+      ...selectedTask,
+      id: `${selectedTask.id}-session-2`,
+      title: `${baseTitle} — Session 2`,
+      estimatedMinutes: secondDuration,
+      scheduledDateId: nextDate?.id ?? selectedTask.scheduledDateId,
+      scheduledDate: nextDate?.label ?? selectedTask.scheduledDate,
+      scheduledDateRange: undefined,
+      timeLabel:
+        selectedTask.section === "subsequent_days"
+          ? selectedTask.timeLabel
+          : selectedTask.timeLabel
+            ? "Next session"
+            : undefined,
+      updated: true
+    };
+
+    setPlanTasks((current) =>
+      current.flatMap((task) => (task.id === selectedTask.id ? [sessionOne, sessionTwo] : [task]))
+    );
+    setSelectedTaskForEdit(null);
+    showToast("Task split into 2 sessions");
+  }
+
+  function viewRoadmap() {
+    window.localStorage.setItem("studentos_roadmap_added", "true");
+    window.localStorage.setItem("studentos_resume_step", "plan");
+    window.localStorage.setItem("studentos_plan_overrides", JSON.stringify(planTasks));
+    setRoadmapAdded(true);
+    router.push("/roadmap");
   }
 
   function openEditor(commitment: Commitment) {
@@ -420,24 +695,53 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader
-                title="Detected items"
-                subtitle="Tap any item to edit, confirm, or give more context."
+                title="Review extracted items"
+                subtitle="StudentOS separated obligations from longer-term goals."
               />
-              <div className="space-y-3 pb-8">
-                {commitments.map((commitment) => (
-                  <CommitmentCard
-                    key={commitment.id}
-                    commitment={commitment}
-                    onClick={() => {
-                      if (commitment.state === "needs_clarification") setClarifying("goal");
-                      else if (commitment.state === "unsure") setClarifying("team");
-                      else openEditor(commitment);
-                    }}
-                    onSourceClick={() => {
-                      setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
-                    }}
-                  />
-                ))}
+              <div className="space-y-6 pb-8">
+                <section className="space-y-3">
+                  <div className="px-1">
+                    <h2 className="text-[18px] font-semibold text-ink">Commitments</h2>
+                    <p className="mt-1 text-[13px] leading-5 text-muted">
+                      Tasks, fixed events, and deadlines StudentOS must schedule around.
+                    </p>
+                  </div>
+                  {commitmentItems.map((commitment) => (
+                    <CommitmentCard
+                      key={commitment.id}
+                      commitment={commitment}
+                      onClick={() => {
+                        if (commitment.state === "unsure") setClarifying("team");
+                        else openEditor(commitment);
+                      }}
+                      onSourceClick={() => {
+                        setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
+                      }}
+                    />
+                  ))}
+                </section>
+
+                <section className="space-y-3">
+                  <div className="px-1">
+                    <h2 className="text-[18px] font-semibold text-ink">Goals</h2>
+                    <p className="mt-1 text-[13px] leading-5 text-muted">
+                      Self-directed ambitions that need a roadmap, not a single checkbox.
+                    </p>
+                  </div>
+                  {goalItems.map((commitment) => (
+                    <GoalCandidateCard
+                      key={commitment.id}
+                      commitment={commitment}
+                      onClick={() => {
+                        if (commitment.state === "needs_clarification") setClarifying("goal");
+                        else openEditor(commitment);
+                      }}
+                      onSourceClick={() => {
+                        setSourcePreview(commitmentSourcePreviews[commitment.id] ?? null);
+                      }}
+                    />
+                  ))}
+                </section>
               </div>
 
               {/* Fixed Bottom Action Button */}
@@ -474,36 +778,36 @@ export default function CommitmentsPage() {
                 title={conflictResolved ? "Conflict resolved" : "Conflict found"}
                 subtitle={
                   conflictResolved
-                    ? "StudentOS updated the day without moving fixed commitments."
+                    ? resolutionMode === "manual"
+                      ? "StudentOS used your instruction and rebuilt the clash."
+                      : "StudentOS updated the day without moving fixed commitments."
                     : "CCA briefing overlaps with tuition. StudentOS found a cleaner schedule."
                 }
               />
-              <ConflictSummaryCard resolved={conflictResolved} />
+              <ConflictSummaryCard resolved={conflictResolved} resolutionMode={resolutionMode} />
               
               <MobileTimeline
-                events={conflictResolved ? resolvedTimelineEvents : timelineEvents}
+                events={visibleTimelineEvents}
                 resolved={conflictResolved}
                 onEventClick={setSelectedEvent}
               />
               
               <RecommendationCard
                 resolved={conflictResolved}
-                onApply={applyConflictPlan}
-                onEdit={() => setSelectedEvent(timelineEvents[2])}
+                resolutionMode={resolutionMode}
+                onApply={() => {
+                  if (conflictResolved) setStep("plan");
+                  else applySuggestedConflict(false);
+                }}
+                onEdit={() => setManualConflictOpen(true)}
               />
 
-              {/* Fixed Bottom Action Button when resolved */}
               <div className="fixed-bottom-action">
                 <button
-                  disabled={!conflictResolved}
-                  onClick={() => setStep("plan")}
-                  className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-                    conflictResolved 
-                      ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
-                      : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
-                  }`}
+                  onClick={applyAndContinue}
+                  className="flex h-[60px] w-full items-center justify-center gap-2 rounded-full bg-ink text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all hover:scale-[1.01] active:scale-[0.99]"
                 >
-                  <span>Continue to plan</span>
+                  <span>Apply and continue</span>
                   <ChevronRight className="size-4.5" />
                 </button>
               </div>
@@ -520,9 +824,15 @@ export default function CommitmentsPage() {
             >
               <ScreenHeader title="Your plan is ready" subtitle="The day is clean, sequenced, and ready to execute." />
               <FocusActionCard onExplain={() => setReasoningOpen(true)} />
+              <GoalRoadmapCard onView={viewRoadmap} roadmapAdded={roadmapAdded} />
               <div className="space-y-6">
                 {displayedPlanSections.map((section) => (
-                  <PlanSection key={section.title} title={section.title} items={section.items} />
+                  <PlanSection
+                    key={section.title}
+                    title={section.title}
+                    items={section.items}
+                    onTaskClick={setSelectedTaskForEdit}
+                  />
                 ))}
               </div>
             </motion.div>
@@ -634,20 +944,32 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={selectedEvent !== null}
         onClose={() => setSelectedEvent(null)}
-        title={selectedEvent?.title ?? "Edit event"}
+        title={selectedEvent?.title ?? "Schedule detail"}
         subtitle={selectedEvent ? `${selectedEvent.time} · ${selectedEvent.chip}` : undefined}
       >
-        <div className="space-y-3">
-          {["Keep fixed", "Move later", "Mark as handled", "Cancel"].map((action) => (
-            <button
-              key={action}
-              onClick={() => setSelectedEvent(null)}
-              className="flex h-[56px] w-full items-center justify-between rounded-[18px] border border-neutral-200 px-4 py-3 text-left text-[15px] font-semibold"
+        <div className="space-y-4">
+          <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+              StudentOS view
+            </p>
+            <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
+              {conflictResolved
+                ? "This block is now handled in the rebuilt schedule."
+                : "This block is part of the CCA and tuition clash."}
+            </p>
+          </div>
+          {!conflictResolved ? (
+            <PrimaryButton
+              onClick={() => {
+                setSelectedEvent(null);
+                setManualConflictOpen(true);
+              }}
             >
-              {action}
-              <ChevronRight className="size-4 text-neutral-300" />
-            </button>
-          ))}
+              Edit manually
+            </PrimaryButton>
+          ) : (
+            <PrimaryButton onClick={() => setSelectedEvent(null)}>Done</PrimaryButton>
+          )}
         </div>
       </BottomSheet>
 
@@ -655,10 +977,10 @@ export default function CommitmentsPage() {
         open={reasoningOpen}
         onClose={() => setReasoningOpen(false)}
         title="Why this plan?"
-        subtitle={`StudentOS prioritised the Physics worksheet because it is due tomorrow morning, kept tuition fixed, handled the CCA clash by asking for notes, moved flexible revision later,${chemistryAdded ? " inserted Chemistry before 8 PM," : ""} and split your coding goal into weekly blocks.`}
+        subtitle={`StudentOS prioritised the Physics worksheet because it is due tomorrow morning, ${resolutionMode === "manual" ? "used your manual instruction to move tuition away from CCA," : "kept tuition fixed and handled the CCA clash,"} moved flexible revision later,${chemistryAdded ? " inserted Chemistry before 8 PM," : ""} and scheduled your coding roadmap across future days.`}
       >
         <div className="flex flex-wrap gap-2">
-          {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Weekly goal"].map((chip) => (
+          {["Urgency", "Fixed events", "Energy", "Deadline", ...(chemistryAdded ? ["Updated"] : []), "Goal roadmap"].map((chip) => (
             <SourceChip key={chip}>{chip}</SourceChip>
           ))}
         </div>
@@ -667,15 +989,15 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={addSourceOpen}
         onClose={() => setAddSourceOpen(false)}
-        title="Add source"
-        subtitle="Add another screenshot, PDF, message, or note..."
+        title="Add task"
+        subtitle="StudentOS will work it into your plan."
       >
         <div className="space-y-4">
           <textarea
             value={sourceDraft}
             onChange={(event) => setSourceDraft(event.target.value)}
             rows={4}
-            placeholder="Paste a message, task, deadline, or reminder..."
+            placeholder="Paste a task, deadline, reminder, or goal..."
             className="min-h-28 w-full resize-none rounded-[22px] border border-neutral-200 bg-white px-4 py-3 text-[15px] font-semibold leading-6 text-ink outline-none placeholder:text-neutral-400 focus:border-neutral-400 focus:ring-0"
           />
           <div className="flex items-center justify-between gap-3">
@@ -699,13 +1021,13 @@ export default function CommitmentsPage() {
               type="button"
               onClick={submitAdditionalSource}
               className="flex size-12 items-center justify-center rounded-full bg-ink text-white shadow-soft"
-              aria-label="Add source"
+              aria-label="Add task"
             >
               <ArrowUp className="size-5 stroke-[2.5]" />
             </button>
           </div>
           <div className="rounded-[18px] border border-neutral-100 bg-neutral-50 p-3 text-xs font-semibold leading-5 text-neutral-500">
-            Demo source used: Chemistry worksheet due 8 PM tonight.
+            Demo task used: Chemistry worksheet due 8 PM tonight.
           </div>
         </div>
       </BottomSheet>
@@ -713,8 +1035,8 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={impactOpen}
         onClose={() => setImpactOpen(false)}
-        title="1 new commitment found"
-        subtitle="This affects today’s plan."
+        title={chemistryAdded ? "Already in your plan" : "1 new commitment found"}
+        subtitle={chemistryAdded ? "Chemistry is already scheduled before 8 PM." : "This affects today’s plan."}
       >
         <div className="space-y-4">
           <div className="rounded-[22px] border border-neutral-200 bg-white p-4">
@@ -729,9 +1051,9 @@ export default function CommitmentsPage() {
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">Plan impact</p>
             <div className="mt-3 space-y-2">
               {[
-                "Move coding practice later",
+                "Add Chemistry worksheet before 8 PM",
                 "Keep Physics worksheet as first focus block",
-                "Add Chemistry worksheet before 8 PM"
+                "Move coding practice later"
               ].map((item) => (
                 <div key={item} className="flex items-center gap-3 rounded-2xl bg-neutral-50 px-3 py-2 text-sm font-semibold text-neutral-700">
                   <span className="size-1.5 rounded-full bg-ink" />
@@ -741,23 +1063,49 @@ export default function CommitmentsPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <PrimaryButton onClick={updatePlanWithChemistry}>Update plan</PrimaryButton>
-            <button
-              type="button"
-              onClick={() => setImpactOpen(false)}
-              className="inline-flex h-[60px] w-full items-center justify-center rounded-full border border-neutral-200 bg-white px-5 text-[15px] font-semibold text-ink shadow-[0_10px_35px_rgba(0,0,0,0.04)] transition hover:bg-neutral-50"
-            >
-              Keep current plan
-            </button>
-          </div>
+          {chemistryAdded ? (
+            <PrimaryButton onClick={() => setImpactOpen(false)}>Done</PrimaryButton>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <PrimaryButton onClick={updatePlanWithChemistry}>Update plan</PrimaryButton>
+              <button
+                type="button"
+                onClick={() => setImpactOpen(false)}
+                className="inline-flex h-[60px] w-full items-center justify-center rounded-full border border-neutral-200 bg-white px-5 text-[15px] font-semibold text-ink shadow-[0_10px_35px_rgba(0,0,0,0.04)] transition hover:bg-neutral-50"
+              >
+                Keep current plan
+              </button>
+            </div>
+          )}
         </div>
       </BottomSheet>
+
+      <TaskEditBottomSheet
+        task={selectedTask}
+        dateOptions={demoScheduleDateOptions}
+        canScheduleEarlier={canScheduleEarlier}
+        canScheduleLater={canScheduleLater}
+        onClose={() => setSelectedTaskForEdit(null)}
+        onScheduleEarlier={() => moveSelectedTaskDate(-1)}
+        onScheduleLater={() => moveSelectedTaskDate(1)}
+        onDateChange={updateSelectedTaskDate}
+        onSplit={splitSelectedTask}
+      />
+
+      <ManualConflictSheet
+        open={manualConflictOpen}
+        instruction={manualConflictInstruction}
+        onInstructionChange={setManualConflictInstruction}
+        onApply={applyManualInstruction}
+        onClose={() => setManualConflictOpen(false)}
+      />
 
       <ExportSuccessSheet
         open={exportOpen}
         onClose={() => setExportOpen(false)}
         includeChemistry={chemistryAdded}
+        includeRoadmap={roadmapAdded}
+        onSaved={() => showToast("Saved to calendar")}
       />
 
       <AnimatePresence>

@@ -6,24 +6,14 @@ import { SourceChip } from "@/components/source-chip";
 import type { TimelineEvent } from "@/lib/demo-data";
 import { cn } from "@/lib/utils";
 
-export function OverlapIndicator({ hidden }: { hidden: boolean }) {
-  if (hidden) return null;
-  return (
-    <div className="absolute right-3 top-[6.9rem] z-10 flex items-center gap-2">
-      <div className="h-24 w-1 rounded-full bg-red-400" />
-      <span className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-        45 min overlap
-      </span>
-    </div>
-  );
-}
-
 export function TimelineEventBlock({
   event,
-  onClick
+  onClick,
+  actionLabel = "Tap for details"
 }: {
   event: TimelineEvent;
   onClick: () => void;
+  actionLabel?: string;
 }) {
   return (
     <motion.button
@@ -48,10 +38,58 @@ export function TimelineEventBlock({
         <SourceChip tone={event.tone === "conflict" ? "danger" : event.tone === "success" ? "success" : "neutral"}>
           {event.chip}
         </SourceChip>
-        <span className="text-xs font-semibold text-neutral-400">Tap to edit</span>
+        <span className="text-xs font-semibold text-neutral-400">{actionLabel}</span>
       </div>
     </motion.button>
   );
+}
+
+function TimelineRow({
+  event,
+  onEventClick
+}: {
+  event: TimelineEvent;
+  onEventClick: (event: TimelineEvent) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[56px_1fr] gap-4">
+      <div className="pt-4 text-right text-xs font-semibold text-neutral-400">
+        {event.time}
+      </div>
+      <TimelineEventBlock event={event} onClick={() => onEventClick(event)} />
+    </div>
+  );
+}
+
+function groupTimelineEvents(events: TimelineEvent[], resolved: boolean) {
+  const groups: Array<
+    | { type: "single"; event: TimelineEvent }
+    | { type: "conflict"; id: string; events: TimelineEvent[] }
+  > = [];
+
+  events.forEach((event) => {
+    if (resolved || !event.conflictGroupId) {
+      groups.push({ type: "single", event });
+      return;
+    }
+
+    const lastGroup = groups[groups.length - 1];
+    if (
+      lastGroup?.type === "conflict" &&
+      lastGroup.id === event.conflictGroupId
+    ) {
+      lastGroup.events.push(event);
+      return;
+    }
+
+    groups.push({
+      type: "conflict",
+      id: event.conflictGroupId,
+      events: [event]
+    });
+  });
+
+  return groups;
 }
 
 export function MobileTimeline({
@@ -63,19 +101,43 @@ export function MobileTimeline({
   resolved: boolean;
   onEventClick: (event: TimelineEvent) => void;
 }) {
+  const eventGroups = groupTimelineEvents(events, resolved);
+
   return (
     <section className="relative rounded-[28px] border border-neutral-200 bg-[#F7F7F8] p-4 shadow-soft">
-      <OverlapIndicator hidden={resolved} />
       <div className="absolute bottom-8 left-[4.8rem] top-8 w-px bg-neutral-200" />
       <div className="space-y-4">
-        {events.map((event) => (
-          <div key={event.id} className="grid grid-cols-[56px_1fr] gap-4">
-            <div className="pt-4 text-right text-xs font-semibold text-neutral-400">
-              {event.time}
+        {eventGroups.map((group) => {
+          if (group.type === "single") {
+            return (
+              <TimelineRow
+                key={group.event.id}
+                event={group.event}
+                onEventClick={onEventClick}
+              />
+            );
+          }
+
+          return (
+            <div
+              key={group.id}
+              className="relative rounded-[24px] border border-red-200 bg-red-50/70 p-3 pt-9 shadow-[0_12px_35px_rgba(239,68,68,0.08)]"
+            >
+              <span className="absolute right-3 top-3 rounded-full border border-red-200 bg-white/85 px-3 py-1 text-xs font-semibold text-red-700">
+                45 min overlap
+              </span>
+              <div className="space-y-3">
+                {group.events.map((event) => (
+                  <TimelineRow
+                    key={event.id}
+                    event={event}
+                    onEventClick={onEventClick}
+                  />
+                ))}
+              </div>
             </div>
-            <TimelineEventBlock event={event} onClick={() => onEventClick(event)} />
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

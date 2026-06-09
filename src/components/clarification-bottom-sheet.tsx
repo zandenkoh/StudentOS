@@ -66,28 +66,31 @@ export function OptionalTextInput({ placeholder }: { placeholder: string }) {
 
 const goalQuestions: ClarificationQuestion[] = [
   {
-    question: "What do you mean by coding?",
+    question: "What does success look like?",
     options: [
-      { label: "Web development" },
-      { label: "Python basics" },
-      { label: "App development" }
-    ],
-    customPlaceholder: "Type another coding focus..."
-  },
-  {
-    question: "What is your target outcome by December?",
-    options: [
-      { label: "Build a personal website" },
-      { label: "Build a small app" },
-      { label: "Pass a school module" },
-      { label: "Prepare for competitions" }
+      { label: "Build a small app", recommended: true },
+      { label: "Portfolio readiness" },
+      { label: "Competition prep" }
     ],
     customPlaceholder: "Type your target outcome..."
   },
   {
-    question: "How much time can you commit per week?",
-    options: [{ label: "5 hours/week", recommended: true }],
-    customPlaceholder: "Type weekly time, e.g. 3 hours/week..."
+    question: "How many sessions per week are realistic?",
+    options: [
+      { label: "2 sessions/week", recommended: true },
+      { label: "1 session/week" },
+      { label: "3 sessions/week" }
+    ],
+    customPlaceholder: "Type your cadence..."
+  },
+  {
+    question: "Where are you starting from?",
+    options: [
+      { label: "Basics" },
+      { label: "Already building projects" },
+      { label: "Some Python", recommended: true }
+    ],
+    customPlaceholder: "Type your starting point..."
   }
 ];
 

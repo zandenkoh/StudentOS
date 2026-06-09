@@ -8,18 +8,23 @@ import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 export function ExportSuccessSheet({
   open,
   onClose,
-  includeChemistry
+  includeChemistry,
+  includeRoadmap,
+  onSaved
 }: {
   open: boolean;
   onClose: () => void;
   includeChemistry?: boolean;
+  includeRoadmap?: boolean;
+  onSaved?: () => void;
 }) {
   const [saved, setSaved] = useState(false);
   const previewItems = [
     "Physics worksheet focus block",
     ...(includeChemistry ? ["Chemistry worksheet before 8 PM"] : []),
     "CCA briefing handled",
-    "Coding practice moved later"
+    includeChemistry ? "Coding practice moved later" : "Coding practice weekly block",
+    ...(includeRoadmap ? ["Roadmap tasks scheduled across future days"] : [])
   ];
 
   useEffect(() => {
@@ -71,7 +76,14 @@ export function ExportSuccessSheet({
             </PrimaryButton>
           ) : (
             <>
-              <PrimaryButton onClick={() => setSaved(true)}>Save demo calendar</PrimaryButton>
+              <PrimaryButton
+                onClick={() => {
+                  setSaved(true);
+                  onSaved?.();
+                }}
+              >
+                Save demo calendar
+              </PrimaryButton>
               <SecondaryButton onClick={onClose} className="w-full">
                 Cancel
               </SecondaryButton>

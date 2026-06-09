@@ -90,6 +90,43 @@ export type TimelineEvent = {
   duration?: string;
   chip: string;
   tone?: "conflict" | "success" | "priority";
+  conflictGroupId?: string;
+};
+
+export type PlanTaskSection = "do_now" | "do_next" | "subsequent_days";
+
+export type DemoPlanTask = {
+  id: string;
+  title: string;
+  section: PlanTaskSection;
+  estimatedMinutes?: number;
+  timeLabel?: string;
+  scheduledDate?: string;
+  scheduledDateId?: string;
+  scheduledDateRange?: string;
+  deadline?: string;
+  deadlineDateId?: string;
+  reason?: string;
+  source?: string;
+  goalId?: string;
+  isRoadmapTask?: boolean;
+  updated?: boolean;
+};
+
+export type DemoScheduleDateOption = {
+  id: string;
+  label: string;
+};
+
+export type DemoGoalRoadmapStep = {
+  id: string;
+  goalId: string;
+  title: string;
+  description?: string;
+  scheduledDate?: string;
+  scheduledDateRange?: string;
+  tasks: DemoPlanTask[];
+  status: "scheduled" | "in_progress" | "upcoming";
 };
 
 export const sourceIconMap: Record<SourceType, LucideIcon> = {
@@ -310,7 +347,8 @@ export const timelineEvents: TimelineEvent[] = [
     time: "4:30 PM",
     title: "Tuition",
     duration: "4:30-6:30 PM",
-    chip: "Fixed"
+    chip: "Fixed",
+    conflictGroupId: "tuition-cca"
   },
   {
     id: "cca",
@@ -318,7 +356,8 @@ export const timelineEvents: TimelineEvent[] = [
     title: "CCA briefing",
     duration: "5:30-6:15 PM",
     chip: "Needs decision",
-    tone: "conflict"
+    tone: "conflict",
+    conflictGroupId: "tuition-cca"
   },
   { id: "dinner", time: "7:00 PM", title: "Dinner", chip: "Fixed" },
   {
@@ -345,24 +384,393 @@ export const resolvedTimelineEvents: TimelineEvent[] = [
   { id: "coding", time: "9:00 PM", title: "Coding practice", chip: "Weekly goal" }
 ];
 
-export const planSections = [
+export const manualResolvedTimelineEvents: TimelineEvent[] = [
   {
-    title: "Do now",
-    items: [{ title: "Finish Physics worksheet", meta: "35 min · Submit before school" }]
+    id: "tuition",
+    time: "6:20 PM",
+    title: "Tuition rescheduled",
+    duration: "6:20-7:50 PM",
+    chip: "Rescheduled",
+    tone: "success"
   },
   {
-    title: "Do next",
-    items: [
-      { title: "Message teammate", meta: "Draft ready · 3 min" },
-      { title: "Ask CCA lead for briefing notes", meta: "Resolves 45 min clash" }
+    id: "cca",
+    time: "5:30 PM",
+    title: "CCA briefing",
+    duration: "5:30-6:15 PM",
+    chip: "Fixed"
+  },
+  {
+    id: "physics-extension",
+    time: "16 Jun",
+    title: "Physics worksheet deadline",
+    chip: "Extension recorded",
+    tone: "success"
+  },
+  { id: "dinner", time: "8:00 PM", title: "Dinner", chip: "Fixed" },
+  {
+    id: "coding",
+    time: "9:00 PM",
+    title: "Coding practice",
+    chip: "Weekly goal"
+  }
+];
+
+export const demoScheduleDateOptions: DemoScheduleDateOption[] = [
+  { id: "2026-06-16", label: "16 June" },
+  { id: "2026-06-17", label: "17 June" },
+  { id: "2026-06-18", label: "18 June" },
+  { id: "2026-06-19", label: "19 June" },
+  { id: "2026-06-24", label: "24 June" },
+  { id: "2026-06-30", label: "30 June" },
+  { id: "2026-07-08", label: "8 July" },
+  { id: "2026-08-05", label: "5 August" },
+  { id: "2026-09-09", label: "9 September" },
+  { id: "2026-11-04", label: "4 November" }
+];
+
+export const initialPlanTasks: DemoPlanTask[] = [
+  {
+    id: "physics-focus",
+    title: "Finish Physics worksheet",
+    section: "do_now",
+    estimatedMinutes: 35,
+    timeLabel: "Now",
+    deadline: "tomorrow 8 AM",
+    deadlineDateId: "2026-06-10",
+    reason: "Submit before school",
+    source: "Screenshot"
+  },
+  {
+    id: "message-teammate",
+    title: "Message teammate",
+    section: "do_next",
+    estimatedMinutes: 3,
+    timeLabel: "After Physics",
+    reason: "Draft ready",
+    source: "Voice note"
+  },
+  {
+    id: "cca-notes",
+    title: "Ask CCA lead for briefing notes",
+    section: "do_next",
+    estimatedMinutes: 5,
+    timeLabel: "Before briefing",
+    reason: "Resolves the CCA and tuition clash",
+    source: "CCA announcement"
+  },
+  {
+    id: "tuition",
+    title: "Tuition",
+    section: "do_next",
+    timeLabel: "4:30-6:30 PM",
+    reason: "Fixed calendar block",
+    source: "Calendar"
+  },
+  {
+    id: "revision",
+    title: "Revision block",
+    section: "do_next",
+    estimatedMinutes: 45,
+    timeLabel: "7:45 PM",
+    reason: "Moved after dinner",
+    source: "Plan"
+  },
+  {
+    id: "coding-practice",
+    title: "Coding practice",
+    section: "do_next",
+    estimatedMinutes: 60,
+    timeLabel: "9:00 PM",
+    deadline: "December",
+    deadlineDateId: "2026-12-31",
+    reason: "Weekly goal started",
+    source: "Goal",
+    goalId: "learn-coding",
+    isRoadmapTask: true
+  },
+  {
+    id: "coding-fundamentals-session-1",
+    title: "Coding fundamentals — Session 1",
+    section: "subsequent_days",
+    estimatedMinutes: 30,
+    scheduledDate: "17 June",
+    scheduledDateId: "2026-06-17",
+    deadline: "December",
+    deadlineDateId: "2026-12-31",
+    reason: "First scheduled step for the coding goal",
+    source: "Goal roadmap",
+    goalId: "learn-coding",
+    isRoadmapTask: true
+  },
+  {
+    id: "mini-project-brief",
+    title: "Build mini project brief",
+    section: "subsequent_days",
+    estimatedMinutes: 45,
+    scheduledDate: "24 June",
+    scheduledDateId: "2026-06-24",
+    deadline: "December",
+    deadlineDateId: "2026-12-31",
+    reason: "Turns the broad goal into a concrete build",
+    source: "Goal roadmap",
+    goalId: "learn-coding",
+    isRoadmapTask: true
+  },
+  {
+    id: "physics-circuits",
+    title: "Physics revision: circuits",
+    section: "subsequent_days",
+    estimatedMinutes: 40,
+    scheduledDate: "16 June",
+    scheduledDateId: "2026-06-16",
+    deadline: "next Friday",
+    deadlineDateId: "2026-06-19",
+    reason: "Keeps next week’s Physics revision from becoming urgent",
+    source: "Homework PDF"
+  },
+  {
+    id: "project-meeting-prep",
+    title: "Project meeting prep",
+    section: "subsequent_days",
+    estimatedMinutes: 25,
+    scheduledDate: "18 June",
+    scheduledDateId: "2026-06-18",
+    deadline: "19 June",
+    deadlineDateId: "2026-06-19",
+    reason: "Prep before the rescheduled team discussion",
+    source: "Team message"
+  }
+];
+
+export const goalRoadmapSteps: DemoGoalRoadmapStep[] = [
+  {
+    id: "define-outcome",
+    goalId: "learn-coding",
+    title: "Define target outcome",
+    scheduledDate: "16 June",
+    description:
+      "Decide whether success means building an app, joining competitions, or portfolio readiness.",
+    status: "scheduled",
+    tasks: [
+      {
+        id: "define-coding-outcome",
+        title: "Define coding target outcome",
+        section: "subsequent_days",
+        estimatedMinutes: 20,
+        scheduledDate: "16 June",
+        scheduledDateId: "2026-06-16",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
     ]
   },
   {
-    title: "Do later",
-    items: [
-      { title: "Tuition", meta: "4:30-6:30 PM · Fixed" },
-      { title: "Revision block", meta: "7:45 PM · Moved after dinner" },
-      { title: "Coding practice", meta: "1 hour · Weekly goal started" }
+    id: "fundamentals",
+    goalId: "learn-coding",
+    title: "Fundamentals sprint",
+    scheduledDateRange: "17-30 June",
+    status: "in_progress",
+    tasks: [
+      {
+        id: "coding-fundamentals-session-1",
+        title: "Coding fundamentals — Session 1",
+        section: "subsequent_days",
+        estimatedMinutes: 30,
+        scheduledDate: "17 June",
+        scheduledDateId: "2026-06-17",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "coding-fundamentals-session-2",
+        title: "Coding fundamentals — Session 2",
+        section: "subsequent_days",
+        estimatedMinutes: 30,
+        scheduledDate: "30 June",
+        scheduledDateId: "2026-06-30",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
+    ]
+  },
+  {
+    id: "first-project",
+    goalId: "learn-coding",
+    title: "Build first small project",
+    scheduledDateRange: "July",
+    description: "Start with a habit tracker so the work has a real interface and state.",
+    status: "upcoming",
+    tasks: [
+      {
+        id: "habit-tracker",
+        title: "Build a simple habit tracker",
+        section: "subsequent_days",
+        estimatedMinutes: 60,
+        scheduledDate: "8 July",
+        scheduledDateId: "2026-07-08",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "habit-tracker-state",
+        title: "Connect UI to local state",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "July",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "habit-tracker-v1",
+        title: "Ship v1",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "July",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
+    ]
+  },
+  {
+    id: "apis-database",
+    goalId: "learn-coding",
+    title: "Learn APIs + database",
+    scheduledDateRange: "August",
+    status: "upcoming",
+    tasks: [
+      {
+        id: "api-route-practice",
+        title: "Build API route practice",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "5 August",
+        scheduledDateId: "2026-08-05",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "supabase-table",
+        title: "Connect Supabase table",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "August",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "auth-mock",
+        title: "Add auth mock",
+        section: "subsequent_days",
+        estimatedMinutes: 30,
+        scheduledDate: "August",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
+    ]
+  },
+  {
+    id: "real-project",
+    goalId: "learn-coding",
+    title: "Ship a real project",
+    scheduledDateRange: "September-October",
+    status: "upcoming",
+    tasks: [
+      {
+        id: "scope-mvp",
+        title: "Scope MVP",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "9 September",
+        scheduledDateId: "2026-09-09",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "core-feature",
+        title: "Build core feature",
+        section: "subsequent_days",
+        estimatedMinutes: 90,
+        scheduledDate: "September",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "deploy-vercel",
+        title: "Deploy on Vercel",
+        section: "subsequent_days",
+        estimatedMinutes: 30,
+        scheduledDate: "October",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
+    ]
+  },
+  {
+    id: "polish-present",
+    goalId: "learn-coding",
+    title: "Polish and present",
+    scheduledDateRange: "November-December",
+    status: "upcoming",
+    tasks: [
+      {
+        id: "readme",
+        title: "Write README",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "4 November",
+        scheduledDateId: "2026-11-04",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "record-demo",
+        title: "Record demo",
+        section: "subsequent_days",
+        estimatedMinutes: 45,
+        scheduledDate: "November",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      },
+      {
+        id: "portfolio-page",
+        title: "Prepare portfolio page",
+        section: "subsequent_days",
+        estimatedMinutes: 60,
+        scheduledDate: "December",
+        deadline: "December",
+        deadlineDateId: "2026-12-31",
+        goalId: "learn-coding",
+        isRoadmapTask: true
+      }
     ]
   }
 ];

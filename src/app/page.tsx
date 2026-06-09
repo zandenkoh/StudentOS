@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
+import { clearStudentOSDemoState } from "@/lib/demo-state";
 
 export default function Home() {
   const router = useRouter();
@@ -48,7 +49,13 @@ export default function Home() {
 
         {/* CTA Button */}
         <div className="mb-8">
-          <PrimaryButton onClick={() => setIsFadingOut(true)} className="justify-between px-6">
+          <PrimaryButton
+            onClick={() => {
+              clearStudentOSDemoState();
+              setIsFadingOut(true);
+            }}
+            className="justify-between px-6"
+          >
             <span className="text-[15px] font-semibold">Start Demo</span>
             <ChevronRight className="size-4" />
           </PrimaryButton>
