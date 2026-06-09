@@ -9,13 +9,15 @@ export function BottomSheet({
   title,
   subtitle,
   children,
-  onClose
+  onClose,
+  headerAction
 }: {
   open: boolean;
   title: string;
   subtitle?: string;
   children: ReactNode;
   onClose: () => void;
+  headerAction?: ReactNode;
 }) {
   return (
     <AnimatePresence>
@@ -39,13 +41,16 @@ export function BottomSheet({
                 <h2 className="text-[22px] font-semibold leading-tight">{title}</h2>
                 {subtitle ? <p className="mt-2 text-[14px] leading-5 text-muted">{subtitle}</p> : null}
               </div>
-              <button
-                onClick={onClose}
-                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500"
-                aria-label="Close"
-              >
-                <X className="size-4" />
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {headerAction}
+                <button
+                  onClick={onClose}
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-neutral-500"
+                  aria-label="Close"
+                >
+                  <X className="size-4" />
+                </button>
+              </div>
             </div>
             {children}
           </motion.div>

@@ -46,8 +46,8 @@ textarea {
     transform: translateX(-50%);
     border-top: 1px solid rgb(245 245 245);
     background: rgb(255 255 255 / 0.88);
-    padding: 1rem;
-    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding: 0.75rem 1rem;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
@@ -55,12 +55,12 @@ textarea {
   .fixed-bottom-toast {
     position: fixed;
     left: 50%;
-    bottom: calc(max(0.75rem, env(safe-area-inset-bottom)) + 5.75rem);
+    bottom: calc(max(0.75rem, env(safe-area-inset-bottom)) + 5.5rem);
     z-index: 50;
     translate: -50% 0;
   }
 
   .safe-bottom-padding {
-    padding-bottom: calc(9rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
   }
 }

@@ -18,10 +18,11 @@ const initialGoal = "/goal Learn coding by December with 5 hours of commitment p
 
 const goalCommitment: Commitment = {
   id: "coding-goal-route",
-  title: "Learn coding by December · 5h/week",
+  title: "Learn coding by December",
   type: "goal",
   source: "Goal command",
   confidence: 81,
+  estimatedDuration: "5hr/week",
   state: "needs_clarification",
   explanation: "StudentOS needs a target outcome."
 };

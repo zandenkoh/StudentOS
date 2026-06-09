@@ -66,6 +66,7 @@ export type Commitment = {
   type: CommitmentType;
   source: string;
   confidence: number;
+  estimatedDuration: string;
   state: CommitmentState;
   explanation: string;
 };
@@ -230,6 +231,7 @@ export const baseCommitments: Commitment[] = [
     type: "task",
     source: "Screenshot",
     confidence: 94,
+    estimatedDuration: "35min",
     state: "confirmed",
     explanation: "Detected from teacher message."
   },
@@ -239,6 +241,7 @@ export const baseCommitments: Commitment[] = [
     type: "event",
     source: "Message screenshot",
     confidence: 91,
+    estimatedDuration: "45min",
     state: "confirmed",
     explanation: "Time detected from CCA announcement."
   },
@@ -248,15 +251,17 @@ export const baseCommitments: Commitment[] = [
     type: "deadline",
     source: "Web link",
     confidence: 96,
+    estimatedDuration: "30min",
     state: "confirmed",
     explanation: "Deadline recognised and prioritised."
   },
   {
     id: "coding",
-    title: "Learn coding by December · 5h/week",
+    title: "Learn coding by December",
     type: "goal",
     source: "Written note",
     confidence: 78,
+    estimatedDuration: "5hr/week",
     state: "needs_clarification",
     explanation: "StudentOS needs a target outcome."
   },
@@ -266,6 +271,7 @@ export const baseCommitments: Commitment[] = [
     type: "event",
     source: "Voice note",
     confidence: 63,
+    estimatedDuration: "3min",
     state: "unsure",
     explanation: "Voice note sounded tentative."
   }

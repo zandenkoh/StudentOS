@@ -9,6 +9,14 @@ export function ConfidenceBadge({ value }: { value: number }) {
   );
 }
 
+export function DurationBadge({ value }: { value: string }) {
+  return (
+    <span className="inline-flex items-center rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-500">
+      {value}
+    </span>
+  );
+}
+
 export function UncertaintyBadge({
   state
 }: {
@@ -31,7 +39,7 @@ export function UncertaintyBadge({
           ? "Unsure"
           : state === "resolved"
             ? "Resolved"
-            : "Confirmed"}
+            : "Understood"}
     </span>
   );
 }

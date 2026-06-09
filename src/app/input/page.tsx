@@ -399,7 +399,7 @@ export default function InputPage() {
           <button
             disabled={sources.length === 0}
             onClick={handleAnalyse}
-            className={`w-full flex h-13 items-center justify-center gap-2 rounded-full font-bold text-[15px] shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
+            className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
               sources.length > 0 
                 ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
                 : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
