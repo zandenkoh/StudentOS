@@ -122,6 +122,39 @@ function awsForwardLog(endpoint: string): AIAgentLog {
   };
 }
 
+function observableReasoningLog({
+  id,
+  at,
+  title,
+  body,
+  detail,
+  provider = "StudentOS",
+  result,
+}: {
+  id: string;
+  at: number;
+  title: string;
+  body: string;
+  detail?: string;
+  provider?: "AWS" | "Exa" | "Vercel AI Gateway" | "StudentOS";
+  result?: string;
+}): AIAgentLog {
+  return {
+    id,
+    at,
+    kind: result ? "tool" : "analysis",
+    title,
+    body,
+    detail,
+    tool: result
+      ? {
+          provider,
+          result,
+        }
+      : undefined,
+  };
+}
+
 async function analyseWithLocalFallback(
   input: AnalyseStudentChaosRequest,
   endpoint: string,
@@ -169,21 +202,91 @@ function streamAwsAgentRequest(
   strict: boolean,
 ) {
   const encoder = new TextEncoder();
+  const startedAt = Date.now();
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: AnalyseStudentChaosStreamEvent) => {
         controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
       };
+      const elapsed = () => Math.max(0, Date.now() - startedAt);
+      let heartbeat: ReturnType<typeof setInterval> | undefined;
+      let heartbeatCount = 0;
+      const heartbeatMessages = [
+        {
+          title: "Lambda agent is still working",
+          body: "Waiting for AWS Lambda to return the structured StudentOS footprint.",
+          detail: "The UI is still connected. StudentOS has already verified compute/source proof and is waiting for orchestration output.",
+        },
+        {
+          title: "Planner response pending",
+          body: "The agent is giving the planning model enough time to return commitments, conflicts, roadmap steps, and the day plan.",
+          detail: "If the live path misses the route budget, StudentOS will fall back clearly instead of showing fake data.",
+        },
+        {
+          title: "Keeping sponsor proof alive",
+          body: "The frontend route is preserving verified traces while the AWS agent finishes.",
+          detail: "AWS Lambda is compute proof; Vercel Gateway is model-routing proof; Bedrock/Textract is source extraction proof.",
+        },
+      ];
+      const stopHeartbeat = () => {
+        if (!heartbeat) return;
+        clearInterval(heartbeat);
+        heartbeat = undefined;
+      };
+      const startHeartbeat = () => {
+        stopHeartbeat();
+        heartbeat = setInterval(() => {
+          const message = heartbeatMessages[heartbeatCount % heartbeatMessages.length];
+
+          heartbeatCount += 1;
+          send({
+            type: "log",
+            log: observableReasoningLog({
+              id: `aws-agent-heartbeat-${heartbeatCount}`,
+              at: elapsed(),
+              title: message.title,
+              body: message.body,
+              detail: message.detail,
+            }),
+          });
+        }, 1800);
+      };
 
       send({ type: "log", log: awsForwardLog(endpoint) });
       send({ type: "trace", trace: awsComputeTrace(endpoint) });
       send({ type: "trace", trace: bedrockTextractTrace(input.sources) });
+      send({
+        type: "log",
+        log: observableReasoningLog({
+          id: "gateway-preflight-started",
+          at: elapsed(),
+          title: "Checking model-routing proof",
+          body: "StudentOS is verifying Vercel AI Gateway before relying on the deeper planner.",
+          provider: "Vercel AI Gateway",
+          result: sponsorEnv.aiGatewayModel,
+        }),
+      });
 
       try {
         const gatewayTrace = await gatewayHealthTrace(5000);
 
         send({ type: "trace", trace: gatewayTrace });
+        send({
+          type: "log",
+          log: observableReasoningLog({
+            id: "gateway-preflight-complete",
+            at: elapsed(),
+            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs fallback",
+            body:
+              gatewayTrace.status === "success"
+                ? "The model-routing path is live, so the demo can prove Vercel AI Gateway separately from AWS compute."
+                : "The model-routing preflight did not verify. Demo mode can continue with an explicit fallback label.",
+            detail: gatewayTrace.detail,
+            provider: "Vercel AI Gateway",
+            result: gatewayTrace.status,
+          }),
+        });
 
         if (strict && gatewayTrace.status !== "success") {
           send({
@@ -193,9 +296,24 @@ function streamAwsAgentRequest(
           return;
         }
 
+        startHeartbeat();
         const result = await callAwsAgent(endpoint, input, [gatewayTrace]);
+        stopHeartbeat();
+        send({
+          type: "log",
+          log: observableReasoningLog({
+            id: "aws-agent-response-received",
+            at: elapsed(),
+            title: "AWS agent response received",
+            body: "Lambda returned the structured footprint for the review screen.",
+            provider: "AWS",
+            result: "Footprint payload received.",
+          }),
+        });
         send({ type: "footprint", footprint: result });
       } catch (error) {
+        stopHeartbeat();
+
         if (strict || !allowLocalAgentFallback()) {
           send({
             type: "error",
@@ -349,11 +467,37 @@ export async function POST(req: Request) {
       try {
         const localTrace = localAwsTrace();
         const sourceTrace = bedrockTextractTrace(parsed.data.sources);
+        send({
+          type: "log",
+          log: observableReasoningLog({
+            id: "local-gateway-preflight-started",
+            at: 0,
+            title: "Checking model-routing proof",
+            body: "StudentOS is verifying Vercel AI Gateway before local fallback planning continues.",
+            provider: "Vercel AI Gateway",
+            result: sponsorEnv.aiGatewayModel,
+          }),
+        });
         const gatewayTrace = await gatewayHealthTrace(5000);
 
         send({ type: "trace", trace: localTrace });
         send({ type: "trace", trace: gatewayTrace });
         send({ type: "trace", trace: sourceTrace });
+        send({
+          type: "log",
+          log: observableReasoningLog({
+            id: "local-gateway-preflight-complete",
+            at: 250,
+            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs fallback",
+            body:
+              gatewayTrace.status === "success"
+                ? "The model-routing proof is live before local fallback planning continues."
+                : "The model-routing preflight did not verify, so the UI will keep the proof label explicit.",
+            detail: gatewayTrace.detail,
+            provider: "Vercel AI Gateway",
+            result: gatewayTrace.status,
+          }),
+        });
 
         const result = await analyseStudentChaos(parsed.data, {
           onEvent: send,
