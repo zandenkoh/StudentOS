@@ -801,6 +801,10 @@ export default function CommitmentsPage() {
     if (!conflictResolved) return baseTimeline;
     return resolutionMode === "manual" ? manualResolvedTimelineEvents : aiResolvedTimeline;
   }, [aiResolvedTimeline, baseTimeline, conflictResolved, resolutionMode]);
+  const hasConfirmedConflict = useMemo(
+    () => validateTimelineConflicts(baseTimeline).groups.length > 0,
+    [baseTimeline],
+  );
   const selectedTask = useMemo(() => {
     if (!selectedTaskForEdit) return null;
     return planTasks.find((task) => task.id === selectedTaskForEdit.id) ?? selectedTaskForEdit;
@@ -937,6 +941,14 @@ export default function CommitmentsPage() {
       JSON.stringify(clarificationAnswerRecords),
     );
   }, [clarificationAnswerRecords, planHydrated]);
+
+  useEffect(() => {
+    if (planHydrated && step === "conflict" && !hasConfirmedConflict) {
+      setConflictResolved(true);
+      setResolutionMode("recommended");
+      setStep("plan");
+    }
+  }, [hasConfirmedConflict, planHydrated, step]);
 
   useEffect(() => {
     if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current) return;
@@ -1565,7 +1577,7 @@ export default function CommitmentsPage() {
               <div className="fixed-bottom-action">
                 <button
                   disabled={unresolvedCount > 0}
-                  onClick={() => setStep("conflict")}
+                  onClick={() => setStep(hasConfirmedConflict ? "conflict" : "plan")}
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
                     unresolvedCount === 0 
                       ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
@@ -1575,7 +1587,9 @@ export default function CommitmentsPage() {
                   <span>
                     {unresolvedCount > 0
                       ? `Clarify ${unresolvedCount} items to continue`
-                      : "Continue to conflicts"}
+                      : hasConfirmedConflict
+                        ? "Continue to conflicts"
+                        : "Continue to plan"}
                   </span>
                   <ChevronRight className="size-4.5" />
                 </button>

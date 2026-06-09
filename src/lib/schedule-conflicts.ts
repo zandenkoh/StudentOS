@@ -1,6 +1,7 @@
 export type SchedulableTimelineEvent = {
   id: string;
   time: string;
+  chip?: string;
   duration?: string;
   tone?: "conflict" | "success" | "priority";
   conflictGroupId?: string;
@@ -59,6 +60,13 @@ function overlapMinutes(first: TimeInterval, second: TimeInterval) {
   return Math.max(0, Math.min(first.endMinutes, second.endMinutes) - Math.max(first.startMinutes, second.startMinutes));
 }
 
+function isFixedTimeConflictCandidate(event: SchedulableTimelineEvent) {
+  const chip = event.chip?.toLowerCase() ?? "";
+  return !["flexible", "moved", "weekly goal", "high priority", "priority", "handled"].some((label) =>
+    chip.includes(label),
+  );
+}
+
 export function formatOverlapLabel(minutes: number) {
   if (minutes <= 0) return "No confirmed overlap";
 
@@ -85,10 +93,12 @@ export function validateTimelineConflicts<TEvent extends SchedulableTimelineEven
   });
 
   groupsById.forEach((groupEvents, groupId) => {
-    const intervals = groupEvents.map((event) => ({
-      event,
-      interval: parseTimeInterval(event.duration ?? event.time),
-    }));
+    const intervals = groupEvents
+      .filter(isFixedTimeConflictCandidate)
+      .map((event) => ({
+        event,
+        interval: parseTimeInterval(event.duration ?? event.time),
+      }));
     const confirmedEventIds = new Set<string>();
     let maxOverlapMinutes = 0;
 

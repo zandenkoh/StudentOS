@@ -812,7 +812,7 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
           "If one source contains multiple worksheets or actionable messages, split them into separate commitments only when the evidence identifies distinct actions.",
           "Mark broad goals or tentative items with clarification questions. If a commitment is excluded from today's plan for lack of clarity, create 2-3 concrete clarification questions for that commitment rather than relying on a single generic question.",
           "Create a conflict timeline and a resolved timeline.",
-          "Only set conflictGroupId for two or more confirmed events whose explicit start-end time ranges overlap. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
+          "Only set conflictGroupId for two or more confirmed fixed-time items whose explicit start-end time ranges overlap. Never set conflictGroupId for time-flexible tasks; schedule them around fixed-time items instead. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
           "For every scheduled task and timeline event, include scheduleRationale: one concise user-facing agent rationale for why that exact time slot or date is a good assignment for that task.",
