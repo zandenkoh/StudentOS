@@ -6,7 +6,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   BrainCircuit,
   Check,
-  ChevronDown,
   FileSearch,
   ListChecks,
   Loader2,
@@ -98,130 +97,6 @@ function toClientLog(log: AIAgentLog): AgentLog {
   };
 }
 
-function rewriteLog(log: AgentLog, sources: CapturedSourceForAI[]): AgentLog {
-  const sourceName = sources[0]?.title || "submitted notes";
-  const sourceCount = sources.length;
-
-  if (log.id === "source-evidence" || log.title.includes("Reading captured sources")) {
-    return {
-      ...log,
-      title: "Reading captured academic sources",
-      body: `Loaded ${sourceCount} student source ${sourceCount === 1 ? "document" : "documents"} (including "${sourceName}") from the input container.`,
-      detail: `Scanning files to extract homework deadlines, exam syllabi, and study requirements.`
-    };
-  }
-
-  if (log.id === "source-evidence-loaded" || log.title.includes("Source evidence loaded")) {
-    return {
-      ...log,
-      title: "Source content parsed successfully",
-      body: `Extracting text and structure from "${sourceName}".`,
-      detail: `Running AWS Textract OCR parser to convert image files into structured text.`
-    };
-  }
-
-  if (log.id === "goal-research-check" || log.title.includes("Checking for research context")) {
-    return {
-      ...log,
-      title: "Assessing research requirements",
-      body: `Analyzing terms in "${sourceName}" to see if we need to search Exa for syllabus guidelines or official exam dates.`,
-      detail: `Scanning for vague deadlines or generic subject titles that need external validation.`
-    };
-  }
-
-  if (log.id === "research-query-planning" || log.title.includes("Generating research queries")) {
-    return {
-      ...log,
-      title: "Formulating Exa search strategy",
-      body: `Generating focused academic queries based on the topics found in "${sourceName}".`,
-      detail: `Constructing queries to retrieve exact deadlines, rubrics, or official guidelines.`
-    };
-  }
-
-  if (log.id.includes("research-complete") || log.title.includes("Context research complete")) {
-    return {
-      ...log,
-      title: "Exa research context attached",
-      body: `Successfully retrieved 3 authoritative references for "${sourceName}".`,
-      detail: `Integrated academic guidelines and external deadlines into the planner input packet.`
-    };
-  }
-
-  if (log.id === "gateway-call-started" || log.title.includes("Calling Vercel AI Gateway")) {
-    return {
-      ...log,
-      title: "Synthesizing commitments and roadmap",
-      body: `Sending source data and Exa context to Gemini 3.5 Flash via Vercel AI Gateway.`,
-      detail: `Computing optimized study blocks and identifying schedule conflicts.`
-    };
-  }
-
-  if (log.id === "gateway-response-received" || log.title.includes("Gateway response received")) {
-    return {
-      ...log,
-      title: "Cognitive synthesis complete",
-      body: `Vercel AI Gateway returned the structured plan JSON.`,
-      detail: `Parsing generated commitments, daily task slots, and 3-step roadmap.`
-    };
-  }
-
-  if (log.id === "schema-validation" || log.title.includes("Validating structured footprint")) {
-    return {
-      ...log,
-      title: "Validating plan constraints",
-      body: `Verifying that no individual study session exceeds 45 minutes and all deadlines are met.`,
-      detail: `Validating commitments schema against the StudentOS data contract.`
-    };
-  }
-
-  if (log.id === "live-footprint-ready" || log.title.includes("Live footprint ready")) {
-    return {
-      ...log,
-      title: "StudentOS plan footprint ready",
-      body: `Successfully generated a personalized roadmap and daily schedule.`,
-      detail: `Redirecting to the commitments review screen.`
-    };
-  }
-
-  if (log.id === "aws-agent-forwarded" || log.title.includes("Forwarding to AWS Lambda")) {
-    return {
-      ...log,
-      title: "Forwarding to AWS Lambda",
-      body: "Forwarding the StudentOS orchestration request to the AWS-hosted agent endpoint.",
-      detail: "Leveraging decentralized serverless compute for heavy syllabus extraction."
-    };
-  }
-
-  if (log.id === "aws-agent-response-received" || log.title.includes("AWS agent response received")) {
-    return {
-      ...log,
-      title: "AWS agent response received",
-      body: "AWS Lambda returned the optimized planning blueprint successfully.",
-      detail: "Decrypted payload with verified compute proof signatures."
-    };
-  }
-
-  if (log.id === "gateway-preflight-started" || log.title.includes("Checking model-routing proof")) {
-    return {
-      ...log,
-      title: "Verifying Vercel AI Gateway proof",
-      body: "Checking model-routing path status to verify endpoint availability.",
-      detail: "Ensuring AI Gateway is responsive and model routes are clear."
-    };
-  }
-
-  if (log.id === "gateway-preflight-complete" || log.title.includes("Gateway proof verified") || log.title.includes("Gateway proof needs fallback")) {
-    return {
-      ...log,
-      title: "Gateway proof verification complete",
-      body: log.body.includes("verified") ? "Vercel AI Gateway status verified as fully operational." : "Vercel AI Gateway verification completed with fallback mode.",
-      detail: log.detail
-    };
-  }
-
-  return log;
-}
-
 function mergeLog(rows: AgentLog[], next: AgentLog) {
   const existingIndex = rows.findIndex((row) => row.id === next.id);
   const merged =
@@ -260,7 +135,22 @@ function isAbortError(error: unknown) {
   );
 }
 
-function ToolCall({ log, complete }: { log: AgentLog; complete: boolean }) {
+function LogMarker({ kind, complete }: { kind: LogKind; complete: boolean }) {
+  const Icon = kindIcon[kind];
+
+  return (
+    <span
+      className={cn(
+        "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border bg-white",
+        complete ? "border-neutral-300 text-ink" : "border-neutral-200 text-neutral-400"
+      )}
+    >
+      {complete ? <Check className="size-3.5 stroke-[2.5]" /> : <Icon className="size-3.5" />}
+    </span>
+  );
+}
+
+function ToolCall({ log }: { log: AgentLog }) {
   if (!log.tool) return null;
   const ToolIcon = log.tool.icon;
 
@@ -271,26 +161,11 @@ function ToolCall({ log, complete }: { log: AgentLog; complete: boolean }) {
         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-white">
           {log.tool.name}
         </span>
-        <span className={cn(
-          "shrink-0 text-[11px] font-semibold flex items-center gap-1",
-          complete ? "text-emerald-400" : "text-white/55"
-        )}>
-          {complete ? (
-            <>
-              <span className="size-1.5 rounded-full bg-emerald-400" />
-              success
-            </>
-          ) : (
-            <>
-              <span className="size-1.5 rounded-full bg-white/55 animate-pulse" />
-              running
-            </>
-          )}
+        <span className="shrink-0 text-[11px] font-semibold text-white/55">
+          running
         </span>
       </div>
-      {log.tool.result ? (
-        <p className="mt-1.5 text-[12px] leading-snug text-white/72">{log.tool.result}</p>
-      ) : null}
+      <p className="mt-1.5 text-[12px] leading-snug text-white/72">{log.tool.result}</p>
     </div>
   );
 }
@@ -308,8 +183,6 @@ function AgentLogItem({
   isActive: boolean;
   activeRef?: Ref<HTMLLIElement>;
 }) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
-
   return (
     <motion.li
       ref={activeRef}
@@ -324,54 +197,25 @@ function AgentLogItem({
       )}
     >
       <div className="flex shrink-0 flex-col items-center">
-        <button
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full border bg-white border-neutral-200 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition-colors shadow-sm cursor-pointer"
-          title={isCollapsed ? "Expand thought" : "Collapse thought"}
-        >
-          <ChevronDown
-            className={cn(
-              "size-3.5 transition-transform duration-200",
-              isCollapsed && "-rotate-90"
-            )}
-          />
-        </button>
+        <LogMarker kind={log.kind} complete={complete} />
         {!isLast ? <span className="my-2 w-px flex-1 bg-neutral-200" /> : null}
       </div>
       <article className="min-w-0 flex-1 pb-5">
-        <h2
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="mt-1 text-[15px] font-semibold leading-snug tracking-tight text-ink cursor-pointer hover:text-ink/80 select-none flex items-center gap-2"
-        >
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+            {kindLabel[log.kind]}
+          </span>
+        </div>
+        <h2 className="mt-1 text-[15px] font-semibold leading-snug tracking-tight text-ink">
           {log.title}
         </h2>
-        
-        <AnimatePresence initial={false}>
-          {!isCollapsed && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="overflow-hidden"
-            >
-              {log.body ? (
-                <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600 flex items-center flex-wrap">
-                  <span>{log.body}</span>
-                  {isActive && !complete && (
-                    <span className="inline-block w-1.5 h-3 ml-1 bg-ink animate-pulse align-middle" />
-                  )}
-                </p>
-              ) : null}
-              {log.detail ? (
-                <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
-                  {log.detail}
-                </p>
-              ) : null}
-              <ToolCall log={log} complete={complete} />
-            </motion.div>
-          )}
-        </AnimatePresence>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{log.body}</p>
+        {log.detail ? (
+          <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
+            {log.detail}
+          </p>
+        ) : null}
+        <ToolCall log={log} />
       </article>
     </motion.li>
   );
@@ -381,116 +225,14 @@ export default function AgentsThinkingPage() {
   const router = useRouter();
   const [elapsedMs, setElapsedMs] = useState(0);
   const [agentLogs, setAgentLogs] = useState<AgentLog[]>([]);
-  const [visibleLogs, setVisibleLogs] = useState<AgentLog[]>([]);
   const [sponsorTrace, setSponsorTrace] = useState<AISponsorTraceItem[]>([]);
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
-  const [capturedSources, setCapturedSources] = useState<CapturedSourceForAI[]>([]);
   const logViewportRef = useRef<HTMLDivElement>(null);
   const activeLogRef = useRef<HTMLLIElement>(null);
   const shouldFollowLogRef = useRef(true);
   const analysisStartedRef = useRef(false);
-  const allReceivedLogsRef = useRef<AgentLog[]>([]);
-
-  // Typing effect loop
-  useEffect(() => {
-    let isCancelled = false;
-    let timerId: number | undefined;
-
-    const tick = () => {
-      if (isCancelled) return;
-
-      const received = allReceivedLogsRef.current;
-      const visible = [...visibleLogs];
-
-      // If we don't have any visible logs yet, but we have received some, add the first one (empty fields)
-      if (visible.length === 0 && received.length > 0) {
-        const firstLog = {
-          ...received[0],
-          body: "",
-          detail: received[0].detail ? "" : undefined,
-          tool: received[0].tool ? { ...received[0].tool, result: "" } : undefined
-        };
-        setVisibleLogs([firstLog]);
-        timerId = window.setTimeout(tick, 100);
-        return;
-      }
-
-      if (visible.length === 0) {
-        timerId = window.setTimeout(tick, 200);
-        return;
-      }
-
-      const activeIndex = visible.length - 1;
-      const activeLog = { ...visible[activeIndex] };
-      const targetLog = received[activeIndex];
-
-      if (!targetLog) {
-        timerId = window.setTimeout(tick, 200);
-        return;
-      }
-
-      const bodyDone = activeLog.body.length >= targetLog.body.length;
-      const detailDone = !targetLog.detail || (activeLog.detail !== undefined && activeLog.detail.length >= targetLog.detail.length);
-      const toolDone = !targetLog.tool || (activeLog.tool !== undefined && activeLog.tool.result.length >= targetLog.tool.result.length);
-
-      if (!bodyDone) {
-        // Natural uneven delays while typing: add 1-3 characters
-        const nextLen = Math.min(activeLog.body.length + Math.floor(Math.random() * 3) + 1, targetLog.body.length);
-        activeLog.body = targetLog.body.slice(0, nextLen);
-        visible[activeIndex] = activeLog;
-        setVisibleLogs(visible);
-        // Pacing: typing speed variance (10-35ms)
-        timerId = window.setTimeout(tick, 10 + Math.random() * 25);
-      } else if (!detailDone) {
-        const currentDetail = activeLog.detail || "";
-        const nextLen = Math.min(currentDetail.length + Math.floor(Math.random() * 3) + 1, targetLog.detail!.length);
-        activeLog.detail = targetLog.detail!.slice(0, nextLen);
-        visible[activeIndex] = activeLog;
-        setVisibleLogs(visible);
-        timerId = window.setTimeout(tick, 10 + Math.random() * 25);
-      } else if (!toolDone) {
-        const currentResult = activeLog.tool?.result || "";
-        const nextLen = Math.min(currentResult.length + Math.floor(Math.random() * 4) + 1, targetLog.tool!.result.length);
-        activeLog.tool = {
-          ...targetLog.tool!,
-          result: targetLog.tool!.result.slice(0, nextLen)
-        };
-        visible[activeIndex] = activeLog;
-        setVisibleLogs(visible);
-        timerId = window.setTimeout(tick, 10 + Math.random() * 20);
-      } else {
-        // Current log is fully typed
-        if (visible.length < received.length) {
-          const nextIndex = visible.length;
-          const nextLog = {
-            ...received[nextIndex],
-            body: "",
-            detail: received[nextIndex].detail ? "" : undefined,
-            tool: received[nextIndex].tool ? { ...received[nextIndex].tool, result: "" } : undefined
-          };
-          // Uneven delays between thoughts/actions: random wait of 600ms to 1800ms
-          const delayBeforeNext = 600 + Math.random() * 1200;
-          timerId = window.setTimeout(() => {
-            if (!isCancelled) {
-              setVisibleLogs((prev) => [...prev, nextLog]);
-            }
-          }, delayBeforeNext);
-        } else {
-          // Wait and check again
-          timerId = window.setTimeout(tick, 200);
-        }
-      }
-    };
-
-    timerId = window.setTimeout(tick, 100);
-
-    return () => {
-      isCancelled = true;
-      if (timerId) window.clearTimeout(timerId);
-    };
-  }, [visibleLogs.length, agentLogs.length]);
 
   useEffect(() => {
     if (analysisStartedRef.current) return;
@@ -511,16 +253,12 @@ export default function AgentsThinkingPage() {
       }
     }
 
-    function storeFootprint(result: StudentOSAgentFootprint, currentSources: CapturedSourceForAI[]) {
+    function storeFootprint(result: StudentOSAgentFootprint) {
       if (cancelled) return;
       const nextTrace = mergeSponsorTraces(result.sponsorTrace, storedSponsorTrace());
 
       setAiFootprint(result);
-      
-      const rewrittenLogs = result.agentLogs.map(toClientLog).map(log => rewriteLog(log, currentSources));
-      allReceivedLogsRef.current = rewrittenLogs;
-      setAgentLogs(rewrittenLogs);
-      
+      setAgentLogs(result.agentLogs.map(toClientLog));
       setSponsorTrace(nextTrace);
       window.localStorage.setItem("studentos_footprint", "completed");
       window.localStorage.setItem("agent_log_visited", "true");
@@ -539,7 +277,7 @@ export default function AgentsThinkingPage() {
     }
 
     async function runAnalysis() {
-      let currentSources: CapturedSourceForAI[] = [];
+      let capturedSources: CapturedSourceForAI[] = [];
 
       try {
         setSponsorTrace(storedSponsorTrace().slice(0, 8));
@@ -547,19 +285,14 @@ export default function AgentsThinkingPage() {
         const rawSources = window.localStorage.getItem("studentos_captured_sources");
         if (rawSources) {
           const parsed = JSON.parse(rawSources) as CapturedSourceForAI[];
-          if (Array.isArray(parsed)) {
-            currentSources = parsed;
-            setCapturedSources(parsed);
-          }
+          if (Array.isArray(parsed)) capturedSources = parsed;
         }
       } catch {
-        currentSources = [];
+        capturedSources = [];
       }
 
       try {
         setAgentLogs([]);
-        setVisibleLogs([]);
-        allReceivedLogsRef.current = [];
         setAnalysisFailed(false);
         setStreamError(null);
 
@@ -572,7 +305,7 @@ export default function AgentsThinkingPage() {
           signal: controller.signal,
           body: JSON.stringify({
             currentDate: todayDateId(),
-            sources: currentSources,
+            sources: capturedSources,
           }),
         });
 
@@ -602,10 +335,7 @@ export default function AgentsThinkingPage() {
           if (cancelled) return;
 
           if (event.type === "log") {
-            const clientLog = toClientLog(event.log);
-            const rewritten = rewriteLog(clientLog, currentSources);
-            allReceivedLogsRef.current = mergeLog(allReceivedLogsRef.current, rewritten);
-            setAgentLogs([...allReceivedLogsRef.current]);
+            setAgentLogs((current) => mergeLog(current, toClientLog(event.log)));
             return;
           }
 
@@ -616,7 +346,7 @@ export default function AgentsThinkingPage() {
 
           if (event.type === "footprint") {
             finalFootprint = event.footprint;
-            storeFootprint(event.footprint, currentSources);
+            storeFootprint(event.footprint);
             return;
           }
 
@@ -654,20 +384,16 @@ export default function AgentsThinkingPage() {
           ? error.message
           : "StudentOS analysis failed.";
         setStreamError(message);
-
-        const errorLog = {
-          id: "analysis-stream-error",
-          at: Math.max(0, Date.now() - requestStartedAt),
-          kind: "decision" as const,
-          title: "Analysis stream stopped",
-          body: "The live analysis stream did not produce a final footprint.",
-          detail: message,
-        };
-        const rewrittenErrorLog = rewriteLog(errorLog, currentSources);
-        
-        allReceivedLogsRef.current = mergeLog(allReceivedLogsRef.current, rewrittenErrorLog);
-        setAgentLogs([...allReceivedLogsRef.current]);
-
+        setAgentLogs((current) =>
+          mergeLog(current, {
+            id: "analysis-stream-error",
+            at: Math.max(0, Date.now() - requestStartedAt),
+            kind: "decision",
+            title: "Analysis stream stopped",
+            body: "The live analysis stream did not produce a final footprint.",
+            detail: message,
+          }),
+        );
         let existingTrace: AISponsorTraceItem[] = [];
 
         try {
@@ -706,21 +432,10 @@ export default function AgentsThinkingPage() {
     };
   }, []);
 
+  const visibleLogs = agentLogs;
   const activeLog = visibleLogs[visibleLogs.length - 1];
-
-  const typingDone = visibleLogs.length === agentLogs.length && 
-    visibleLogs.length > 0 &&
-    visibleLogs.every((vl, idx) => {
-      const tl = agentLogs[idx];
-      if (!tl) return false;
-      const bodyDone = vl.body.length >= tl.body.length;
-      const detailDone = !tl.detail || (vl.detail !== undefined && vl.detail.length >= tl.detail.length);
-      const toolDone = !tl.tool || (vl.tool !== undefined && vl.tool.result.length >= tl.tool.result.length);
-      return bodyDone && detailDone && toolDone;
-    });
-
-  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT && typingDone;
-  const done = Boolean(aiFootprint) && typingDone;
+  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT;
+  const done = Boolean(aiFootprint);
   const progressPercent = done ? 100 : Math.min(92, visibleLogs.length ? 12 + visibleLogs.length * 10 : 8);
   const statusLabel = analysisFailed ? "Error" : done ? "Done" : "Live";
   const elapsedSeconds = Math.max(1, Math.ceil(elapsedMs / 1000));
