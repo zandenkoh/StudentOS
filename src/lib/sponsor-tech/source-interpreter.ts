@@ -46,6 +46,7 @@ const sourceInterpreterSystemPrompt = [
   "Every extracted task must be grounded by quoted or near-quoted source evidence. If evidence is missing, return no task and ask for clarification.",
   "Preserve and interpret non-English text, including Chinese, instead of ignoring it.",
   "A single attachment may contain multiple worksheets, messages, events, or tasks; extract each distinct actionable item.",
+  "Do not split one broad learning goal into multiple extracted goals, prerequisites, milestones, or sub-skills. Return one goal and leave milestones for the roadmap planner.",
   "If the source only identifies a packet, cover page, or unclear chat context, mark needsClarification=true.",
   "Keep summaries short, factual, and useful for a review page.",
 ].join("\n");
@@ -110,14 +111,85 @@ function appendLanguageNote(current: string, note: string) {
   return [current, note].filter(Boolean).join(" ");
 }
 
+function isGoalLikeTask(task: z.infer<typeof InterpretedTaskSchema>) {
+  return (
+    task.type === "goal" ||
+    /\b(goal|learn|proficient|master|skill|coding|python|library|libraries|roadmap)\b/i.test(`${task.title} ${task.evidence}`)
+  );
+}
+
+function sentenceGoalTitle(rawText: string) {
+  const sentence = rawText
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((line) => line.trim())
+    .find((line) => /\b(i\s+want|goal|learn|proficient|master|skill|coding|python)\b/i.test(line));
+
+  if (!sentence) return "";
+
+  return sentence
+    .replace(/^my\s+goal\s+is\s+(?:to\s+)?/i, "")
+    .replace(/^i\s+want\s+to\s+/i, "")
+    .replace(/^i\s+need\s+to\s+/i, "")
+    .replace(/^i\s+currently\s+have\b.*?\bi\s+want\s+to\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[a-z]/, (char) => char.toUpperCase())
+    .slice(0, 120);
+}
+
+function consolidateSingleLearningGoal(
+  input: SourceInterpretationInput,
+  interpretation: SourceInterpretation,
+): SourceInterpretation {
+  const goalLikeTasks = interpretation.extractedTasks.filter(isGoalLikeTask);
+  if (goalLikeTasks.length < 2) return interpretation;
+
+  const combinedText = goalLikeTasks.map((task) => `${task.title} ${task.evidence}`).join(" ");
+  const tokens = meaningfulTokens(combinedText);
+  const hasSharedLearningTarget =
+    /\b(python|coding|programming|data[-\s]?handling|pandas|numpy|library|libraries)\b/i.test(combinedText) ||
+    tokens.filter((token) => ["learn", "proficient", "python", "coding", "data", "libraries"].includes(token)).length >= 2;
+
+  if (!hasSharedLearningTarget) return interpretation;
+
+  const rawText = compactText(input.rawText, 1200);
+  const primaryGoal = goalLikeTasks[0];
+  const consolidatedTitle = sentenceGoalTitle(rawText) || primaryGoal.title;
+  const consolidatedEvidence = goalLikeTasks
+    .map((task) => task.evidence || task.title)
+    .filter(Boolean)
+    .join(" ");
+  const nonGoalTasks = interpretation.extractedTasks.filter((task) => !isGoalLikeTask(task));
+
+  return {
+    ...interpretation,
+    summary: interpretation.summary.includes("single learning goal")
+      ? interpretation.summary
+      : `${interpretation.summary} Treated as one learning goal; sub-skills belong in the roadmap.`,
+    extractedTasks: [
+      {
+        title: consolidatedTitle,
+        type: "goal" as const,
+        evidence: consolidatedEvidence || rawText || primaryGoal.evidence,
+      },
+      ...nonGoalTasks,
+    ].slice(0, 6),
+    languageNotes: appendLanguageNote(
+      interpretation.languageNotes,
+      "Multiple goal-like extracted rows were consolidated into one goal so roadmap milestones do not appear as duplicate commitments.",
+    ),
+  };
+}
+
 function groundedInterpretation(
   input: SourceInterpretationInput,
   interpretation: SourceInterpretation,
 ): SourceInterpretation {
+  const consolidatedInterpretation = consolidateSingleLearningGoal(input, interpretation);
   const rawText = compactText(input.rawText);
   const hasReliableText = rawText.length >= 20 && !isLowSignalOcr(rawText);
 
-  if (!hasReliableText && interpretation.extractedTasks.length > 0) {
+  if (!hasReliableText && consolidatedInterpretation.extractedTasks.length > 0) {
     const fallback = fallbackInterpretSource(input);
 
     return {
@@ -131,13 +203,13 @@ function groundedInterpretation(
     };
   }
 
-  if (!hasReliableText) return interpretation;
+  if (!hasReliableText) return consolidatedInterpretation;
 
-  const supportedTasks = interpretation.extractedTasks.filter((task) =>
+  const supportedTasks = consolidatedInterpretation.extractedTasks.filter((task) =>
     supportedByEvidence(`${task.title}\n${task.evidence}`, rawText),
   );
 
-  if (supportedTasks.length === interpretation.extractedTasks.length) return interpretation;
+  if (supportedTasks.length === consolidatedInterpretation.extractedTasks.length) return consolidatedInterpretation;
 
   if (supportedTasks.length === 0) {
     const fallback = fallbackInterpretSource(input);
@@ -154,15 +226,15 @@ function groundedInterpretation(
   }
 
   return {
-    ...interpretation,
+    ...consolidatedInterpretation,
     extractedTasks: supportedTasks,
     needsClarification: true,
     clarificationPrompt:
-      interpretation.clarificationPrompt ||
+      consolidatedInterpretation.clarificationPrompt ||
       "Some extracted items were not clearly supported by the source text. Which remaining item should StudentOS schedule?",
-    confidence: Math.min(interpretation.confidence, 0.74),
+    confidence: Math.min(consolidatedInterpretation.confidence, 0.74),
     languageNotes: appendLanguageNote(
-      interpretation.languageNotes,
+      consolidatedInterpretation.languageNotes,
       "Unsupported model-extracted tasks were removed before the review step.",
     ),
   };
@@ -180,6 +252,7 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
         "Use the title only as an attachment label; do not use it as evidence for extracted tasks.",
         "summary: one sentence, under 180 characters if possible.",
         "extractedTasks: student commitments only; use type='unclear' for ambiguous actions.",
+        "If the source is one broad learning goal, return exactly one extracted task of type='goal'. Do not extract prerequisites, milestones, sub-skills, or roadmap steps as separate commitments.",
         "For each extracted task, evidence must quote or closely paraphrase text visible in ocrText or the attachment.",
         "clarificationPrompt: direct question for the review page when needed.",
         "languageNotes: mention if OCR likely dropped Chinese/non-English text or visual context.",

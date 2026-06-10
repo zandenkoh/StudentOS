@@ -18,6 +18,7 @@ export type ClarificationQuestion = {
 };
 
 export type ClarificationAnswers = Record<number, string>;
+export type ClarificationKind = "goal" | "team" | "general";
 
 function answerSignature(answers: ClarificationAnswers) {
   return JSON.stringify(
@@ -156,6 +157,37 @@ export const teamQuestions: ClarificationQuestion[] = [
   }
 ];
 
+export const generalQuestions: ClarificationQuestion[] = [
+  {
+    question: "Which detail should StudentOS confirm first?",
+    options: [
+      { label: "Requirements", recommended: true },
+      { label: "Deadline" },
+      { label: "Exact time" },
+      { label: "Need to ask" }
+    ],
+    customPlaceholder: "Type the missing detail..."
+  }
+];
+
+function fallbackQuestionsForKind(kind: ClarificationKind) {
+  if (kind === "goal") return goalQuestions;
+  if (kind === "team") return teamQuestions;
+  return generalQuestions;
+}
+
+function defaultTitleForKind(kind: ClarificationKind) {
+  if (kind === "goal") return "Clarify goal";
+  if (kind === "team") return "Clarify team meeting";
+  return "Clarify item";
+}
+
+function defaultSubtitleForKind(kind: ClarificationKind) {
+  if (kind === "goal") return "StudentOS needs a few quick details to plan this properly.";
+  if (kind === "team") return "Resolve the uncertainty before StudentOS builds the day.";
+  return "Resolve the missing detail before StudentOS builds the day.";
+}
+
 export function ClarificationBottomSheet({
   open,
   kind,
@@ -167,7 +199,7 @@ export function ClarificationBottomSheet({
   initialAnswers = {}
 }: {
   open: boolean;
-  kind: "goal" | "team";
+  kind: ClarificationKind;
   onClose: () => void;
   onSubmit: (answers: ClarificationAnswers) => void;
   questionsOverride?: ClarificationQuestion[];
@@ -177,9 +209,7 @@ export function ClarificationBottomSheet({
 }) {
   const questions = questionsOverride?.length
     ? questionsOverride
-    : kind === "goal"
-      ? goalQuestions
-      : teamQuestions;
+    : fallbackQuestionsForKind(kind);
   const [activeIndex, setActiveIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
@@ -292,13 +322,8 @@ export function ClarificationBottomSheet({
       closeConfirmationSubtitle="StudentOS can use your current answers, or you can discard them and return to the unresolved item."
       closeConfirmationSaveLabel="Save answers"
       closeConfirmationSaveDisabled={!canSaveAnswers}
-      title={titleOverride ?? (kind === "goal" ? "Clarify coding goal" : "Clarify team meeting")}
-      subtitle={
-        subtitleOverride ??
-        (kind === "goal"
-          ? "StudentOS needs a few quick details to plan this properly."
-          : "Resolve the uncertainty before StudentOS builds the day.")
-      }
+      title={titleOverride ?? defaultTitleForKind(kind)}
+      subtitle={subtitleOverride ?? defaultSubtitleForKind(kind)}
     >
       <div className="space-y-4">
         <div className="h-1.5 overflow-hidden rounded-full bg-neutral-100">

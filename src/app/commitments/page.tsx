@@ -22,9 +22,11 @@ import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import {
   ClarificationBottomSheet,
+  generalQuestions,
   goalQuestions,
   teamQuestions,
   type ClarificationAnswers,
+  type ClarificationKind,
   type ClarificationQuestion
 } from "@/components/clarification-bottom-sheet";
 import { CommitmentCard } from "@/components/commitment-card";
@@ -165,14 +167,14 @@ type EditDraft = {
 type ResolutionMode = "recommended" | "manual" | null;
 
 type ClarifyingState = {
-  kind: AIClarificationQuestion["kind"];
+  kind: ClarificationKind;
   commitmentId: string;
 } | null;
 
 type ClarificationAnswerRecord = {
   commitmentId: string;
   commitmentTitle: string;
-  kind: AIClarificationQuestion["kind"];
+  kind: ClarificationKind;
   question: string;
   answer: string;
   answeredAt: string;
@@ -577,6 +579,17 @@ function commitmentListSignature(commitments: Commitment[]) {
       type: commitment.type,
     })),
   );
+}
+
+function clarificationKindForCommitment(commitment: Commitment): ClarificationKind {
+  if (commitment.type === "goal") return "goal";
+
+  const text = `${commitment.title} ${commitment.source} ${commitment.explanation}`;
+  if (/\b(team|teammate|group|meeting|agenda|call|briefing|reschedule)\b/i.test(text)) {
+    return "team";
+  }
+
+  return "general";
 }
 
 function clearAiPlanCaches() {
@@ -1518,7 +1531,12 @@ export default function CommitmentsPage() {
       aiFootprint?.clarificationQuestions.filter(
         (item) => item.commitmentId === target.commitmentId,
       ) ?? [];
-    const fallbackQuestions = target.kind === "goal" ? goalQuestions : teamQuestions;
+    const fallbackQuestions =
+      target.kind === "goal"
+        ? goalQuestions
+        : target.kind === "team"
+          ? teamQuestions
+          : generalQuestions;
     const questionTexts = matchingQuestions.length
       ? matchingQuestions.map((item) => item.question)
       : fallbackQuestions.map((item) => item.question);
@@ -1662,7 +1680,7 @@ export default function CommitmentsPage() {
 
     if (aiQuestion || hasSavedClarification) {
       setClarifying({
-        kind: aiQuestion?.kind ?? (commitment.type === "goal" ? "goal" : "team"),
+        kind: aiQuestion?.kind ?? clarificationKindForCommitment(commitment),
         commitmentId: commitment.id,
       });
       return;
@@ -1670,7 +1688,7 @@ export default function CommitmentsPage() {
 
     if (commitment.state === "needs_clarification" || commitment.state === "unsure") {
       setClarifying({
-        kind: commitment.type === "goal" ? "goal" : "team",
+        kind: clarificationKindForCommitment(commitment),
         commitmentId: commitment.id,
       });
       return;
@@ -2409,7 +2427,7 @@ export default function CommitmentsPage() {
 
       <ClarificationBottomSheet
         open={clarifying !== null}
-        kind={clarifying?.kind === "goal" ? "goal" : "team"}
+        kind={clarifying?.kind ?? "general"}
         onClose={() => setClarifying(null)}
         onSubmit={(answers) => clarifying && clarify(clarifying, answers)}
         questionsOverride={activeClarificationQuestionsForSheet}
