@@ -7,6 +7,26 @@ import { ensureTaskTimeRanges, type BusyTimeBlock } from "@/lib/time-scheduling"
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 
+const GATEWAY_REPLAN_TIMEOUT_MS = 9000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 const CommitmentSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -481,36 +501,39 @@ function coerceReplanOutput(value: unknown, input: ReplanAgentInput) {
 }
 
 async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
-  const { text } = await generateText({
-    model: gatewayLanguageModel(model),
-    system:
-      "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only valid JSON. Do not wrap it in Markdown. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
-    prompt: JSON.stringify(
-      {
-        trigger: input.trigger,
-        currentDate: input.currentDate,
-        currentCommitments: input.commitments,
-        currentPlanTasks: input.planTasks,
-        currentTimelineEvents: input.timelineEvents,
-        currentResolvedTimelineEvents: input.resolvedTimelineEvents,
-        currentConflict: input.conflict,
-        clarificationAnswers: input.clarificationAnswers,
-        manualConflictInstruction: input.manualConflictInstruction,
-        sourceContext: input.sourceContext,
-        outputContract: {
-          commitments:
-            "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions.",
-          planTasks:
-            "Return the updated visible plan tasks. Every task must include id, title, section, estimatedMinutes, and exact timeLabel clock ranges. Optional UI fields may be omitted when unknown. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
-          timelineEvents:
-            "Return the unresolved/current timeline, preserving conflict flags if the conflict is not resolved. Optional UI fields may be omitted when unknown.",
-          resolvedTimelineEvents:
-            "Return the live resolved timeline after the trigger. For manual_conflict, apply the user's manual instruction and remove obsolete conflictGroupId values when the conflict is resolved. Optional UI fields may be omitted when unknown.",
-          conflict:
-            "Return updated conflict copy and actions. overlapLabel must be based on confirmed overlapping fixed ranges, otherwise use Not confirmed.",
-          rationale: "Explain the replanning decision in one summary plus 3-6 bullets.",
-        },
-        rules: [
+  const { text } = await withTimeout(
+    generateText({
+      model: gatewayLanguageModel(model),
+      timeout: GATEWAY_REPLAN_TIMEOUT_MS,
+      maxRetries: 0,
+      system:
+        "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only valid JSON. Do not wrap it in Markdown. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
+      prompt: JSON.stringify(
+        {
+          trigger: input.trigger,
+          currentDate: input.currentDate,
+          currentCommitments: input.commitments,
+          currentPlanTasks: input.planTasks,
+          currentTimelineEvents: input.timelineEvents,
+          currentResolvedTimelineEvents: input.resolvedTimelineEvents,
+          currentConflict: input.conflict,
+          clarificationAnswers: input.clarificationAnswers,
+          manualConflictInstruction: input.manualConflictInstruction,
+          sourceContext: input.sourceContext,
+          outputContract: {
+            commitments:
+              "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions.",
+            planTasks:
+              "Return the updated visible plan tasks. Every task must include id, title, section, estimatedMinutes, and exact timeLabel clock ranges. Optional UI fields may be omitted when unknown. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
+            timelineEvents:
+              "Return the unresolved/current timeline, preserving conflict flags if the conflict is not resolved. Optional UI fields may be omitted when unknown.",
+            resolvedTimelineEvents:
+              "Return the live resolved timeline after the trigger. For manual_conflict, apply the user's manual instruction and remove obsolete conflictGroupId values when the conflict is resolved. Optional UI fields may be omitted when unknown.",
+            conflict:
+              "Return updated conflict copy and actions. overlapLabel must be based on confirmed overlapping fixed ranges, otherwise use Not confirmed.",
+            rationale: "Explain the replanning decision in one summary plus 3-6 bullets.",
+          },
+          rules: [
           "For trigger=add_task, read sourceContext.addedSource first, classify the added commitment, and schedule it without inventing details not present in that text.",
           "For trigger=clarification, review the clarification answers first, then reschedule the affected commitment or goal in the plan.",
           "For trigger=manual_conflict, only run if manualConflictInstruction is non-empty. Treat it as a high-priority scheduling constraint.",
@@ -522,12 +545,15 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
           "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
           "Return only a JSON object with commitments, planTasks, timelineEvents, resolvedTimelineEvents, conflict, rationale, and dailyPlan.",
-        ],
-      },
-      null,
-      2,
-    ),
-  });
+          ],
+        },
+        null,
+        2,
+      ),
+    }),
+    GATEWAY_REPLAN_TIMEOUT_MS,
+    `Gateway replanning model ${model}`,
+  );
 
   return ReplanAgentOutputSchema.parse(coerceReplanOutput(parseJsonObject(text), input));
 }

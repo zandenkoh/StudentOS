@@ -22,6 +22,8 @@ import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import {
   ClarificationBottomSheet,
+  goalQuestions,
+  teamQuestions,
   type ClarificationAnswers,
   type ClarificationQuestion
 } from "@/components/clarification-bottom-sheet";
@@ -411,6 +413,13 @@ function savedAnswersForQuestions(
   const commitmentRecords = records.filter((record) => record.commitmentId === commitmentId);
   const answers: ClarificationAnswers = {};
 
+  if (!questions.length) {
+    commitmentRecords.forEach((record, index) => {
+      if (record.answer) answers[index] = record.answer;
+    });
+    return answers;
+  }
+
   questions.forEach((question, index) => {
     const matchingRecord =
       commitmentRecords.find((record) => record.question === question.question) ??
@@ -438,6 +447,10 @@ function clarificationRecordsSignature(records: ClarificationAnswerRecord[]) {
         ),
       ),
   );
+}
+
+function clarificationAnswerValueSignature(records: ClarificationAnswerRecord[]) {
+  return JSON.stringify(records.map((record) => record.answer.trim()).filter(Boolean));
 }
 
 function persistCommitments(commitments: Commitment[]) {
@@ -1343,6 +1356,10 @@ export default function CommitmentsPage() {
       aiFootprint?.clarificationQuestions.filter(
         (item) => item.commitmentId === target.commitmentId,
       ) ?? [];
+    const fallbackQuestions = target.kind === "goal" ? goalQuestions : teamQuestions;
+    const questionTexts = matchingQuestions.length
+      ? matchingQuestions.map((item) => item.question)
+      : fallbackQuestions.map((item) => item.question);
     const question = matchingQuestions[0];
     const currentCommitment = commitments.find((item) => item.id === target.commitmentId);
     const selectedAnswer = Object.values(answers).find((answer) => answer && answer !== "Skipped");
@@ -1361,7 +1378,7 @@ export default function CommitmentsPage() {
           commitmentId: target.commitmentId,
           commitmentTitle: currentCommitment?.title ?? target.commitmentId,
           kind: target.kind,
-          question: matchingQuestion?.question ?? `Clarification ${Number(index) + 1}`,
+          question: matchingQuestion?.question ?? questionTexts[Number(index)] ?? `Clarification ${Number(index) + 1}`,
           answer: cleanAnswer,
           answeredAt,
         } satisfies ClarificationAnswerRecord;
@@ -1375,7 +1392,9 @@ export default function CommitmentsPage() {
     );
     const answersChanged =
       clarificationRecordsSignature(existingRecordsForCommitment) !==
-      clarificationRecordsSignature(answeredRecords);
+        clarificationRecordsSignature(answeredRecords) &&
+      clarificationAnswerValueSignature(existingRecordsForCommitment) !==
+        clarificationAnswerValueSignature(answeredRecords);
 
     if (
       answeredRecords.length > 0 &&
@@ -1475,9 +1494,15 @@ export default function CommitmentsPage() {
     const aiQuestion = aiFootprint?.clarificationQuestions.find(
       (question) => question.commitmentId === commitment.id,
     );
+    const hasSavedClarification = clarificationAnswerRecords.some(
+      (record) => record.commitmentId === commitment.id,
+    );
 
-    if (aiQuestion) {
-      setClarifying({ kind: aiQuestion.kind, commitmentId: commitment.id });
+    if (aiQuestion || hasSavedClarification) {
+      setClarifying({
+        kind: aiQuestion?.kind ?? (commitment.type === "goal" ? "goal" : "team"),
+        commitmentId: commitment.id,
+      });
       return;
     }
 
@@ -2521,9 +2546,9 @@ export default function CommitmentsPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed-bottom-toast flex items-center gap-2 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-white shadow-lift animate-bounce"
+            className="fixed-bottom-toast flex items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-xs font-medium text-black shadow-lift"
           >
-            <CheckCircle2 className="size-4" />
+            <CheckCircle2 className="size-3.5" />
             {toastMessage}
           </motion.div>
         ) : null}

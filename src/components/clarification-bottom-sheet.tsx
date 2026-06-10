@@ -113,7 +113,7 @@ export function OptionalTextInput({ placeholder }: { placeholder: string }) {
   );
 }
 
-const goalQuestions: ClarificationQuestion[] = [
+export const goalQuestions: ClarificationQuestion[] = [
   {
     question: "What does success look like?",
     options: [
@@ -143,7 +143,7 @@ const goalQuestions: ClarificationQuestion[] = [
   }
 ];
 
-const teamQuestions: ClarificationQuestion[] = [
+export const teamQuestions: ClarificationQuestion[] = [
   {
     question: "Is this a confirmed meeting or a possible one?",
     options: [

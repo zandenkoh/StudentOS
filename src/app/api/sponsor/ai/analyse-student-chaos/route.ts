@@ -250,7 +250,7 @@ function streamAwsAgentRequest(
               detail: message.detail,
             }),
           });
-        }, 1800);
+        }, 900);
       };
 
       send({ type: "log", log: awsForwardLog(endpoint) });

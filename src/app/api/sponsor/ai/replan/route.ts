@@ -213,7 +213,7 @@ function streamReplan(input: ParsedReplanInput) {
             body: "The agent stream is still connected while Vercel AI Gateway finishes the replanning call.",
           }),
         });
-      }, 1600);
+      }, 900);
 
       try {
         const result = await replanWithAgent(input);
