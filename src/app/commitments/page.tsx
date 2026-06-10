@@ -237,6 +237,11 @@ function taskDateKey(task: DemoPlanTask) {
 }
 
 function eventDateKey(event: TimelineEvent) {
+  if (event.dateKey) {
+    if (event.dateKey === addDaysToDateId(todayDateId(), 1)) return "tomorrow";
+    if (event.dateKey === todayDateId()) return "today";
+    return event.dateKey;
+  }
   return event.time.toLowerCase().includes("tomorrow") ? "tomorrow" : "today";
 }
 
@@ -596,7 +601,7 @@ function commitmentsFromSource(
   }
 
   return interpretedItems
-    .map((item, index) => {
+    .map((item, index): Commitment | null => {
       const title = taskTitleFromEvidence(item.title);
       if (!title || looksLikeWeakGeneratedTitle(title)) return null;
       const type = sourceCommitmentType(item.type);
@@ -1090,10 +1095,78 @@ export default function CommitmentsPage() {
     ) ?? [];
   }, [aiFootprint?.clarificationQuestions, clarifying]);
   const activeClarification = activeClarifications[0];
-  const activeClarificationQuestionsForSheet = useMemo(
-    () => questionsForSheet(activeClarifications),
-    [activeClarifications],
-  );
+  const clarifyingCommitment = useMemo(() => {
+    if (!clarifying) return null;
+    return commitments.find((c) => c.id === clarifying.commitmentId) ?? null;
+  }, [commitments, clarifying]);
+
+  const activeClarificationQuestionsForSheet = useMemo(() => {
+    if (activeClarifications.length > 0) {
+      return questionsForSheet(activeClarifications);
+    }
+    if (!clarifyingCommitment) return undefined;
+
+    const title = clarifyingCommitment.title;
+    const type = clarifyingCommitment.type;
+
+    if (type === "event") {
+      return [
+        {
+          question: `Is the time for "${title}" confirmed?`,
+          options: [
+            { label: "Confirm exact time", recommended: true },
+            { label: "Tentative / subject to change" },
+            { label: "Needs rescheduling" },
+            { label: "Cancel event" }
+          ],
+          customPlaceholder: "Type the exact time or status..."
+        }
+      ];
+    }
+
+    if (type === "deadline") {
+      return [
+        {
+          question: `When is "${title}" due?`,
+          options: [
+            { label: "Tomorrow", recommended: true },
+            { label: "Today" },
+            { label: "Later this week" },
+            { label: "Next week or later" }
+          ],
+          customPlaceholder: "Type the due date..."
+        }
+      ];
+    }
+
+    if (type === "goal") {
+      return [
+        {
+          question: `What is your target timeline for "${title}"?`,
+          options: [
+            { label: "Complete this week", recommended: true },
+            { label: "Complete this month" },
+            { label: "Ongoing practice" },
+            { label: "Flexible timeline" }
+          ],
+          customPlaceholder: "Type your target or timeline..."
+        }
+      ];
+    }
+
+    return [
+      {
+        question: `When would you like to schedule "${title}"?`,
+        options: [
+          { label: "Later this week", recommended: true },
+          { label: "Today or tomorrow" },
+          { label: "Next week" },
+          { label: "Keep flexible / unscheduled" }
+        ],
+        customPlaceholder: "Type scheduling details..."
+      }
+    ];
+  }, [activeClarifications, clarifyingCommitment]);
   const activeClarificationInitialAnswers = useMemo(
     () =>
       clarifying
@@ -2980,8 +3053,8 @@ export default function CommitmentsPage() {
         onClose={() => setClarifying(null)}
         onSubmit={(answers) => clarifying && clarify(clarifying, answers)}
         questionsOverride={activeClarificationQuestionsForSheet}
-        titleOverride={activeClarification?.title}
-        subtitleOverride={activeClarification?.subtitle}
+        titleOverride={activeClarification?.title ?? (clarifyingCommitment ? `Clarify "${clarifyingCommitment.title}"` : undefined)}
+        subtitleOverride={activeClarification?.subtitle ?? (clarifyingCommitment ? `Resolve this ${clarifyingCommitment.type} before StudentOS builds the day.` : undefined)}
         initialAnswers={activeClarificationInitialAnswers}
       />
 

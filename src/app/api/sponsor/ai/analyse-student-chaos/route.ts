@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { normalizeDurationLabel } from "@/lib/duration-label";
-import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
+import { validateTimelineConflicts, normalizeDateKey } from "@/lib/schedule-conflicts";
 import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
@@ -618,18 +618,7 @@ function normalizeAgentFootprint(
     const endTime = confirmedFact("end_time");
     if (!startTime || !endTime) return [];
     const rawDate = confirmedFact("date");
-    const normalizedDate = rawDate
-      ? (() => {
-          const timestamp = Date.parse(rawDate.replace(/(\d)(st|nd|rd|th)\b/gi, "$1"));
-          if (Number.isNaN(timestamp)) return rawDate.toLowerCase();
-          const parsedDate = new Date(timestamp);
-          return [
-            parsedDate.getFullYear(),
-            String(parsedDate.getMonth() + 1).padStart(2, "0"),
-            String(parsedDate.getDate()).padStart(2, "0"),
-          ].join("-");
-        })()
-      : undefined;
+    const normalizedDate = normalizeDateKey(rawDate, footprint.currentDate);
 
     const eventItem = source.interpretedItems?.find((item) => item.type === "event");
     const title = (

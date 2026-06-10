@@ -24,6 +24,48 @@ function cleanMeridiem(value: string) {
   return value.replace(/\./g, "").toUpperCase();
 }
 
+export function normalizeDateKey(rawDate: string | undefined, currentDate: string | undefined): string | undefined {
+  if (!rawDate) return undefined;
+  const lower = rawDate.toLowerCase().trim();
+  const baseDateStr = currentDate || new Date().toISOString().slice(0, 10);
+  const [by, bm, bd] = baseDateStr.split("-").map(Number);
+  const baseDate = new Date(by, bm - 1, bd);
+
+  if (lower === "tomorrow" || lower === "tmr") {
+    const tmrDate = new Date(baseDate);
+    tmrDate.setDate(tmrDate.getDate() + 1);
+    return [
+      tmrDate.getFullYear(),
+      String(tmrDate.getMonth() + 1).padStart(2, "0"),
+      String(tmrDate.getDate()).padStart(2, "0")
+    ].join("-");
+  }
+
+  if (lower === "today" || lower === "tonight") {
+    return baseDateStr;
+  }
+
+  // Handle standard dates like "11 June" or "11 Jun"
+  let cleanDateStr = rawDate.replace(/(\d)(st|nd|rd|th)\b/gi, "$1");
+  // If no 4-digit year is present, append the base year
+  if (!/\b\d{4}\b/.test(cleanDateStr)) {
+    cleanDateStr = `${cleanDateStr} ${by}`;
+  }
+
+  const timestamp = Date.parse(cleanDateStr);
+  if (Number.isNaN(timestamp)) {
+    return lower;
+  }
+
+  const parsedDate = new Date(timestamp);
+  return [
+    parsedDate.getFullYear(),
+    String(parsedDate.getMonth() + 1).padStart(2, "0"),
+    String(parsedDate.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+
 function parseClockTime(hourText: string, minuteText: string | undefined, meridiemText: string) {
   let hour = Number(hourText);
   const minute = minuteText ? Number(minuteText) : 0;

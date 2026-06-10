@@ -10,6 +10,7 @@ import {
   isFixedTimeConflictCandidate,
   parseTimeInterval,
   validateTimelineConflicts,
+  normalizeDateKey,
   type ConfirmedConflictGroup,
 } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
@@ -1425,27 +1426,13 @@ function confirmedSourceFact(source: CapturedSourceForAI, field: "date" | "start
   return source.verifiedFacts?.find((fact) => fact.field === field && fact.status === "confirmed")?.value.trim();
 }
 
-function fallbackFixedTimelineEvents(sources: CapturedSourceForAI[]) {
+function fallbackFixedTimelineEvents(sources: CapturedSourceForAI[], currentDate?: string) {
   return sources.flatMap((source) => {
     const startTime = confirmedSourceFact(source, "start_time");
     const endTime = confirmedSourceFact(source, "end_time");
     if (!startTime || !endTime) return [];
     const rawDate = confirmedSourceFact(source, "date");
-    const dateTimestamp = rawDate
-      ? Date.parse(rawDate.replace(/(\d)(st|nd|rd|th)\b/gi, "$1"))
-      : Number.NaN;
-    const dateKey = rawDate
-      ? Number.isNaN(dateTimestamp)
-        ? rawDate.toLowerCase()
-        : (() => {
-            const parsedDate = new Date(dateTimestamp);
-            return [
-              parsedDate.getFullYear(),
-              String(parsedDate.getMonth() + 1).padStart(2, "0"),
-              String(parsedDate.getDate()).padStart(2, "0"),
-            ].join("-");
-          })()
-      : undefined;
+    const dateKey = normalizeDateKey(rawDate, currentDate);
 
     const eventItem = source.interpretedItems?.find((item) => item.type === "event");
     const title = cleanFallbackItemText(
@@ -1579,7 +1566,7 @@ function sourceDrivenFallbackFootprint(
     goalId: commitment.type === "goal" ? roadmapGoalId : "",
     isRoadmapTask: commitment.type === "goal",
   }));
-  const fixedTimelineEvents = fallbackFixedTimelineEvents(sources);
+  const fixedTimelineEvents = fallbackFixedTimelineEvents(sources, input.currentDate);
   const timelineEvents = [
     ...fixedTimelineEvents,
     ...planTasks.slice(0, Math.max(1, 5 - fixedTimelineEvents.length)).map((task, index) => ({

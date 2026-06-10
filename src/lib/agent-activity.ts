@@ -8,7 +8,8 @@ export type AgentRunTrigger =
   | "add_task"
   | "manual_conflict"
   | "clarification"
-  | "plan_day";
+  | "plan_day"
+  | "commitment_crud";
 
 export type AgentRunStatus = "queued" | "running" | "success" | "fallback" | "error";
 

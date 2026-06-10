@@ -159,14 +159,14 @@ export const teamQuestions: ClarificationQuestion[] = [
 
 export const generalQuestions: ClarificationQuestion[] = [
   {
-    question: "Which detail should StudentOS confirm first?",
+    question: "When should this item be scheduled?",
     options: [
-      { label: "Requirements", recommended: true },
-      { label: "Deadline" },
-      { label: "Exact time" },
-      { label: "Need to ask" }
+      { label: "Later this week", recommended: true },
+      { label: "Today or tomorrow" },
+      { label: "Next week" },
+      { label: "Keep flexible / unscheduled" }
     ],
-    customPlaceholder: "Type the missing detail..."
+    customPlaceholder: "Type scheduling details..."
   }
 ];
 
