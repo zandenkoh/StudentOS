@@ -639,10 +639,12 @@ function commitmentsWithSourceBackedItems(
 
 function AddSourceButton({
   onClick,
-  raised
+  raised,
+  hasBottomAction = false
 }: {
   onClick: () => void;
   raised: boolean;
+  hasBottomAction?: boolean;
 }) {
   return (
     <div
@@ -650,7 +652,9 @@ function AddSourceButton({
       style={{
         bottom: raised
           ? "calc(max(0.75rem, env(safe-area-inset-bottom)) + 10.25rem)"
-          : "calc(max(0.75rem, env(safe-area-inset-bottom)) + 5.6rem)"
+          : hasBottomAction
+            ? "calc(max(0.75rem, env(safe-area-inset-bottom)) + 6.75rem)"
+            : "calc(max(0.75rem, env(safe-area-inset-bottom)) + 5.6rem)"
       }}
     >
       <button
@@ -3020,7 +3024,7 @@ export default function CommitmentsPage() {
       </div>
 
       <AgentActivityPanel runs={agentRuns} mobileRaised={step === "plan"} />
-      <AddSourceButton onClick={openAddSource} raised={false} />
+      <AddSourceButton onClick={openAddSource} raised={false} hasBottomAction={step === "plan"} />
 
       {step === "plan" ? (
         <BottomActionBar

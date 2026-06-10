@@ -61,6 +61,6 @@ textarea {
   }
 
   .safe-bottom-padding {
-    padding-bottom: calc(8.5rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(12.5rem + env(safe-area-inset-bottom));
   }
 }
