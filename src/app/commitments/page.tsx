@@ -392,7 +392,7 @@ function compactTitle(value: string, maxLength = 68) {
 
 function taskTitleFromEvidence(value: string) {
   const title = compactTitle(value);
-  const biologyExamMatch = title.match(/\b(Catholic High School\s+)?Biology End-of-Year Examination\b/i);
+  const biologyExamMatch = title.match(/\b(Catholic High School\s+)?Biology End-of-Year Examinat/i);
 
   if (biologyExamMatch) return "Review Biology End-of-Year Examination papers";
   if (/\bworksheet\b/i.test(title) && !/^(complete|finish|review)\b/i.test(title)) return `Complete ${title}`;
