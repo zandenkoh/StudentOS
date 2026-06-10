@@ -1,6 +1,6 @@
 # StudentOS
 
-**StudentOS is an AI chief of staff for ambitious students.**
+**StudentOS is an AI chief of staff for students.**
 
 Students do not live inside neat task managers. Their real commitments arrive as WhatsApp screenshots, PDF worksheets, school portals, voice notes, tuition changes, calendar clashes, half-remembered deadlines, and vague goals like "learn Python by December" or "win the hackathon." StudentOS turns that mess into a plan a student can actually follow.
 

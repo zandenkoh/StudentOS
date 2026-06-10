@@ -104,8 +104,8 @@ export default function Home() {
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-ink mb-4 px-2">
             Turn school chaos into a plan you can actually follow.
           </h1>
-          <p className="text-[14px] font-medium leading-relaxed text-muted px-3">
-            Traditional planner apps assume you know when to do what. StudentOS figures that out for you.
+          <p className="text-[17px] font-medium leading-relaxed text-neutral-500 px-3">
+            School shouldn&apos;t feel like a project management nightmare. StudentOS automatically extracts commitments from your messy class chats, email threads, and syllabus files, resolving schedule conflicts to build a daily plan you can actually follow.
           </p>
         </div>
 
@@ -142,8 +142,8 @@ export default function Home() {
             <h2 className="text-[25px] font-bold leading-tight tracking-tight text-ink">
               The problem is not that students are lazy.
             </h2>
-            <p className="mt-3 text-[14px] font-medium leading-6 text-muted">
-              The real problem is that school commitments arrive through screenshots, chats, emails, spoken reminders, calendars, and half-remembered goals.
+            <p className="mt-4 text-[16px] font-medium leading-relaxed text-neutral-500">
+              Your work is scattered across class group chats, PDF guidelines, email updates, and lecture slides. No student has the time to manually organize a dozen different platforms.
             </p>
           </motion.div>
 
@@ -174,7 +174,7 @@ export default function Home() {
                     show: { opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }
                   }}
                   transition={{ duration: 0.82, ease: [0.22, 1, 0.36, 1] }}
-                  className={`absolute z-10 w-[235px] rounded-[24px] border border-white/80 bg-white p-3.5 text-ink shadow-[0_24px_65px_rgba(0,0,0,0.26)] ${source.className}`}
+                  className={`absolute z-10 w-[235px] rounded-[24px] border border-white/80 bg-white p-3.5 text-ink shadow-[0_16px_32px_rgba(0,0,0,0.24),_0_8px_16px_rgba(0,0,0,0.16)] ${source.className}`}
                 >
                   <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-400">
                     <Icon className="size-3.5" />
@@ -193,8 +193,8 @@ export default function Home() {
             <div className="flex items-start gap-3">
               <div>
                 <h3 className="text-[20px] font-bold leading-tight text-ink">The cost is invisible until the day breaks.</h3>
-                <p className="mt-2 text-[13px] font-medium leading-5 text-muted">
-                  A planner can store tasks. It usually cannot notice that the same afternoon is being promised to three different things.
+                <p className="mt-3 text-[15px] font-medium leading-relaxed text-neutral-500">
+                  Traditional calendars store items, but they don&apos;t warn you when you&apos;ve committed the same hours to three different things. StudentOS automatically scans your day to surface hidden schedule conflicts.
                 </p>
               </div>
             </div>
@@ -319,8 +319,8 @@ export default function Home() {
           >
             <Zap className="size-6 text-white/70" />
             <h2 className="mt-3 text-[24px] font-black leading-tight">Try it with messy student inputs.</h2>
-            <p className="mt-2 text-[13px] font-medium leading-5 text-white/65">
-              The demo starts with the chaos, extracts commitments, catches conflicts, and builds a realistic schedule.
+            <p className="mt-3 text-[15px] font-medium leading-relaxed text-white/75">
+              Experience the full flow: parse unstructured student screenshots, extract actionable tasks, auto-detect schedule conflicts, and watch our agents generate a clean daily timeline.
             </p>
             <button
               onClick={() => {
