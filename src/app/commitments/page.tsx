@@ -392,7 +392,7 @@ function compactTitle(value: string, maxLength = 68) {
 
 function taskTitleFromEvidence(value: string) {
   const title = compactTitle(value);
-  const biologyExamMatch = title.match(/\b(Catholic High School\s+)?Biology End-of-Year Examinat/i);
+  const biologyExamMatch = /\bBiology\b/i.test(title) && /\bEnd-of-Year\b/i.test(title);
 
   if (biologyExamMatch) return "Review Biology End-of-Year Examination papers";
   if (/\bworksheet\b/i.test(title) && !/^(complete|finish|review)\b/i.test(title)) return `Complete ${title}`;
@@ -415,6 +415,61 @@ function sourceTitleCandidate(source: StudentOSAgentFootprint["sources"][number]
   return taskTitleFromEvidence(candidates.find((candidate) => candidate && !looksLikeWeakGeneratedTitle(candidate)) ?? "");
 }
 
+function normalizeCommitmentTitle(
+  commitment: Commitment,
+  sources: StudentOSAgentFootprint["sources"],
+) {
+  const source = findSourceForTitle(commitment.title, commitment.source, sources);
+  const evidenceTitle = taskTitleFromEvidence(commitment.title);
+
+  if (evidenceTitle !== compactTitle(commitment.title)) return evidenceTitle;
+  if (!looksLikeWeakGeneratedTitle(commitment.title)) return commitment.title;
+
+  return sourceTitleCandidate(source) || `Clarify ${commitment.source || "uploaded source"}`;
+}
+
+function commitmentDedupeKey(commitment: Commitment) {
+  const normalizedTitle = taskTitleFromEvidence(commitment.title);
+
+  return [
+    commitment.type,
+    commitment.source.toLowerCase().replace(/\.[a-z0-9]+$/i, ""),
+    normalizedTitle.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(),
+  ].join("|");
+}
+
+function mergeDuplicateCommitments(commitments: Commitment[]) {
+  const merged = new Map<string, Commitment>();
+
+  commitments.forEach((commitment) => {
+    const key = commitmentDedupeKey(commitment);
+    const existing = merged.get(key);
+
+    if (!existing) {
+      merged.set(key, commitment);
+      return;
+    }
+
+    const needsClarification =
+      existing.state === "needs_clarification" ||
+      existing.state === "unsure" ||
+      commitment.state === "needs_clarification" ||
+      commitment.state === "unsure";
+
+    merged.set(key, {
+      ...existing,
+      state: needsClarification ? "needs_clarification" : existing.state,
+      confidence: Math.max(existing.confidence, commitment.confidence),
+      explanation:
+        existing.explanation.length >= commitment.explanation.length
+          ? existing.explanation
+          : commitment.explanation,
+    });
+  });
+
+  return Array.from(merged.values());
+}
+
 function findSourceForTitle(
   title: string,
   sourceLabel: string | undefined,
@@ -433,19 +488,19 @@ function normalizeFilenameCommitmentTitles(
   commitments: Commitment[],
   sources: StudentOSAgentFootprint["sources"],
 ) {
-  return commitments.map((commitment) => {
-    if (!looksLikeWeakGeneratedTitle(commitment.title)) return commitment;
-
-    const source = findSourceForTitle(commitment.title, commitment.source, sources);
-    const title = sourceTitleCandidate(source) || `Clarify ${commitment.source || "uploaded source"}`;
+  return mergeDuplicateCommitments(commitments.map((commitment) => {
+    const title = normalizeCommitmentTitle(commitment, sources);
 
     return {
       ...commitment,
       title,
-      state: commitment.state === "confirmed" ? "needs_clarification" : commitment.state,
+      state:
+        title !== commitment.title && commitment.state === "confirmed" && looksLikeWeakGeneratedTitle(commitment.title)
+          ? "needs_clarification"
+          : commitment.state,
       explanation: commitment.explanation || "Title was normalized from source evidence because the original title was a filename.",
     };
-  });
+  }));
 }
 
 function normalizeFilenamePlanTaskTitles(
@@ -884,12 +939,16 @@ export default function CommitmentsPage() {
     });
   }, [planTasks]);
   const commitmentItems = useMemo(
-    () => commitments.filter((item) => item.type !== "goal"),
-    [commitments],
+    () =>
+      normalizeFilenameCommitmentTitles(commitments, aiFootprint?.sources ?? [])
+        .filter((item) => item.type !== "goal"),
+    [aiFootprint?.sources, commitments],
   );
   const goalItems = useMemo(
-    () => commitments.filter((item) => item.type === "goal"),
-    [commitments],
+    () =>
+      normalizeFilenameCommitmentTitles(commitments, aiFootprint?.sources ?? [])
+        .filter((item) => item.type === "goal"),
+    [aiFootprint?.sources, commitments],
   );
   const hasExtractedItems = commitmentItems.length > 0 || goalItems.length > 0;
   const visibleTimelineEvents = useMemo(() => {
@@ -1001,9 +1060,12 @@ export default function CommitmentsPage() {
         window.localStorage.getItem("studentos_ai_footprint") ??
         window.localStorage.getItem("studentos_commitment_footprint");
       let hydratedFootprintSignature: string | null = null;
+      let hydratedSources: StudentOSAgentFootprint["sources"] = [];
+      let hydratedCommitments: Commitment[] = [];
 
       if (rawFootprint) {
         const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
+        hydratedSources = parsedFootprint.sources ?? [];
 
         if (
           Array.isArray(parsedFootprint.commitments) &&
@@ -1012,8 +1074,9 @@ export default function CommitmentsPage() {
         ) {
           const normalizedCommitments = normalizeFilenameCommitmentTitles(
             parsedFootprint.commitments,
-            parsedFootprint.sources ?? [],
+            hydratedSources,
           );
+          hydratedCommitments = normalizedCommitments;
           const normalizedPlanTasks = normalizeFilenamePlanTaskTitles(
             parsedFootprint.planTasks,
             normalizedCommitments,
@@ -1066,7 +1129,12 @@ export default function CommitmentsPage() {
           !hydratedFootprintSignature || savedFootprintSignature === hydratedFootprintSignature;
         const parsedCommitments = JSON.parse(savedCommitments) as Commitment[];
         if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0 && savedCommitmentsMatchFootprint) {
-          setCommitments(parsedCommitments);
+          const normalizedSavedCommitments = normalizeFilenameCommitmentTitles(
+            parsedCommitments,
+            hydratedSources,
+          );
+          setCommitments(normalizedSavedCommitments);
+          persistCommitments(normalizedSavedCommitments);
         } else if (hydratedFootprintSignature) {
           window.localStorage.removeItem(SAVED_COMMITMENTS_KEY);
           window.localStorage.removeItem(SAVED_COMMITMENTS_FOOTPRINT_KEY);
@@ -1080,7 +1148,15 @@ export default function CommitmentsPage() {
           !hydratedFootprintSignature || savedFootprintSignature === hydratedFootprintSignature;
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
         if (Array.isArray(parsedPlan) && parsedPlan.length > 0 && savedPlanMatchesFootprint) {
-          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedPlan)));
+          const normalizedPlanCommitments = rawFootprint
+            ? normalizeFilenameCommitmentTitles(
+                (JSON.parse(rawFootprint) as StudentOSAgentFootprint).commitments ?? [],
+                (JSON.parse(rawFootprint) as StudentOSAgentFootprint).sources ?? [],
+              )
+            : hydratedCommitments;
+          const normalizedSavedPlan = normalizeFilenamePlanTaskTitles(parsedPlan, normalizedPlanCommitments);
+          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(normalizedSavedPlan)));
+          persistPlanTasks(normalizedSavedPlan);
         } else if (hydratedFootprintSignature) {
           window.localStorage.removeItem(SAVED_PLAN_TASKS_KEY);
           window.localStorage.removeItem(SAVED_PLAN_FOOTPRINT_KEY);
@@ -1107,7 +1183,10 @@ export default function CommitmentsPage() {
         try {
           const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
           if (parsedFootprint && Array.isArray(parsedFootprint.commitments)) {
-            localCommitments = parsedFootprint.commitments;
+            localCommitments = normalizeFilenameCommitmentTitles(
+              parsedFootprint.commitments,
+              parsedFootprint.sources ?? [],
+            );
           }
         } catch {}
       }
@@ -1116,7 +1195,10 @@ export default function CommitmentsPage() {
         try {
           const parsedCommitments = JSON.parse(savedCommitments) as Commitment[];
           if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0 && (!hydratedFootprintSignature || window.localStorage.getItem(SAVED_COMMITMENTS_FOOTPRINT_KEY) === hydratedFootprintSignature)) {
-            localCommitments = parsedCommitments;
+            localCommitments = normalizeFilenameCommitmentTitles(
+              parsedCommitments,
+              hydratedSources,
+            );
           }
         } catch {}
       }

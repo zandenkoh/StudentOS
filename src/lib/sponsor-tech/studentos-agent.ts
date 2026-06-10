@@ -1358,6 +1358,9 @@ function cleanFallbackItemText(value: string, source?: { title?: string; sourceK
     .trim();
 
   const cleaned = deriveCleanTaskTitle(stripped, source);
+  if (/\bBiology End-of-Year Examinat/i.test(cleaned)) {
+    return "Review Biology End-of-Year Examination papers";
+  }
   return compactFallbackCopy(cleaned, 72);
 }
 
@@ -1405,9 +1408,6 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
 
   candidatesBySource.forEach(({ source, candidates }) => {
     if (candidates[0]) addCandidate(source, candidates[0]);
-  });
-  candidatesBySource.forEach(({ source, candidates }) => {
-    candidates.slice(1).forEach((candidate) => addCandidate(source, candidate));
   });
 
   if (items.length) return items;

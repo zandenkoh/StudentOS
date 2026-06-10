@@ -18,6 +18,13 @@ export function CommitmentCard({
   const uncertain =
     commitment.state === "needs_clarification" || commitment.state === "unsure";
   const typeLabel = `${commitment.type.charAt(0).toUpperCase()}${commitment.type.slice(1)}`;
+  const sourceLabel = /\.(png|jpe?g|webp|gif|heic)$/i.test(commitment.source)
+    ? "Screenshot"
+    : /\.(pdf)$/i.test(commitment.source)
+      ? "PDF"
+      : /\.(txt|docx?)$/i.test(commitment.source)
+        ? "Document"
+        : commitment.source;
 
   return (
     <motion.div
@@ -54,7 +61,7 @@ export function CommitmentCard({
           className="truncate text-left text-[12px] font-semibold leading-5 text-neutral-500 transition hover:text-ink focus:outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ink/20"
           aria-label={`Open source for ${commitment.title}`}
         >
-          {commitment.source}
+          {sourceLabel}
         </button>
         <span className="shrink-0 text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
           {"\u00b7"}
