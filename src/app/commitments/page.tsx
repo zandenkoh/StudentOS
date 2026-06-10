@@ -316,8 +316,11 @@ function GoalCandidateCard({
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <SourceChip>Goal</SourceChip>
             <SourceChip tone={needsDirection ? "danger" : "success"}>
-              {needsDirection ? "Needs direction" : "Roadmap ready"}
+              {needsDirection ? "Need clarification" : "Understand"}
             </SourceChip>
+            {!needsDirection && (
+              <SourceChip tone="success">Ready</SourceChip>
+            )}
           </div>
           <p className="text-[16px] font-semibold leading-5 text-ink">
             {commitment.title}
@@ -342,13 +345,6 @@ function GoalCandidateCard({
         </button>
         <SourceChip>{commitment.estimatedDuration}</SourceChip>
       </div>
-      <p
-        className={`mt-3 text-xs font-semibold ${
-          needsDirection ? "text-red-700" : "text-neutral-600"
-        }`}
-      >
-        {needsDirection ? "Tap to clarify roadmap" : "Roadmap ready"}
-      </p>
     </motion.div>
   );
 }

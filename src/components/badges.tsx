@@ -34,12 +34,12 @@ export function UncertaintyBadge({
     >
       {confirmed ? <CheckCircle2 className="size-3.5" /> : <CircleAlert className="size-3.5" />}
       {state === "needs_clarification"
-        ? "Needs clarification"
+        ? "Need clarification"
         : state === "unsure"
           ? "Unsure"
           : state === "resolved"
             ? "Resolved"
-            : "Understood"}
+            : "Understand"}
     </span>
   );
 }
