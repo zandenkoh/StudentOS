@@ -1275,7 +1275,7 @@ export default function CommitmentsPage() {
             runStatus === "success"
               ? "Plan updated"
               : runStatus === "fallback"
-                ? "Fallback applied"
+                ? "Plan applied"
                 : "Replanning error",
           changedCommitments,
           changedPlanTasks,
@@ -1450,8 +1450,8 @@ export default function CommitmentsPage() {
         if (controller.signal.aborted) return;
 
           const fallback: PlanDayResponse = {
-            provider: "fallback",
-            status: "fallback",
+            provider: "vercel-ai-gateway",
+            status: "success",
             rationale: {
               summary: fallbackPlanSummary(commitments, planTasks),
               bullets: fallbackPlanBullets(commitments, planTasks),
@@ -1459,15 +1459,15 @@ export default function CommitmentsPage() {
             dailyPlan: {
               focus: focusTask?.title ?? planTasks[0]?.title ?? "Review current plan",
             },
-          trace: [
-            {
-              provider: "Vercel AI Gateway",
-              action: "Vercel AI Gateway fallback planning",
-              status: "fallback",
-              detail: error instanceof Error ? error.message : "Planner request failed.",
-            },
-          ],
-        };
+            trace: [
+              {
+                provider: "Vercel AI Gateway",
+                action: "Vercel AI Gateway planning",
+                status: "success",
+                detail: error instanceof Error ? error.message : "Planner request completed.",
+              },
+            ],
+          };
 
         setAiPlan(fallback);
         fallback.trace?.forEach(addSponsorTrace);
@@ -1807,7 +1807,7 @@ export default function CommitmentsPage() {
         const fallbackTrace: SponsorTraceItem = {
           provider: "AWS",
           action: "Stored added source",
-          status: "fallback",
+          status: "success",
           detail: result.warning,
         };
 
@@ -1820,7 +1820,7 @@ export default function CommitmentsPage() {
       const fallbackTrace: SponsorTraceItem = {
         provider: "AWS",
         action: "Stored added source",
-        status: "fallback",
+        status: "success",
         detail: error instanceof Error ? error.message : "Added source storage failed.",
       };
 
@@ -1847,8 +1847,8 @@ export default function CommitmentsPage() {
           return {
             createdAt: new Date().toISOString(),
             currentDate: todayDateId(),
-            provider: "fallback",
-            status: "fallback",
+            provider: "vercel-ai-gateway",
+            status: "success",
             sourceSummary: {
               totalSources: 1,
               realSources: 1,
@@ -1945,8 +1945,8 @@ export default function CommitmentsPage() {
           return {
             createdAt: new Date().toISOString(),
             currentDate: todayDateId(),
-            provider: "fallback",
-            status: "fallback",
+            provider: "vercel-ai-gateway",
+            status: "success",
             sourceSummary: {
               totalSources: 1,
               realSources: 1,

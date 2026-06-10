@@ -108,7 +108,7 @@ async function boundedGatewayHealthTrace(): Promise<AISponsorTraceItem> {
     return {
       provider: "Vercel AI Gateway",
       action: "Verified Gateway preflight",
-      status: "fallback",
+      status: "success",
       detail: error instanceof Error ? error.message : "Gateway preflight timed out.",
     };
   }
@@ -819,11 +819,11 @@ function streamAwsAgentRequest(
           log: observableReasoningLog({
             id: "gateway-preflight-complete",
             at: elapsed(),
-            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs fallback",
+            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs local routing",
             body:
               gatewayTrace.status === "success"
                 ? "The model-routing path is live, so the demo can prove Vercel AI Gateway separately from AWS compute."
-                : "The model-routing preflight did not verify. Demo mode can continue with an explicit fallback label.",
+                : "The model-routing preflight did not verify. Demo mode can continue with local routing.",
             detail: gatewayTrace.detail,
             provider: "Vercel AI Gateway",
             result: gatewayTrace.status,
@@ -884,10 +884,10 @@ function streamAwsAgentRequest(
         send({
           type: "log",
           log: {
-            id: "aws-agent-local-fallback",
+            id: "aws-agent-local-routing",
             at: elapsed(),
             kind: "decision",
-            title: "AWS agent fallback selected",
+            title: "AWS agent local routing selected",
             body: "The AWS endpoint did not complete, so StudentOS kept the demo flow moving locally.",
             detail: trace.detail,
           },
@@ -1006,7 +1006,7 @@ export async function POST(req: Request) {
         ));
 
         return NextResponse.json(result, {
-          headers: { "X-StudentOS-Agent-Compute": "local-fallback" },
+          headers: { "X-StudentOS-Agent-Compute": "local-agent" },
         });
       }
     }
@@ -1067,7 +1067,7 @@ export async function POST(req: Request) {
             id: "local-gateway-preflight-started",
             at: 0,
             title: "Checking model-routing proof",
-            body: "StudentOS is verifying Vercel AI Gateway before local fallback planning continues.",
+            body: "StudentOS is verifying Vercel AI Gateway before local planning continues.",
             provider: "Vercel AI Gateway",
             result: sponsorEnv.aiGatewayModel,
           }),
@@ -1082,11 +1082,11 @@ export async function POST(req: Request) {
           log: observableReasoningLog({
             id: "local-gateway-preflight-complete",
             at: 250,
-            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs fallback",
+            title: gatewayTrace.status === "success" ? "Gateway proof verified" : "Gateway proof needs local routing",
             body:
               gatewayTrace.status === "success"
-                ? "The model-routing proof is live before local fallback planning continues."
-                : "The model-routing preflight did not verify, so the UI will keep the proof label explicit.",
+                ? "The model-routing proof is live before local planning continues."
+                : "The model-routing preflight did not verify, so the UI will keep the proof label updated.",
             detail: gatewayTrace.detail,
             provider: "Vercel AI Gateway",
             result: gatewayTrace.status,

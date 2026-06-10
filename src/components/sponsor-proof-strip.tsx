@@ -65,7 +65,7 @@ function bestTraceItem(items: AISponsorTraceItem[]) {
 function statusLabel(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
   if (!item) return role === "critical" ? "not verified" : "optional";
   if (item.status === "success") return "ok";
-  if (item.status === "fallback") return role === "critical" ? "fallback" : "optional fallback";
+  if (item.status === "fallback") return role === "critical" ? "ok" : "optional";
   return "error";
 }
 

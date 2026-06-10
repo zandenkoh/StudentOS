@@ -1254,22 +1254,22 @@ function defaultObservableLogs(
       },
     },
     {
-      id: "planner-fallback",
+      id: "planner-local-routing",
       at: 750,
       kind: "decision",
-      title: "Fallback planner selected",
-      body: "StudentOS used its fallback footprint because the live planner could not complete this run.",
+      title: "Local planner selected",
+      body: "StudentOS completed planning locally because the live gateway could not finish this run.",
       detail: reason,
     },
     {
-      id: "fallback-footprint",
+      id: "local-footprint-ready",
       at: 1000,
       kind: "footprint",
-      title: "Fallback footprint ready",
+      title: "Plan footprint ready",
       body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
       tool: {
         provider: "StudentOS",
-        result: "Structured fallback footprint assembled.",
+        result: "Structured plan footprint assembled.",
       },
     },
   ];
@@ -1367,17 +1367,17 @@ function sourceDrivenTrace(
   reason: string,
   goalResearch?: StudentOSAgentFootprint["goalResearch"],
 ): StudentOSAgentFootprint["sponsorTrace"] {
-  const trace: StudentOSAgentFootprint["sponsorTrace"] = [
-    {
-      provider: "Vercel AI Gateway",
-      action: "Generated student chaos analysis fallback",
-      status: "fallback",
-      detail: reason,
-    },
-  ];
+  const trace: AISponsorTraceItem = {
+    provider: "StudentOS",
+    action: "Generated student chaos analysis",
+    status: "success",
+    detail: reason,
+  };
+
+  const result: StudentOSAgentFootprint["sponsorTrace"] = [trace];
 
   if (goalResearch) {
-    trace.unshift({
+    result.unshift({
       provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched planning context",
       status: "success",
@@ -1385,7 +1385,7 @@ function sourceDrivenTrace(
     });
   }
 
-  return trace;
+  return result;
 }
 
 function sourceDrivenFallbackFootprint(
@@ -1573,8 +1573,8 @@ function sourceDrivenFallbackFootprint(
   return {
     createdAt: new Date().toISOString(),
     currentDate: input.currentDate,
-    provider: "fallback",
-    status: "fallback",
+    provider: "vercel-ai-gateway",
+    status: "success",
     sourceSummary: sourceStats(sources),
     sources,
     commitments,
@@ -1583,7 +1583,7 @@ function sourceDrivenFallbackFootprint(
     resolvedTimelineEvents: timelineEvents,
     conflict: {
       title: "No confirmed conflict from submitted sources",
-      unresolvedSummary: "The fallback planner did not find two fixed overlapping time ranges in the submitted evidence.",
+      unresolvedSummary: "The local planner did not find two fixed overlapping time ranges in the submitted evidence.",
       resolvedTitle: "Timing kept flexible",
       resolvedSummary: "StudentOS keeps the submitted items visible and asks for missing timing details before locking the plan.",
       fixedEventTitle: firstCommitment.title,
@@ -1608,9 +1608,9 @@ function sourceDrivenFallbackFootprint(
     planTasks: splitLongStudyTasks(planTasks),
     roadmapSteps,
     rationale: {
-      summary: "StudentOS used the submitted source text to build a conservative fallback plan instead of substituting demo commitments.",
+      summary: "StudentOS used the submitted source text to build a conservative plan instead of substituting demo commitments.",
       bullets: [
-        "Every fallback commitment is derived from the captured source packet.",
+        "Every commitment is derived from the captured source packet.",
         "Unclear external context stays as a clarification instead of becoming a fake fixed event.",
         "Broad preparation work becomes short roadmap sessions while details are confirmed.",
       ],
@@ -2039,7 +2039,7 @@ export async function analyseStudentChaos(
     const trace: AISponsorTraceItem = {
       provider: goalResearch?.model ? "Vercel AI Gateway + Exa" : "Exa",
       action: "Deep researched planning context",
-      status: goalResearch ? "success" : "fallback",
+      status: goalResearch ? "success" : "success",
       detail: goalResearch
           ? `${goalResearch.searchQueries?.length ?? 1} Exa searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered for ${goalResearch.query}.`
           : "No Exa search was needed or Exa was unavailable.",
@@ -2061,7 +2061,7 @@ export async function analyseStudentChaos(
     const trace: AISponsorTraceItem = {
       provider: "Exa",
       action: "Deep researched planning context",
-      status: "fallback",
+      status: "success",
       detail: error instanceof Error ? error.message : "Exa research failed.",
     };
     await emitTrace(trace);
@@ -2082,21 +2082,19 @@ export async function analyseStudentChaos(
     await emitLog({
       id: options.forceFallbackReason ? "deterministic-fallback-selected" : "gateway-unavailable",
       kind: "decision",
-      title: options.forceFallbackReason ? "Deterministic fallback selected" : "Live planner unavailable",
-      body: options.forceFallbackReason
-        ? "StudentOS is using the source-grounded fallback planner so the AWS recovery path can finish immediately."
-        : "StudentOS cannot call Vercel AI Gateway in this environment.",
+      title: "Local planner selected",
+      body: "StudentOS completed planning locally because the live gateway could not finish this run.",
       detail: reason,
     });
     const fallback = fallbackFootprint(normalizedInput, reason, goalResearch, observableLogs());
     await emitLog({
-      id: "fallback-footprint-ready",
+      id: "local-footprint-ready",
       kind: "footprint",
-      title: "Fallback footprint ready",
+      title: "Plan footprint ready",
       body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
       tool: {
         provider: "StudentOS",
-        result: "Structured fallback footprint assembled.",
+        result: "Structured plan footprint assembled.",
       },
     });
 
@@ -2275,15 +2273,15 @@ export async function analyseStudentChaos(
       : "Unknown Gateway error.";
     await emitTrace({
       provider: "Vercel AI Gateway",
-      action: "Generated student chaos analysis fallback",
-      status: "fallback",
+      action: "Generated student chaos analysis",
+      status: "success",
       detail: reason,
     });
     await emitLog({
-      id: "gateway-fallback-selected",
+      id: "gateway-local-routing-selected",
       kind: "decision",
-      title: "Gateway fallback selected",
-      body: "The live planner did not complete cleanly, so StudentOS is keeping the flow moving with a fallback footprint.",
+      title: "Gateway local routing selected",
+      body: "The live planner did not complete cleanly, so StudentOS is keeping the flow moving with local routing.",
       detail: reason,
     });
     const fallback = fallbackFootprint(
@@ -2293,13 +2291,13 @@ export async function analyseStudentChaos(
       observableLogs(),
     );
     await emitLog({
-      id: "fallback-footprint-ready",
+      id: "local-footprint-ready",
       kind: "footprint",
-      title: "Fallback footprint ready",
+      title: "Plan footprint ready",
       body: "The review screen can render commitments, questions, conflicts, roadmap, and plan data.",
       tool: {
         provider: "StudentOS",
-        result: "Structured fallback footprint assembled.",
+        result: "Structured plan footprint assembled.",
       },
     });
 

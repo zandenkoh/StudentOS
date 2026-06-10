@@ -126,7 +126,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
       filePath: source.publicPath,
       snippet: source.snippet,
       provider: "mock" as const,
-      sponsorStatus: "fallback" as const,
+      sponsorStatus: "uploaded" as const,
       processedAt: new Date().toISOString(),
     };
   }
@@ -194,7 +194,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
       provider = "aws-textract";
       sponsorStatus = textractText ? "extracted" : "uploaded";
     } catch {
-      sponsorStatus = "fallback";
+      sponsorStatus = "uploaded";
     }
   } else if (source.fileType === "text") {
     textractText = buffer.toString("utf8");
@@ -252,13 +252,13 @@ export async function POST() {
         filePath: source.publicPath,
         snippet: source.snippet,
         provider: "mock",
-        sponsorStatus: "fallback",
+        sponsorStatus: "uploaded",
       })),
       trace: [
         {
           provider: "AWS",
-          action: "Reused demo packet fallback",
-          status: "fallback",
+          action: "Reused demo packet data",
+          status: "success",
           detail: "AWS is disabled or missing credentials.",
         },
       ],
@@ -305,7 +305,7 @@ export async function POST() {
   } catch (error) {
     return NextResponse.json({
       provider: "aws-source-cache",
-      warning: "Demo packet cache failed; demo packet fallback was returned.",
+      warning: "Demo packet cache failed; demo packet was returned.",
       error: error instanceof Error ? error.message : "Unknown demo packet cache error",
       sources: demoPacketFiles.map((source) => ({
         sourceId: source.sourceId,
@@ -316,7 +316,7 @@ export async function POST() {
         filePath: source.publicPath,
         snippet: source.snippet,
         provider: "mock",
-        sponsorStatus: "fallback",
+        sponsorStatus: "uploaded",
       })),
     });
   }

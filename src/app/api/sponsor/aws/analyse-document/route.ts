@@ -31,7 +31,7 @@ export async function POST(req: Request) {
   if (!isAwsReady()) {
     return NextResponse.json({
       provider: "mock",
-      text: "AWS AnalyzeDocument disabled. Use fallback.",
+      text: "AWS AnalyzeDocument disabled. Use demo data.",
       blocks: [],
     });
   }
@@ -74,7 +74,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       provider: "aws-textract-analyze-document",
-      warning: "AnalyzeDocument failed; demo can continue with fallback data.",
+      warning: "AnalyzeDocument failed; demo can continue with demo data.",
       text: "",
       blocks: [],
       summary: interpretation.summary,

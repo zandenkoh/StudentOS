@@ -32,7 +32,7 @@ export async function POST(req: Request) {
   if (!isAwsReady()) {
     return NextResponse.json({
       provider: "mock",
-      text: "AWS Textract disabled. Use demo fallback OCR text.",
+      text: "AWS Textract disabled. Use demo OCR text.",
       blocks: [],
     });
   }
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       provider: "aws-textract",
-      warning: "Textract failed; demo can continue with fallback OCR text.",
+      warning: "Textract failed; demo can continue with demo OCR text.",
       text: "",
       blocks: [],
       summary: interpretation.summary,
