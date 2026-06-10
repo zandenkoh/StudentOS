@@ -923,6 +923,24 @@ function sourceStats(sources: CapturedSourceForAI[]) {
   };
 }
 
+type ResearchCandidate = {
+  text: string;
+  sourceLabel?: string;
+  kind: "goal" | "context";
+};
+
+function identifiedGoalResearchCandidate(sources: CapturedSourceForAI[]): ResearchCandidate | undefined {
+  const goalItem = sourceFallbackItems(sources).find(({ text }) => fallbackCommitmentType(text) === "goal");
+
+  if (!goalItem) return undefined;
+
+  return {
+    text: goalItem.text,
+    sourceLabel: goalItem.source?.title || goalItem.source?.source,
+    kind: "goal",
+  };
+}
+
 function researchContextEvidence(sources: CapturedSourceForAI[]) {
   const meaningfulTexts = sources
     .map(sourceText)
@@ -946,8 +964,21 @@ function researchContextEvidence(sources: CapturedSourceForAI[]) {
   );
 }
 
-function researchEvidencePacket(sources: CapturedSourceForAI[]) {
-  return sources
+function researchCandidate(sources: CapturedSourceForAI[]): ResearchCandidate | undefined {
+  const goalCandidate = identifiedGoalResearchCandidate(sources);
+  if (goalCandidate) return goalCandidate;
+
+  const context = researchContextEvidence(sources);
+  if (!context) return undefined;
+
+  return {
+    text: context,
+    kind: "context",
+  };
+}
+
+function researchEvidencePacket(sources: CapturedSourceForAI[], candidate?: ResearchCandidate) {
+  const sourcePacket = sources
     .map((source, index) =>
       [
         `Source ${index + 1}: ${source.title}`,
@@ -966,6 +997,21 @@ function researchEvidencePacket(sources: CapturedSourceForAI[]) {
         .join("\n"),
     )
     .filter((text) => text.trim().length >= 12)
+    .join("\n\n")
+    .slice(0, 5000);
+
+  if (!candidate) return sourcePacket;
+
+  return [
+    candidate.kind === "goal"
+      ? "Identified student goal to deep-research before planning:"
+      : "Identified student context to deep-research before planning:",
+    candidate.text,
+    candidate.sourceLabel ? `Source: ${candidate.sourceLabel}` : undefined,
+    sourcePacket ? "Submitted source context:" : undefined,
+    sourcePacket,
+  ]
+    .filter(Boolean)
     .join("\n\n")
     .slice(0, 5000);
 }
@@ -1406,11 +1452,11 @@ function mergeSponsorTrace(
 }
 
 async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<StudentOSAgentFootprint["goalResearch"] | undefined> {
-  const researchContext = researchContextEvidence(sources);
+  const candidate = researchCandidate(sources);
 
-  if (!researchContext || !isExaReady()) return undefined;
+  if (!candidate || !isExaReady()) return undefined;
 
-  const queryPlan = await generateResearchQueryPlan(researchEvidencePacket(sources) || researchContext);
+  const queryPlan = await generateResearchQueryPlan(researchEvidencePacket(sources, candidate) || candidate.text);
 
   return deepResearchGoal(queryPlan.subject, {
     searchQueries: queryPlan.queries,
@@ -1735,13 +1781,15 @@ export async function analyseStudentChaos(
     },
   });
 
-  const contextCandidate = researchContextEvidence(sources);
+  const contextCandidate = researchCandidate(sources);
   await emitLog({
     id: "goal-research-check",
     kind: "analysis",
     title: "Checking for research context",
     body: contextCandidate
-      ? "Detected evidence that may benefit from live research context."
+      ? contextCandidate.kind === "goal"
+        ? "Detected a goal that should be deep-researched before planning."
+        : "Detected evidence that may benefit from live research context."
       : "No evidence needed live research for this run.",
     detail: contextCandidate && !isExaReady() ? "Exa is not configured, so research will be skipped." : undefined,
   });
@@ -1751,7 +1799,9 @@ export async function analyseStudentChaos(
       id: "research-query-planning",
       kind: "tool",
       title: "Generating research queries",
-      body: "Analysing source evidence before calling Exa, so the search is not just the raw user prompt.",
+      body: contextCandidate.kind === "goal"
+        ? "Preparing automatic goal research before the planning agent runs."
+        : "Analysing source evidence before calling Exa, so the search is not just the raw user prompt.",
       tool: {
         provider: isVercelAiReady() ? "Vercel AI Gateway" : "StudentOS",
         result: "Preparing focused Exa queries from OCR, interpretations, and manual notes.",
