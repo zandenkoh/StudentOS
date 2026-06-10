@@ -37,7 +37,7 @@ import { MobileTimeline } from "@/components/mobile-timeline";
 import { PlanSection } from "@/components/plan-section";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { ScreenHeader } from "@/components/screen-header";
-import { resetScreenScroll } from "@/components/scroll-to-screen-top";
+import { runStaggeredScrollResets } from "@/components/scroll-to-screen-top";
 import { SourceChip } from "@/components/source-chip";
 import { SponsorProofStrip } from "@/components/sponsor-proof-strip";
 import { TaskEditBottomSheet } from "@/components/task-edit-bottom-sheet";
@@ -830,10 +830,7 @@ export default function CommitmentsPage() {
   ];
 
   useLayoutEffect(() => {
-    resetScreenScroll();
-    const frameId = window.requestAnimationFrame(resetScreenScroll);
-
-    return () => window.cancelAnimationFrame(frameId);
+    return runStaggeredScrollResets();
   }, [step]);
 
   useEffect(() => {

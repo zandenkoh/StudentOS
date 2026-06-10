@@ -828,6 +828,24 @@ const protectedDemoDetailPatterns = [
   /\b11\s*june\b/i,
 ];
 
+const clarificationTopicGuards = [
+  {
+    name: "team meeting",
+    generated: /\b(team|teammate|group|meeting|agenda|call|briefing|reschedule|attend(?:ing)?|confirmed event|possible event)\b/i,
+    evidence: /\b(team|teammate|group|meeting|agenda|call|briefing|reschedule|attend(?:ing)?|event)\b/i,
+  },
+  {
+    name: "worksheet",
+    generated: /\b(worksheet|ws|page|question numbers?|selected questions|whole worksheet|homework)\b/i,
+    evidence: /\b(worksheet|ws|page|question numbers?|homework|assignment|bio|biology|chem|chemistry|physics|math)\b/i,
+  },
+  {
+    name: "deadline",
+    generated: /\b(deadline|due|submit|submission|turn in)\b/i,
+    evidence: /\b(deadline|due|submit|submission|turn in|by\s+\d|tomorrow|today|tonight|this week)\b/i,
+  },
+];
+
 function groundingTokens(value: string) {
   return Array.from(
     new Set(
@@ -858,6 +876,87 @@ function hasUngroundedProtectedDemoDetail(candidate: string, sourceCorpus: strin
   );
 }
 
+function generatedClarificationText(question: GeneratedClarificationQuestion) {
+  return [
+    question.title,
+    question.subtitle,
+    question.question,
+    question.customPlaceholder,
+    question.options.map((option) => option.label).join("\n"),
+    question.resolvedCommitment.title,
+    question.resolvedCommitment.explanation,
+  ].join("\n");
+}
+
+function sourceMatchesCommitment(source: CapturedSourceForAI, commitment: GeneratedCore["commitments"][number]) {
+  const sourceLabels = [
+    source.id,
+    source.title,
+    source.source,
+    source.snippet,
+    source.sourceSummary,
+    source.extractedTasks?.join("\n"),
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  const commitmentLabels = [commitment.id, commitment.title, commitment.source]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+  const commitmentTokens = groundingTokens(commitmentLabels).filter((token) => token.length >= 3);
+
+  return (
+    Boolean(commitment.source && sourceLabels.includes(commitment.source.toLowerCase())) ||
+    Boolean(source.title && commitmentLabels.includes(source.title.toLowerCase())) ||
+    commitmentTokens.some((token) => sourceLabels.includes(token))
+  );
+}
+
+function commitmentEvidenceText(
+  commitment: GeneratedCore["commitments"][number],
+  input: AnalyseStudentChaosRequest,
+) {
+  const matchedSources = input.sources.filter((source) => sourceMatchesCommitment(source, commitment));
+
+  return [
+    commitment.title,
+    commitment.type,
+    commitment.source,
+    commitment.explanation,
+    ...matchedSources.map(sourceText),
+  ].join("\n");
+}
+
+function assertClarificationQuestionsGrounded(core: GeneratedCore, input: AnalyseStudentChaosRequest) {
+  const sourceCorpus = input.sources.map(sourceText).join("\n");
+
+  core.clarificationQuestions.forEach((question) => {
+    const commitment = core.commitments.find((item) => item.id === question.commitmentId);
+    if (!commitment) {
+      throw new Error(`Planner returned clarification for unknown commitment: ${question.commitmentId}`);
+    }
+
+    const questionText = generatedClarificationText(question);
+    const evidenceText = commitmentEvidenceText(commitment, input) || sourceCorpus;
+    const evidenceCorpus = `${evidenceText}\n${sourceCorpus}`;
+
+    if (question.kind === "team" && !clarificationTopicGuards[0].evidence.test(evidenceText)) {
+      throw new Error(`Planner returned team clarification for non-team commitment: ${commitment.title}`);
+    }
+
+    const unsupportedTopic = clarificationTopicGuards.find(
+      (guard) => guard.generated.test(questionText) && !guard.evidence.test(evidenceCorpus),
+    );
+
+    if (unsupportedTopic) {
+      throw new Error(
+        `Planner returned ${unsupportedTopic.name} clarification unsupported by source evidence: ${commitment.title}`,
+      );
+    }
+  });
+}
+
 function generatedCoreEvidenceText(core: GeneratedCore) {
   return [
     core.commitments.map((commitment) => `${commitment.title}\n${commitment.source}\n${commitment.explanation}`).join("\n"),
@@ -885,6 +984,8 @@ function assertGeneratedCoreGrounded(core: GeneratedCore, input: AnalyseStudentC
   const sourceCorpusTokens = groundingTokens(sourceCorpus);
 
   if (sourceCorpusTokens.length === 0) return;
+
+  assertClarificationQuestionsGrounded(core, input);
 
   const unsupportedCommitments = core.commitments.filter((commitment) => {
     const commitmentText = `${commitment.title}\n${commitment.explanation}`;
@@ -1560,6 +1661,21 @@ function normalizeRoadmapStep(step: GeneratedRoadmapStep) {
   };
 }
 
+function sourceTruthPackets(sources: CapturedSourceForAI[]) {
+  return sources.map((source, index) => ({
+    sourceNumber: index + 1,
+    id: source.id,
+    title: source.title,
+    sourceLabel: source.source,
+    interpretedSummary: source.sourceSummary || "",
+    interpretedTasks: source.extractedTasks ?? [],
+    extractedEvidence: source.extractedEvidence ?? [],
+    needsClarification: source.needsClarification || false,
+    clarificationPrompt: source.clarificationPrompt || "",
+    evidenceText: sourceText(source).slice(0, 1400),
+  }));
+}
+
 function normalizeConflictAnalysis(
   conflict: GeneratedCore["conflict"],
   groups: ConfirmedConflictGroup[],
@@ -1657,14 +1773,7 @@ async function generateFootprintCore(
       {
         currentDate: input.currentDate,
         sourceContext: input.sourceContext,
-        sources: sources.map((source) => ({
-          ...source,
-          interpretedSummary: source.sourceSummary,
-          interpretedTasks: source.extractedTasks,
-          sourceNeedsClarification: source.needsClarification,
-          sourceClarificationPrompt: source.clarificationPrompt,
-          evidenceText: sourceText(source).slice(0, 1400),
-        })),
+        sourceTruthPackets: sourceTruthPackets(sources),
         exaGoalResearch: goalResearch,
         outputContract: {
           commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
@@ -1678,10 +1787,14 @@ async function generateFootprintCore(
           emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
         },
         requirements: [
-              "Extract commitments from evidence, not generic todo items.",
+          "Extract commitments from evidence, not generic todo items.",
+          "Treat sourceTruthPackets as the source of truth. Keep each sourceNumber/id/title separate; never borrow a subject, event type, person, timing, or option from one source packet for another commitment.",
           "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
           "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",
           "Treat the submitted source text as the source of truth. For short manual inputs, preserve the exact named event, subject, or roadmap target in commitments, roadmap steps, and plan tasks.",
+          "Every clarification question must be about the exact commitmentId it references. Before writing the question or options, check that the topic words appear in that commitment's title, source, explanation, or linked sourceTruthPacket.",
+          "If the commitment is a worksheet/homework item such as 'Bio WS', clarification questions must ask about worksheet scope, due time, requirements, or missing pages. Do not ask team meeting, event attendance, agenda, or rescheduling questions unless the linked source explicitly says it is a team meeting or event.",
+          "If the linked source is a team meeting or event, do not create worksheet/page/question-number options unless that same source explicitly includes worksheet or homework evidence.",
           "Never use built-in demo details such as Physics worksheet, CCA briefing, tuition, Python coding by December, Sarah, or the 11 June competition unless those exact details are explicitly present in the submitted sources.",
           "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
           "If OCR only shows an exam cover page, worksheet cover page, candidate instructions, names, class fields, or index-number boilerplate, do not invent the worksheet task. Create one unclear commitment and ask enough clarification questions to schedule it later, including which worksheet/page/question numbers and when it is due if missing.",

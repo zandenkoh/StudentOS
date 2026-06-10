@@ -860,7 +860,7 @@ export default function InputPage() {
           <h1 className="text-[28px] font-bold leading-tight tracking-tight text-ink mb-1">
             Drop the mess here
           </h1>
-          <p className="text-[13px] font-medium text-muted">
+          <p className="text-[14px] font-medium text-muted">
             Add your scattered sources or import the demo packet.
           </p>
         </motion.div>
