@@ -163,13 +163,6 @@ export default function Home() {
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Input overload</p>
                 <h3 className="mt-1 text-[18px] font-bold leading-tight">Every reminder lives somewhere else.</h3>
               </div>
-              <motion.span
-                animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.06, 1] }}
-                transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
-                className="flex size-11 items-center justify-center rounded-2xl bg-white text-ink"
-              >
-                <AlertTriangle className="size-5" />
-              </motion.span>
             </div>
             {sourceChaos.map((source) => {
               const Icon = source.icon;
@@ -198,9 +191,6 @@ export default function Home() {
             className="rounded-[32px] border border-neutral-200/90 bg-white p-5 shadow-[0_28px_85px_rgba(0,0,0,0.08)]"
           >
             <div className="flex items-start gap-3">
-              <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#EEF2FF] text-[#3730A3]">
-                <Clock3 className="size-5" />
-              </span>
               <div>
                 <h3 className="text-[20px] font-bold leading-tight text-ink">The cost is invisible until the day breaks.</h3>
                 <p className="mt-2 text-[13px] font-medium leading-5 text-muted">
@@ -293,13 +283,6 @@ export default function Home() {
                   It turns scattered proof into a plan with reasons.
                 </h3>
               </div>
-              <motion.span
-                animate={{ y: [0, -5, 0] }}
-                transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white text-[#15803D] shadow-soft"
-              >
-                <Sparkles className="size-5" />
-              </motion.span>
             </div>
             <div className="mt-5 space-y-3">
               {planBlocks.map((block, index) => (
