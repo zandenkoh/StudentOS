@@ -422,20 +422,24 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
   const rawText = compactText(input.rawText, 1200);
 
   if (rawText && looksLikeExamCoverPage(rawText)) {
+    const subjectMatch = rawText.match(/\b(biology|physics|chemistry|math(?:ematics)?|english|history|geography|science|computing|literature)\b/i);
+    const subject = subjectMatch ? subjectMatch[0] : "biology";
+    const taskTitle = `Clarify which ${subject} worksheet questions to complete`;
+
     return {
       summary:
-        "Exam or worksheet cover page detected. It identifies the packet but does not say which biology questions the student wants done.",
+        `${subject.charAt(0).toUpperCase() + subject.slice(1)} exam or worksheet cover page detected. It identifies the packet but does not specify which questions the student needs to complete.`,
       sourceKind: "unclear",
       extractedTasks: [
         {
-          title: "Clarify which biology worksheet questions to complete",
+          title: taskTitle,
           type: "unclear",
           evidence: rawText.split("\n").find(Boolean) ?? input.title,
         },
       ],
       needsClarification: true,
       clarificationPrompt:
-        "This looks like a biology exam or worksheet packet cover page. Which worksheet, page, or question numbers should StudentOS work on?",
+        `This looks like a ${subject} exam or worksheet packet cover page. Which worksheet, page, or question numbers should StudentOS work on?`,
       confidence: 0.62,
       languageNotes: "Fallback interpretation used OCR text only.",
       verifiedFacts: [],
@@ -443,13 +447,24 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
   }
 
   if ((input.fileType === "image" || input.fileType === "pdf") && (!rawText || isLowSignalOcr(rawText))) {
+    // Try to derive a better title from the filename
+    const cleanTitle = input.title
+      .replace(/\.[a-z]{2,5}$/i, "")
+      .replace(/[_\-]+/g, " ")
+      .replace(/^(IMG|DSC|Screenshot|Photo|Scan|Document|File|image)\s*/i, "")
+      .trim();
+    const hasUsefulFilename = cleanTitle.length > 3 && !/^\d+$/.test(cleanTitle);
+    const taskTitle = hasUsefulFilename
+      ? `Review ${cleanTitle}`
+      : "Clarify what to schedule from this attachment";
+
     return {
       summary:
-        "The attachment appears to need visual or multilingual interpretation, but OCR alone did not provide enough reliable text.",
+        "The attachment needs visual or multilingual interpretation, but OCR alone did not provide enough readable text.",
       sourceKind: "unclear",
       extractedTasks: [
         {
-          title: "Ask the student what action to take from this attachment",
+          title: taskTitle,
           type: "unclear",
           evidence: rawText || input.title,
         },
@@ -463,15 +478,35 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
     };
   }
 
+  // For text sources, derive a clean summary instead of raw OCR dumps
+  if (rawText) {
+    const firstMeaningfulLine = rawText
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 12 && line.length < 120 && !/^(name|class|index|date|instructions)/i.test(line));
+    const summary = firstMeaningfulLine
+      ? firstMeaningfulLine.slice(0, 180)
+      : rawText.slice(0, 180);
+
+    return {
+      summary,
+      sourceKind: "unclear",
+      extractedTasks: [],
+      needsClarification: false,
+      clarificationPrompt: "",
+      confidence: 0.5,
+      languageNotes: "Fallback interpretation used available text only.",
+      verifiedFacts: [],
+    };
+  }
+
   return {
-    summary: rawText
-      ? rawText.split("\n").find((line) => line.trim().length > 12)?.slice(0, 180) ?? rawText.slice(0, 180)
-      : "Source uploaded for StudentOS review.",
+    summary: "Source uploaded for StudentOS review.",
     sourceKind: "unclear",
     extractedTasks: [],
     needsClarification: false,
     clarificationPrompt: "",
-    confidence: rawText ? 0.5 : 0.25,
+    confidence: 0.25,
     languageNotes: "Fallback interpretation used available text only.",
     verifiedFacts: [],
   };
