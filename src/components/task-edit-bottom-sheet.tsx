@@ -304,7 +304,7 @@ export function TaskEditBottomSheet({
           >
             <span className="flex items-center gap-2">
               <Scissors className="size-4" />
-              Split into two sessions
+              Split sessions
             </span>
           </button>
 

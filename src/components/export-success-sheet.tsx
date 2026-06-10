@@ -213,20 +213,15 @@ export function ExportSuccessSheet({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="w-full">
           {saved ? (
-            <PrimaryButton disabled className="col-span-2">
+            <PrimaryButton disabled className="w-full">
               {stage === "saving" ? "Saving to calendar..." : "Saved!"}
             </PrimaryButton>
           ) : (
-            <>
-              <PrimaryButton onClick={saveCalendar}>
-                Save demo calendar
-              </PrimaryButton>
-              <SecondaryButton onClick={onClose} className="w-full">
-                Cancel
-              </SecondaryButton>
-            </>
+            <PrimaryButton onClick={saveCalendar} className="w-full">
+              Save demo calendar
+            </PrimaryButton>
           )}
         </div>
       </div>

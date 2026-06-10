@@ -16,45 +16,38 @@ type ChaosCard = {
 };
 
 const chaosCardsData: ChaosCard[] = [
-  { id: 1, text: "Physics worksheet due tmr 8am", chip: "Screenshot", icon: Image, className: "left-4 top-4 w-[170px]", rotate: -6 },
-  { id: 2, text: "Chapter 12 worksheet.pdf", chip: "PDF", icon: FileText, className: "right-4 top-8 w-[175px]", rotate: 5 },
-  { id: 6, text: "Email: Project update", chip: "Email", icon: Mail, className: "left-[130px] top-[15px] w-[170px]", rotate: -4 },
-  { id: 17, text: "Tuition clash email", chip: "Email", icon: Mail, className: "right-[140px] top-[40px] w-[150px]", rotate: -8 },
-  { id: 5, text: "1:24 voice note", chip: "Voice", icon: Mic, className: "left-4 top-[85px] w-[140px]", rotate: 5 },
-  { id: 4, text: "Revision block scheduled", chip: "Event", icon: Calendar, className: "right-4 top-[95px] w-[155px]", rotate: -5 },
-  { id: 3, text: "CCA briefing 5:30pm", chip: "Message", icon: MessageSquare, className: "left-12 top-[150px] w-[160px]", rotate: 8 },
-  { id: 18, text: "Ask physics teacher tmr", chip: "Reminder", icon: Bell, className: "right-12 top-[150px] w-[170px]", rotate: 4 },
-  
-  { id: 7, text: "Ask teammate about deck", chip: "Reminder", icon: Bell, className: "left-[-20px] top-[230px] w-[165px]", rotate: 10 },
-  { id: 8, text: "Chemistry lab report", chip: "PDF", icon: FileText, className: "right-[-20px] top-[220px] w-[155px]", rotate: -7 },
-  { id: 9, text: "Math tuition tomorrow", chip: "Event", icon: Calendar, className: "left-[-10px] top-[310px] w-[170px]", rotate: -4 },
-  { id: 10, text: "Buy poster board", chip: "Task", icon: FileText, className: "right-[-10px] top-[300px] w-[155px]", rotate: 6 },
-  
-  { id: 11, text: "Late submission warning", chip: "Alert", icon: Bell, className: "-left-12 bottom-[160px] w-[160px]", rotate: 9 },
-  { id: 12, text: "Coding practice 5h/wk", chip: "Goal", icon: Sparkles, className: "right-[-10px] bottom-[170px] w-[170px]", rotate: -8 },
-  { id: 15, text: "11 Jun competition due", chip: "Deadline", icon: Calendar, className: "left-[100px] bottom-[135px] w-[175px]", rotate: -4 },
-  { id: 16, text: "Voice note: teammate.wav", chip: "Voice", icon: Mic, className: "right-[100px] bottom-[120px] w-[160px]", rotate: 7 },
-  { id: 13, text: "Group chat transcript", chip: "Message", icon: MessageSquare, className: "left-4 bottom-4 w-[180px]", rotate: 5 },
-  { id: 14, text: "Syllabus revision.pdf", chip: "PDF", icon: FileText, className: "right-6 bottom-8 w-[170px]", rotate: -6 }
+  { id: 1, text: "Physics worksheet due tmr 8am", chip: "Screenshot", icon: Image, className: "-left-10 top-[-28px] w-[160px] sm:left-6", rotate: -6 },
+  { id: 2, text: "Chapter 12 worksheet.pdf", chip: "PDF", icon: FileText, className: "right-[-42px] top-[-18px] w-[165px] sm:right-6", rotate: 5 },
+  { id: 6, text: "Email: Project update", chip: "Email", icon: Mail, className: "left-[18px] top-[34px] w-[155px] sm:left-[110px]", rotate: -4 },
+  { id: 17, text: "Tuition clash email", chip: "Email", icon: Mail, className: "right-[22px] top-[42px] w-[145px] sm:right-[120px]", rotate: -8 },
+  { id: 5, text: "1:24 voice note", chip: "Voice", icon: Mic, className: "-left-8 top-[102px] w-[135px] sm:left-7", rotate: 5 },
+  { id: 4, text: "Revision block scheduled", chip: "Event", icon: Calendar, className: "right-[-34px] top-[106px] w-[145px] sm:right-7", rotate: -5 },
+  { id: 3, text: "CCA briefing 5:30pm", chip: "Message", icon: MessageSquare, className: "left-[42px] top-[168px] w-[145px] sm:left-[170px]", rotate: 8 },
+  { id: 18, text: "Ask physics teacher tmr", chip: "Reminder", icon: Bell, className: "right-[42px] top-[170px] w-[150px] sm:right-[170px]", rotate: 4 },
+
+  { id: 7, text: "Ask teammate about deck", chip: "Reminder", icon: Bell, className: "-left-12 bottom-[176px] w-[155px] sm:left-8", rotate: 10 },
+  { id: 8, text: "Chemistry lab report", chip: "PDF", icon: FileText, className: "right-[-42px] bottom-[184px] w-[145px] sm:right-8", rotate: -7 },
+  { id: 9, text: "Math tuition tomorrow", chip: "Event", icon: Calendar, className: "left-[32px] bottom-[116px] w-[155px] sm:left-[145px]", rotate: -4 },
+  { id: 10, text: "Buy poster board", chip: "Task", icon: FileText, className: "right-[34px] bottom-[112px] w-[145px] sm:right-[150px]", rotate: 6 },
+
+  { id: 11, text: "Late submission warning", chip: "Alert", icon: Bell, className: "-left-10 bottom-[52px] w-[150px] sm:left-8", rotate: 9 },
+  { id: 12, text: "Coding practice 5h/wk", chip: "Goal", icon: Sparkles, className: "right-[-34px] bottom-[56px] w-[155px] sm:right-8", rotate: -8 },
+  { id: 15, text: "11 Jun competition due", chip: "Deadline", icon: Calendar, className: "left-[48px] bottom-[-12px] w-[160px] sm:left-[180px]", rotate: -4 },
+  { id: 16, text: "Voice note: teammate.wav", chip: "Voice", icon: Mic, className: "right-[48px] bottom-[-8px] w-[150px] sm:right-[180px]", rotate: 7 },
+  { id: 13, text: "Group chat transcript", chip: "Message", icon: MessageSquare, className: "-left-16 bottom-[-26px] w-[160px] sm:left-12", rotate: 5 },
+  { id: 14, text: "Syllabus revision.pdf", chip: "PDF", icon: FileText, className: "right-[-58px] bottom-[-22px] w-[155px] sm:right-12", rotate: -6 }
 ];
 
 function getClumpTarget(className: string) {
-  let x = 0;
   let y = 0;
 
-  if (className.includes("left-")) {
-    x = 160;
-  } else if (className.includes("right-")) {
-    x = -160;
-  }
-
   if (className.includes("top-")) {
-    y = 220;
+    y = -80;
   } else if (className.includes("bottom-")) {
-    y = -220;
+    y = 80;
   }
   
-  return { x, y };
+  return { x: 0, y };
 }
 
 export default function ChaosPage() {
@@ -155,7 +148,7 @@ export default function ChaosPage() {
               return (
                 <motion.div
                   key={card.id}
-                  className={`absolute z-20 rounded-[20px] border border-neutral-200/90 bg-white/95 p-3.5 shadow-soft backdrop-blur-sm ${card.className}`}
+                  className={`absolute z-0 rounded-[20px] border border-neutral-200/90 bg-white/95 p-3.5 shadow-soft backdrop-blur-sm ${card.className}`}
                   initial={{ opacity: 0, scale: 0.7, rotate: card.rotate, y: 0, x: 0 }}
                   animate={
                     stage === "clumping"
@@ -207,7 +200,7 @@ export default function ChaosPage() {
           {(stage === "intro" || stage === "populating") && (
             <motion.div
               key="intro-content"
-              className="z-10 mx-auto w-full max-w-[320px] text-center pointer-events-none"
+              className="z-30 mx-auto w-full max-w-[320px] text-center pointer-events-none"
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 800, transition: { ease: "easeIn", duration: 0.6 } }}
@@ -228,7 +221,7 @@ export default function ChaosPage() {
           {stage === "reveal" && (
             <motion.div
               key="reveal-content"
-              className="z-10 mx-auto w-full max-w-[360px] text-center flex flex-col items-center justify-center gap-5"
+              className="z-30 mx-auto w-full max-w-[360px] text-center flex flex-col items-center justify-center gap-5"
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0, transition: { duration: 0.75, ease: "easeOut", delay: 0.15 } }}
               exit={{ opacity: 0, scale: 0.95, y: -15, transition: { duration: 0.6, ease: "easeIn" } }}

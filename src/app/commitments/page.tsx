@@ -68,7 +68,7 @@ import type {
   AIClarificationQuestion,
   StudentOSAgentFootprint
 } from "@/lib/studentos-ai-types";
-import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
+import { intervalsOverlap, parseTimeInterval, validateTimelineConflicts, type TimeInterval } from "@/lib/schedule-conflicts";
 import { ensureTaskTimeRange, ensureTaskTimeRanges } from "@/lib/time-scheduling";
 import {
   addDaysToDateId,
@@ -199,6 +199,102 @@ function mergeSponsorTraces(...groups: SponsorTraceItem[][]) {
       return true;
     })
     .slice(0, 8);
+}
+
+function minutesToClock(totalMinutes: number) {
+  const minutesInDay = ((totalMinutes % 1440) + 1440) % 1440;
+  const hour24 = Math.floor(minutesInDay / 60);
+  const minute = minutesInDay % 60;
+  const meridiem = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+
+  return `${hour12}:${String(minute).padStart(2, "0")} ${meridiem}`;
+}
+
+function clockRangeFromMinutes(startMinutes: number, durationMinutes?: number) {
+  const duration = Math.max(1, durationMinutes ?? 30);
+  const start = minutesToClock(startMinutes);
+  const end = minutesToClock(startMinutes + duration);
+  const startWithoutMeridiem = start.endsWith(end.slice(-2)) ? start.replace(/\s[AP]M$/, "") : start;
+
+  return `${startWithoutMeridiem}-${end}`;
+}
+
+function taskDateKey(task: DemoPlanTask) {
+  return (task.scheduledDateId ?? task.scheduledDate ?? task.scheduledDateRange ?? "today").toLowerCase();
+}
+
+function eventDateKey(event: TimelineEvent) {
+  return event.time.toLowerCase().includes("tomorrow") ? "tomorrow" : "today";
+}
+
+function busyIntervalsForSplit(
+  tasks: DemoPlanTask[],
+  events: TimelineEvent[],
+  targetDateKey: string,
+  excludedTaskId: string,
+) {
+  const taskIntervals = tasks
+    .filter((task) => task.id !== excludedTaskId && taskDateKey(task) === targetDateKey)
+    .map((task) => parseTimeInterval(task.timeLabel))
+    .filter((interval): interval is TimeInterval => Boolean(interval));
+  const eventIntervals =
+    targetDateKey === "today"
+      ? events
+          .filter((event) => eventDateKey(event) === targetDateKey)
+          .map((event) => parseTimeInterval(event.duration ?? event.time))
+          .filter((interval): interval is TimeInterval => Boolean(interval))
+      : [];
+
+  return [...taskIntervals, ...eventIntervals];
+}
+
+function hasIntervalOverlap(interval: TimeInterval, busyIntervals: TimeInterval[]) {
+  return busyIntervals.some((busy) => intervalsOverlap(interval, busy));
+}
+
+function earlierSplitTimeLabel(
+  task: DemoPlanTask,
+  tasks: DemoPlanTask[],
+  events: TimelineEvent[],
+  targetDateKey: string,
+  excludedTaskId: string,
+) {
+  const currentInterval = parseTimeInterval(task.timeLabel);
+  if (!currentInterval) return task.timeLabel;
+
+  const duration = Math.max(1, task.estimatedMinutes ?? currentInterval.endMinutes - currentInterval.startMinutes);
+  const busyIntervals = busyIntervalsForSplit(tasks, events, targetDateKey, excludedTaskId);
+  const earliestStart = 6 * 60;
+  const searchEnd = Math.max(earliestStart, currentInterval.startMinutes - 15);
+
+  for (let startMinutes = earliestStart; startMinutes <= searchEnd; startMinutes += 15) {
+    const interval = { startMinutes, endMinutes: startMinutes + duration };
+    if (!hasIntervalOverlap(interval, busyIntervals)) {
+      return clockRangeFromMinutes(startMinutes, duration);
+    }
+  }
+
+  return task.timeLabel;
+}
+
+function resizeExistingTimeLabel(task: DemoPlanTask, durationMinutes?: number) {
+  const interval = parseTimeInterval(task.timeLabel);
+  if (!interval) return task.timeLabel;
+
+  return clockRangeFromMinutes(interval.startMinutes, durationMinutes);
+}
+
+function alternateSplitDate(task: DemoPlanTask) {
+  const preferredNextDateId = nextDayForTask(task);
+  if (canUseScheduleDate(task, preferredNextDateId)) return preferredNextDateId;
+
+  if (!task.scheduledDateId) return undefined;
+
+  const preferredPreviousDateId = addDaysToDateId(task.scheduledDateId, -1);
+  if (canUseScheduleDate(task, preferredPreviousDateId)) return preferredPreviousDateId;
+
+  return undefined;
 }
 
 type ProcessTextSourceResponse = {
@@ -1946,16 +2042,37 @@ export default function CommitmentsPage() {
     const secondDuration = selectedTask.estimatedMinutes
       ? Math.floor(selectedTask.estimatedMinutes / 2)
       : undefined;
-    const nextDateId =
-      selectedTask.section === "subsequent_days" ? nextDayForTask(selectedTask) : undefined;
-    const nextDateIsValid = nextDateId ? canUseScheduleDate(selectedTask, nextDateId) : false;
-    const nextDateLabel = nextDateId && nextDateIsValid ? formatScheduleDateLabel(nextDateId) : undefined;
+    const secondSessionDateId =
+      selectedTask.section === "subsequent_days" ? alternateSplitDate(selectedTask) : undefined;
+    const secondSessionDateLabel = secondSessionDateId ? formatScheduleDateLabel(secondSessionDateId) : undefined;
+    const secondSessionDateKey =
+      secondSessionDateId ??
+      selectedTask.scheduledDateId ??
+      selectedTask.scheduledDate?.toLowerCase() ??
+      selectedTask.scheduledDateRange?.toLowerCase() ??
+      "today";
+    const secondSessionTimeLabel =
+      earlierSplitTimeLabel(
+        {
+          ...selectedTask,
+          estimatedMinutes: secondDuration,
+        },
+        planTasks,
+        visibleTimelineEvents,
+        secondSessionDateKey,
+        selectedTask.id,
+      ) ?? selectedTask.timeLabel;
     const sessionOne: DemoPlanTask = {
       ...selectedTask,
       id: `${selectedTask.id}-session-1`,
       title: `${baseTitle} — Session 1`,
       estimatedMinutes: firstDuration,
-      scheduleRationale: `StudentOS keeps the first half on ${scheduleLabelForTask(selectedTask)} so progress starts in the original slot without overloading one session.`,
+      timeLabel: resizeExistingTimeLabel(selectedTask, firstDuration),
+      scheduleRationale: `StudentOS keeps the first half on ${scheduleLabelForTask({
+        ...selectedTask,
+        estimatedMinutes: firstDuration,
+        timeLabel: resizeExistingTimeLabel(selectedTask, firstDuration),
+      })} so progress starts in the original slot without overloading one session.`,
       updated: true
     };
     const sessionTwo: DemoPlanTask = {
@@ -1963,16 +2080,17 @@ export default function CommitmentsPage() {
       id: `${selectedTask.id}-session-2`,
       title: `${baseTitle} — Session 2`,
       estimatedMinutes: secondDuration,
-      scheduledDateId: nextDateIsValid ? nextDateId : selectedTask.scheduledDateId,
-      scheduledDate: nextDateLabel ?? selectedTask.scheduledDate,
+      scheduledDateId: secondSessionDateId ?? selectedTask.scheduledDateId,
+      scheduledDate: secondSessionDateLabel ?? selectedTask.scheduledDate,
       scheduledDateRange: undefined,
-      timeLabel:
-        selectedTask.section === "subsequent_days"
-          ? selectedTask.timeLabel
-          : selectedTask.timeLabel
-            ? "Next session"
-            : undefined,
-      scheduleRationale: `StudentOS places the second half on ${nextDateLabel ?? scheduleLabelForTask(selectedTask)} so the task gets recovery space instead of becoming one long low-quality block.`,
+      timeLabel: secondSessionTimeLabel,
+      scheduleRationale: `StudentOS split this into a separate session and placed it at ${scheduleLabelForTask({
+        ...selectedTask,
+        scheduledDateId: secondSessionDateId ?? selectedTask.scheduledDateId,
+        scheduledDate: secondSessionDateLabel ?? selectedTask.scheduledDate,
+        scheduledDateRange: undefined,
+        timeLabel: secondSessionTimeLabel,
+      })} so the work is separated from the first session and moved earlier where the schedule has space.`,
       updated: true
     };
 
@@ -1984,7 +2102,7 @@ export default function CommitmentsPage() {
       return updated;
     });
     setSelectedTaskForEdit(null);
-    showToast("Task split into 2 sessions");
+    showToast("Sessions split and rescheduled");
   }
 
   function viewRoadmap() {
@@ -2284,12 +2402,11 @@ export default function CommitmentsPage() {
       </div>
 
       <AgentActivityPanel runs={agentRuns} mobileRaised={step === "plan"} />
-      {step !== "plan" ? <AddSourceButton onClick={openAddSource} raised={false} /> : null}
+      <AddSourceButton onClick={openAddSource} raised={false} />
 
       {step === "plan" ? (
         <BottomActionBar
           onExport={() => setExportOpen(true)}
-          onAddTask={openAddSource}
         />
       ) : null}
 
