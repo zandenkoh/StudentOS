@@ -373,6 +373,13 @@ function looksLikeSourceFilename(value: string) {
   );
 }
 
+function looksLikeWeakGeneratedTitle(value: string) {
+  return (
+    looksLikeSourceFilename(value) ||
+    /^(ocr was used|from \d{4}|the papers are|there is a handwritten|with scores recorded|scores recorded|source text|extracted evidence)\b/i.test(value.trim())
+  );
+}
+
 function compactTitle(value: string, maxLength = 68) {
   const title = value
     .replace(/^(source|student note|interpreted summary|extracted tasks?):\s*/i, "")
@@ -383,18 +390,29 @@ function compactTitle(value: string, maxLength = 68) {
   return title.length > maxLength ? `${title.slice(0, maxLength - 3).trim()}...` : title;
 }
 
+function taskTitleFromEvidence(value: string) {
+  const title = compactTitle(value);
+  const biologyExamMatch = title.match(/\b(Catholic High School\s+)?Biology End-of-Year Examination\b/i);
+
+  if (biologyExamMatch) return "Review Biology End-of-Year Examination papers";
+  if (/\bworksheet\b/i.test(title) && !/^(complete|finish|review)\b/i.test(title)) return `Complete ${title}`;
+  if (/\bexam|examination|paper\b/i.test(title) && !/^(review|study|complete)\b/i.test(title)) return `Review ${title}`;
+
+  return title;
+}
+
 function sourceTitleCandidate(source: StudentOSAgentFootprint["sources"][number] | undefined) {
   if (!source) return "";
 
   const candidates = [
-    source.interpretedItems?.find((item) => !looksLikeSourceFilename(item.title))?.title,
-    source.extractedTasks?.find((task) => !looksLikeSourceFilename(task)),
+    source.interpretedItems?.find((item) => !looksLikeWeakGeneratedTitle(item.title))?.title,
+    source.extractedTasks?.find((task) => !looksLikeWeakGeneratedTitle(task)),
     source.sourceSummary,
     source.snippet,
     source.clarificationPrompt,
   ];
 
-  return compactTitle(candidates.find((candidate) => candidate && !looksLikeSourceFilename(candidate)) ?? "");
+  return taskTitleFromEvidence(candidates.find((candidate) => candidate && !looksLikeWeakGeneratedTitle(candidate)) ?? "");
 }
 
 function findSourceForTitle(
@@ -416,7 +434,7 @@ function normalizeFilenameCommitmentTitles(
   sources: StudentOSAgentFootprint["sources"],
 ) {
   return commitments.map((commitment) => {
-    if (!looksLikeSourceFilename(commitment.title)) return commitment;
+    if (!looksLikeWeakGeneratedTitle(commitment.title)) return commitment;
 
     const source = findSourceForTitle(commitment.title, commitment.source, sources);
     const title = sourceTitleCandidate(source) || `Clarify ${commitment.source || "uploaded source"}`;
@@ -435,7 +453,7 @@ function normalizeFilenamePlanTaskTitles(
   commitments: Commitment[],
 ) {
   return tasks.map((task) => {
-    if (!looksLikeSourceFilename(task.title)) return task;
+    if (!looksLikeWeakGeneratedTitle(task.title)) return task;
 
     const matchingCommitment = commitments.find(
       (commitment) =>
