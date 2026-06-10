@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { FileText, Image, MessageSquare, Mic, Mail, Bell, Calendar, Sparkles, type LucideIcon } from "lucide-react";
@@ -38,22 +38,38 @@ const chaosCardsData: ChaosCard[] = [
   { id: 14, text: "Syllabus revision.pdf", chip: "PDF", icon: FileText, className: "right-[-58px] bottom-[-22px] w-[155px] sm:right-12", rotate: -6 }
 ];
 
-function getClumpTarget(className: string) {
-  let y = 0;
-
-  if (className.includes("top-")) {
-    y = -80;
-  } else if (className.includes("bottom-")) {
-    y = 80;
-  }
-  
-  return { x: 0, y };
-}
-
 export default function ChaosPage() {
   const router = useRouter();
   const [stage, setStage] = useState<"intro" | "populating" | "clumping" | "reveal" | "leaving">("intro");
   const [visibleCardCount, setVisibleCardCount] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [clumpTargets, setClumpTargets] = useState<{[key: number]: {x: number, y: number}}>({});
+
+  useLayoutEffect(() => {
+    if (stage !== "clumping" || !containerRef.current) return;
+
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const centerX = containerRect.left + containerRect.width / 2;
+    const centerY = containerRect.top + containerRect.height / 2;
+
+    const newTargets: {[key: number]: {x: number, y: number}} = {};
+
+    chaosCardsData.forEach((card) => {
+      const el = document.getElementById(`chaos-card-${card.id}`);
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const cardCenterX = rect.left + rect.width / 2;
+        const cardCenterY = rect.top + rect.height / 2;
+        
+        newTargets[card.id] = {
+          x: centerX - cardCenterX,
+          y: centerY - cardCenterY
+        };
+      }
+    });
+
+    setClumpTargets(newTargets);
+  }, [stage]);
 
   useEffect(() => {
     // 1. Start populating after intro text fades in (800ms)
@@ -121,6 +137,7 @@ export default function ChaosPage() {
   return (
     <AppShell hideHeader={true}>
       <motion.div
+        ref={containerRef}
         animate={stage === "leaving" ? { backgroundColor: "#ffffff" } : { backgroundColor: "#FAF9F6" }}
         transition={{ duration: 0.6, ease: "easeInOut" }}
         className="relative flex min-h-dvh w-full flex-col justify-center overflow-hidden px-6 py-8"
@@ -139,7 +156,7 @@ export default function ChaosPage() {
         )}
         
         {/* Dynamic Cards Container */}
-        {(stage === "intro" || stage === "populating" || stage === "clumping") && (
+        {(stage === "intro" || stage === "populating" || stage === "clumping" || stage === "reveal" || stage === "leaving") && (
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             {chaosCardsData.map((card, index) => {
               const isVisible = index < visibleCardCount;
@@ -148,16 +165,25 @@ export default function ChaosPage() {
               return (
                 <motion.div
                   key={card.id}
+                  id={`chaos-card-${card.id}`}
                   className={`absolute z-0 rounded-[20px] border border-neutral-200/90 bg-white/95 p-3.5 shadow-soft backdrop-blur-sm ${card.className}`}
                   initial={{ opacity: 0, scale: 0.7, rotate: card.rotate, y: 0, x: 0 }}
                   animate={
-                    stage === "clumping"
-                      ? { 
-                          opacity: 0, 
+                    stage === "reveal" || stage === "leaving"
+                      ? {
+                          opacity: 0,
                           scale: 0.15,
-                          x: getClumpTarget(card.className).x, 
-                          y: getClumpTarget(card.className).y,
-                          rotate: 0
+                          x: clumpTargets[card.id]?.x || 0,
+                          y: clumpTargets[card.id]?.y || 0,
+                          rotate: 0,
+                        }
+                      : stage === "clumping"
+                      ? { 
+                          opacity: 1, 
+                          scale: 0.45,
+                          x: clumpTargets[card.id]?.x || 0,
+                          y: clumpTargets[card.id]?.y || 0,
+                          rotate: (index % 3 - 1) * 3,
                         }
                       : isVisible
                       ? { opacity: 1, scale: 1, rotate: card.rotate, y: 0, x: 0 }
@@ -166,10 +192,16 @@ export default function ChaosPage() {
                   transition={
                     stage === "clumping"
                       ? { 
-                          type: "tween", 
-                          ease: "easeInOut", 
-                          duration: 0.75, 
-                          delay: index * 0.005 
+                          type: "spring",
+                          stiffness: 90,
+                          damping: 14,
+                          delay: index * 0.015 
+                        }
+                      : stage === "reveal" || stage === "leaving"
+                      ? {
+                          type: "tween",
+                          ease: "easeInOut",
+                          duration: 0.6,
                         }
                       : { 
                           type: "spring", 
@@ -237,8 +269,9 @@ export default function ChaosPage() {
 
               {/* Minimalistic Plan Card */}
               <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 10 }}
-                animate={{ opacity: 1, scale: 1, y: 0, transition: { type: "spring", stiffness: 100, damping: 15, delay: 0.3 } }}
+                initial={{ opacity: 0, scale: 0.3, y: 0 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ type: "spring", stiffness: 110, damping: 14, delay: 0.15 }}
                 className="w-full rounded-[24px] border border-neutral-200/90 bg-white p-5 shadow-[0_8px_30px_rgb(0,0,0,0.03)] text-left"
               >
                 <div className="mb-3.5 flex items-center justify-between">
@@ -250,7 +283,12 @@ export default function ChaosPage() {
                 
                 <div className="space-y-3">
                   {/* Task 1 */}
-                  <div className="flex items-center gap-3">
+                  <motion.div
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.4 }}
+                    className="flex items-center gap-3"
+                  >
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-bold">
                       1
                     </span>
@@ -262,10 +300,15 @@ export default function ChaosPage() {
                         Due tomorrow 8 AM
                       </p>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* Task 2 */}
-                  <div className="flex items-center gap-3">
+                  <motion.div
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.55 }}
+                    className="flex items-center gap-3"
+                  >
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-bold">
                       2
                     </span>
@@ -277,10 +320,15 @@ export default function ChaosPage() {
                         Scheduled at 5:30 PM
                       </p>
                     </div>
-                  </div>
+                  </motion.div>
 
                   {/* Task 3 */}
-                  <div className="flex items-center gap-3">
+                  <motion.div
+                    initial={{ opacity: 0, x: -12 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ type: "spring", stiffness: 100, damping: 15, delay: 0.7 }}
+                    className="flex items-center gap-3"
+                  >
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 text-[11px] font-bold">
                       3
                     </span>
@@ -292,7 +340,7 @@ export default function ChaosPage() {
                         Flexible block allocated
                       </p>
                     </div>
-                  </div>
+                  </motion.div>
                 </div>
               </motion.div>
 
