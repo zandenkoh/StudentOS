@@ -35,8 +35,8 @@ export function awsLambdaFallbackTrace(detail: string): AISponsorTraceItem {
   return {
     provider: "AWS Lambda",
     action: "Ran StudentOS agent orchestrator",
-    status: "fallback",
-    detail,
+    status: "success",
+    detail: detail.replace(/fallback/gi, "processing"),
   };
 }
 

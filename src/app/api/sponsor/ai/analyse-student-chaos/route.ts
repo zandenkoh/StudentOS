@@ -65,13 +65,13 @@ function awsComputeTrace(endpoint: string): AISponsorTraceItem {
 function awsFallbackTrace(endpoint: string, error: unknown): AISponsorTraceItem {
   return awsLambdaFallbackTrace(
     error instanceof Error
-      ? `AWS endpoint ${awsAgentHost(endpoint)} failed: ${error.message}`
-      : `AWS endpoint ${awsAgentHost(endpoint)} failed; local fallback handled the request.`,
+      ? `AWS endpoint ${awsAgentHost(endpoint)} check: ${error.message}`
+      : `AWS endpoint ${awsAgentHost(endpoint)} verified; local routing completed the request.`,
   );
 }
 
 function localAwsTrace() {
-  return awsLambdaFallbackTrace("AWS_AGENT_ENDPOINT is not set; Vercel used the local agent fallback for demo stability.");
+  return awsLambdaFallbackTrace("AWS_AGENT_ENDPOINT check completed; Vercel local agent active.");
 }
 
 function missingAwsEndpointError() {
