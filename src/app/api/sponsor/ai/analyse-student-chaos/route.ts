@@ -832,6 +832,7 @@ function streamAwsAgentRequest(
   input: AnalyseStudentChaosRequest,
   endpoint: string,
   strict: boolean,
+  originalSources: CapturedSourceForAI[],
 ) {
   const encoder = new TextEncoder();
   const startedAt = Date.now();
@@ -943,7 +944,7 @@ function streamAwsAgentRequest(
         const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await callAwsAgent(endpoint, planningInput, [gatewayTrace]),
           goalResearch,
-        ), parsed.data.sources);
+        ), originalSources);
         stopHeartbeat();
         send({
           type: "log",
@@ -1005,7 +1006,7 @@ function streamAwsAgentRequest(
           footprint: normalizeAgentFootprint(applyGoalResearchToFootprint(
             prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
             goalResearch,
-          ), parsed.data.sources),
+          ), originalSources),
         });
       } finally {
         controller.close();
@@ -1132,7 +1133,7 @@ export async function POST(req: Request) {
   }
 
   if (awsAgentEndpoint) {
-    return streamAwsAgentRequest(analysisInput, awsAgentEndpoint, strict);
+    return streamAwsAgentRequest(analysisInput, awsAgentEndpoint, strict, parsed.data.sources);
   }
 
   if (strict) {
