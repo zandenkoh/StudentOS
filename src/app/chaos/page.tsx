@@ -18,23 +18,24 @@ type ChaosCard = {
 const chaosCardsData: ChaosCard[] = [
   { id: 1, text: "Physics worksheet due tmr 8am", chip: "Screenshot", icon: Image, className: "left-4 top-4 w-[170px]", rotate: -6 },
   { id: 2, text: "Chapter 12 worksheet.pdf", chip: "PDF", icon: FileText, className: "right-4 top-8 w-[175px]", rotate: 5 },
-  { id: 3, text: "CCA briefing 5:30pm", chip: "Message", icon: MessageSquare, className: "-left-5 top-[240px] w-[160px]", rotate: 8 },
-  { id: 4, text: "Revision block scheduled", chip: "Event", icon: Calendar, className: "right-[-25px] top-[180px] w-[155px]", rotate: -5 },
-  { id: 5, text: "1:24 voice note", chip: "Voice", icon: Mic, className: "left-4 top-[170px] w-[140px]", rotate: 5 },
-  { id: 6, text: "Email: Project update", chip: "Email", icon: Mail, className: "right-6 top-[30px] w-[170px]", rotate: -4 },
-  { id: 17, text: "Tuition clash email", chip: "Email", icon: Mail, className: "left-[-25px] top-[90px] w-[150px]", rotate: -8 },
-  { id: 18, text: "Ask physics teacher tmr", chip: "Reminder", icon: Bell, className: "right-[-25px] top-[375px] w-[170px]", rotate: 4 },
+  { id: 6, text: "Email: Project update", chip: "Email", icon: Mail, className: "left-[130px] top-[15px] w-[170px]", rotate: -4 },
+  { id: 17, text: "Tuition clash email", chip: "Email", icon: Mail, className: "right-[140px] top-[40px] w-[150px]", rotate: -8 },
+  { id: 5, text: "1:24 voice note", chip: "Voice", icon: Mic, className: "left-4 top-[85px] w-[140px]", rotate: 5 },
+  { id: 4, text: "Revision block scheduled", chip: "Event", icon: Calendar, className: "right-4 top-[95px] w-[155px]", rotate: -5 },
+  { id: 3, text: "CCA briefing 5:30pm", chip: "Message", icon: MessageSquare, className: "left-12 top-[150px] w-[160px]", rotate: 8 },
+  { id: 18, text: "Ask physics teacher tmr", chip: "Reminder", icon: Bell, className: "right-12 top-[150px] w-[170px]", rotate: 4 },
   
-  { id: 7, text: "Ask teammate about deck", chip: "Reminder", icon: Bell, className: "left-[-20px] top-[300px] w-[165px]", rotate: 10 },
-  { id: 8, text: "Chemistry lab report", chip: "PDF", icon: FileText, className: "right-[-20px] top-[290px] w-[155px]", rotate: -7 },
-  { id: 9, text: "Math tuition tomorrow", chip: "Event", icon: Calendar, className: "left-2 bottom-[130px] w-[170px]", rotate: -4 },
-  { id: 10, text: "Buy poster board", chip: "Task", icon: FileText, className: "right-2 bottom-[140px] w-[155px]", rotate: 6 },
-  { id: 11, text: "Late submission warning", chip: "Alert", icon: Bell, className: "-left-12 bottom-[80px] w-[160px]", rotate: 9 },
-  { id: 12, text: "Coding practice 5h/wk", chip: "Goal", icon: Sparkles, className: "right-[-10px] bottom-[90px] w-[170px]", rotate: -8 },
+  { id: 7, text: "Ask teammate about deck", chip: "Reminder", icon: Bell, className: "left-[-20px] top-[230px] w-[165px]", rotate: 10 },
+  { id: 8, text: "Chemistry lab report", chip: "PDF", icon: FileText, className: "right-[-20px] top-[220px] w-[155px]", rotate: -7 },
+  { id: 9, text: "Math tuition tomorrow", chip: "Event", icon: Calendar, className: "left-[-10px] top-[310px] w-[170px]", rotate: -4 },
+  { id: 10, text: "Buy poster board", chip: "Task", icon: FileText, className: "right-[-10px] top-[300px] w-[155px]", rotate: 6 },
+  
+  { id: 11, text: "Late submission warning", chip: "Alert", icon: Bell, className: "-left-12 bottom-[160px] w-[160px]", rotate: 9 },
+  { id: 12, text: "Coding practice 5h/wk", chip: "Goal", icon: Sparkles, className: "right-[-10px] bottom-[170px] w-[170px]", rotate: -8 },
+  { id: 15, text: "11 Jun competition due", chip: "Deadline", icon: Calendar, className: "left-[100px] bottom-[135px] w-[175px]", rotate: -4 },
+  { id: 16, text: "Voice note: teammate.wav", chip: "Voice", icon: Mic, className: "right-[100px] bottom-[120px] w-[160px]", rotate: 7 },
   { id: 13, text: "Group chat transcript", chip: "Message", icon: MessageSquare, className: "left-4 bottom-4 w-[180px]", rotate: 5 },
-  { id: 14, text: "Syllabus revision.pdf", chip: "PDF", icon: FileText, className: "right-6 bottom-8 w-[170px]", rotate: -6 },
-  { id: 15, text: "11 Jun competition due", chip: "Deadline", icon: Calendar, className: "left-10 bottom-[65px] w-[175px]", rotate: -4 },
-  { id: 16, text: "Voice note: teammate.wav", chip: "Voice", icon: Mic, className: "right-8 bottom-[20px] w-[160px]", rotate: 7 }
+  { id: 14, text: "Syllabus revision.pdf", chip: "PDF", icon: FileText, className: "right-6 bottom-8 w-[170px]", rotate: -6 }
 ];
 
 function getClumpTarget(className: string) {
