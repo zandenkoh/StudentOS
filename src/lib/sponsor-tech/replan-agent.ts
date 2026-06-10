@@ -50,6 +50,7 @@ const TimelineEventSchema = z.object({
 });
 
 const ConflictSchema = z.object({
+  hasConflict: z.boolean().optional(),
   title: z.string(),
   unresolvedSummary: z.string(),
   resolvedTitle: z.string(),
@@ -257,6 +258,7 @@ function fallbackConflict(input: ReplanAgentInput, resolvedEvents: z.infer<typeo
   const manualResolved = input.trigger === "manual_conflict" && validation.groups.length === 0;
 
   return {
+    hasConflict: validation.groups.length > 0,
     title: base?.title ?? "Schedule reviewed",
     unresolvedSummary: base?.unresolvedSummary ?? "StudentOS reviewed the current schedule for conflicts.",
     resolvedTitle:
@@ -450,6 +452,9 @@ function coerceReplanOutput(value: unknown, input: ReplanAgentInput) {
     conflict: {
       ...baseline.conflict,
       ...conflictRecord,
+      hasConflict: typeof conflictRecord.hasConflict === "boolean"
+        ? conflictRecord.hasConflict
+        : baseline.conflict.hasConflict,
       recommendedActions: stringArrayValue(conflictRecord.recommendedActions, baseline.conflict.recommendedActions),
       manualActions: stringArrayValue(conflictRecord.manualActions, baseline.conflict.manualActions),
     },
@@ -496,7 +501,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           resolvedTimelineEvents:
             "Return the live resolved timeline after the trigger. For manual_conflict, apply the user's manual instruction and remove obsolete conflictGroupId values when the conflict is resolved. Optional UI fields may be omitted when unknown.",
           conflict:
-            "Return updated conflict copy and actions. overlapLabel must be based on confirmed overlapping fixed ranges, otherwise use Not confirmed.",
+            "Return hasConflict plus updated conflict copy and actions. hasConflict must be true only for confirmed overlapping fixed ranges. overlapLabel must be based on confirmed overlapping fixed ranges, otherwise use Not confirmed.",
           rationale: "Explain the replanning decision in one summary plus 3-6 bullets.",
         },
         rules: [
@@ -513,6 +518,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Every commitment estimatedDuration must be a concrete duration using min/hr units. Never return vague labels such as confirm duration or sessions per week.",
           "Re-check sourceContext verifiedFacts before changing any date, time, duration, or venue. Only status=confirmed values are source truth.",
           "Do not infer missing venues, end times, or durations. If a required fact is missing or ambiguous, preserve it as unresolved and request clarification rather than guessing.",
+          "Show conflict handling only for confirmed fixed-time overlaps. Set conflict.hasConflict=false when there is no validated overlap or when a manual instruction resolved it.",
         ],
       },
       null,

@@ -70,6 +70,7 @@ export type AIClarificationQuestion = {
 };
 
 export type AIConflictAnalysis = {
+  hasConflict?: boolean;
   title: string;
   unresolvedSummary: string;
   resolvedTitle: string;

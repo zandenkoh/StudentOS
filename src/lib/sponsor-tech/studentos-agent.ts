@@ -139,6 +139,7 @@ const ClarificationQuestionSchema = z.object({
 });
 
 const ConflictSchema = z.object({
+  hasConflict: z.boolean().optional(),
   title: z.string(),
   unresolvedSummary: z.string(),
   resolvedTitle: z.string(),
@@ -259,7 +260,7 @@ const GeneratedRoadmapStepSchema = z.object({
 
 const GeneratedCoreSchema = z.object({
   commitments: z.array(CommitmentSchema).min(1).max(8),
-  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(8),
+  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).max(8),
   timelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   resolvedTimelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   conflict: ConflictSchema,
@@ -281,7 +282,7 @@ const FootprintSchema = z.object({
   }),
   sources: z.array(SourceSchema),
   commitments: z.array(CommitmentSchema).min(1),
-  clarificationQuestions: z.array(ClarificationQuestionSchema).min(1),
+  clarificationQuestions: z.array(ClarificationQuestionSchema),
   timelineEvents: z.array(TimelineEventSchema).min(1),
   resolvedTimelineEvents: z.array(TimelineEventSchema).min(1),
   conflict: ConflictSchema,
@@ -1327,6 +1328,29 @@ function deriveCleanTaskTitle(rawText: string, source?: { title?: string; source
   return trimmed;
 }
 
+function sourceFactValue(
+  source: CapturedSourceForAI | undefined,
+  field: "date" | "start_time" | "end_time" | "duration" | "venue",
+) {
+  return source?.verifiedFacts?.find((fact) => fact.field === field && fact.status === "confirmed")?.value.trim();
+}
+
+function detailsSuffixForTitle(source: CapturedSourceForAI | undefined) {
+  if (!source) return "";
+
+  const date = sourceFactValue(source, "date");
+  const startTime = sourceFactValue(source, "start_time");
+  const endTime = sourceFactValue(source, "end_time");
+  const venue = sourceFactValue(source, "venue");
+  const details = [
+    date ? `due ${date}` : undefined,
+    startTime && endTime ? `${startTime}-${endTime}` : startTime,
+    venue ? `at ${venue}` : undefined,
+  ].filter(Boolean);
+
+  return details.length ? ` (${details.join(", ")})` : "";
+}
+
 function cleanFallbackItemText(value: string, source?: { title?: string; sourceKind?: string; sourceSummary?: string }) {
   const stripped = value
     .replace(/^(source|source type|student note|manual input|goal command|interpreted summary|ocr text|textract text|extracted tasks?):\s*/i, "")
@@ -1512,7 +1536,7 @@ function sourceDrivenFallbackFootprint(
       : text;
     const title = isUnclearSource
       ? `Clarify action for ${deriveCleanTaskTitle(rawTitle, { title: source?.title, sourceKind: source?.sourceKind, sourceSummary: source?.sourceSummary })}`
-      : deriveCleanTaskTitle(text, { title: source?.title, sourceKind: source?.sourceKind, sourceSummary: source?.sourceSummary });
+      : `${deriveCleanTaskTitle(text, { title: source?.title, sourceKind: source?.sourceKind, sourceSummary: source?.sourceSummary })}${detailsSuffixForTitle(source)}`;
 
     return {
       id: `${slugFrom(title, "commitment")}-${index + 1}`,
@@ -1710,6 +1734,7 @@ function sourceDrivenFallbackFootprint(
     timelineEvents: timelineValidation.events,
     resolvedTimelineEvents: timelineValidation.events,
     conflict: {
+      hasConflict: Boolean(confirmedConflictGroup),
       title: conflictTitle,
       unresolvedSummary: confirmedConflictGroup
         ? `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`
@@ -1924,6 +1949,7 @@ function normalizeConflictAnalysis(
 
     return {
       ...conflict,
+      hasConflict: true,
       title: conflictTitle,
       unresolvedSummary: `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`,
       fixedEventTitle: fixedEvent?.title ?? conflict.fixedEventTitle,
@@ -1937,6 +1963,7 @@ function normalizeConflictAnalysis(
 
   return {
     ...conflict,
+    hasConflict: false,
     title: "Potential timing conflict needs confirmation",
     unresolvedSummary: "No confirmed overlap was found from the supplied start and end times.",
     resolvedTitle: "Timing reviewed",
@@ -2022,18 +2049,19 @@ async function generateFootprintCore(
         exaGoalResearch: goalResearch,
         outputContract: {
           commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration using min/hr units, state confirmed|needs_clarification|unsure|resolved, explanation.",
-          clarificationQuestions: "1-8 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every unclear or unsure commitment must have at least one question. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
+          clarificationQuestions: "0-8 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Include questions only when details are missing or ambiguous. Every unclear or unsure commitment must have at least one question. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
           timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
           resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
-          conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
+          conflict: "hasConflict boolean plus title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
           planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
           roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
           rationale: "summary plus 3-6 bullets.",
           emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
         },
         requirements: [
-          "Extract commitments from evidence, not generic todo items. Write highly accurate and descriptive titles for tasks, goals, and events that incorporate the specific subject, action, and key details rather than generic labels.",
-          "Correctly identify the date, due date, time, venue, and other constraints from the evidence. If a task or event is missing crucial details like a date, due date, time, or venue needed for scheduling, mark its state as needs_clarification and generate specific MCQ clarification questions to gather those missing details.",
+          "Extract commitments from evidence, not generic todo items. Write highly accurate and descriptive titles for tasks, goals, and events that incorporate the specific subject, action, and known key details rather than generic labels. A good title says what the student must do or attend; it is never just a date, filename, source label, or vague phrase.",
+          "Correctly identify the date, due date, time, venue, and other constraints from the evidence. Include confirmed due dates, event dates, times, or venues in the title when they materially distinguish the item, and also explain them in the commitment explanation or schedule rationale.",
+          "If a task or event is missing crucial details like a date, due date, time, or venue needed for scheduling, mark its state as needs_clarification and generate specific MCQ clarification questions to gather those missing details. Questions must be multiple-choice-first, with 2-4 plausible short options plus the custom text field.",
           "Every estimatedDuration must be a concrete duration written as 30 min, 1 hr, or 1 hr 30 min. Never use vague values such as confirm duration, sessions per week, soon, or unknown.",
           "Treat sourceTruthPackets as the source of truth. Keep each sourceNumber/id/title separate; never borrow a subject, event type, person, timing, or option from one source packet for another commitment.",
           "Before creating each commitment or timeline event, check that source packet's verifiedFacts for date, start_time, end_time, duration, and venue.",
@@ -2058,9 +2086,10 @@ async function generateFootprintCore(
           "For very vague goals, never create a task whose main action is asking the student to clarify, specify, or scope the goal. Keep the goal as needs_clarification and ask guided multiple-choice clarification questions instead.",
           "Very vague goal clarification questions must be specific and answerable by choosing an option. Cover the first desired outcome, realistic cadence, and current starting point when those details are missing.",
           "Do not ask open-ended questions like 'What exactly do you want?' or 'Please specify the scope' without answer choices. Use 2-4 plausible answer options plus customPlaceholder for details that do not fit.",
-          "Create a conflict timeline and a resolved timeline.",
+          "Create a timeline and a resolved timeline. Set conflict.hasConflict to true only when the conflict solver should be shown.",
           "Only set conflictGroupId for two or more confirmed fixed-time items whose explicit start-end time ranges overlap. Never set conflictGroupId for time-flexible tasks; schedule them around fixed-time items instead. If a time is tentative, missing, or only a possibility, leave conflictGroupId empty and ask a clarification question instead.",
           "Set conflict.overlapLabel to the actual overlap duration calculated from the event time ranges. Do not default to 45 min.",
+          "If there is no confirmed fixed-time overlap, set conflict.hasConflict to false and do not invent fixed/conflicting event titles; use the conflict fields only to explain why no conflict screen is needed.",
           "Create a daily plan with do_now, do_next, and subsequent_days tasks.",
           "Every plan task must include an exact clock range in timeLabel. This applies to task-only uploads, goal-only uploads, and mixed uploads. Goal roadmap tasks may also include scheduledDate or scheduledDateRange, but must still include a concrete work window such as '5:15-6:00 PM'.",
           "Never schedule two plan tasks, timeline events, or a plan task and timeline event into overlapping clock ranges on the same day. Treat existing task and event ranges as busy unless the item is explicitly moved or resolved.",

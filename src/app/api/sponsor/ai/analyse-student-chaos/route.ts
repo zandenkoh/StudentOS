@@ -680,6 +680,7 @@ function normalizeAgentFootprint(
     conflict: confirmedGroup
       ? {
           ...footprint.conflict,
+          hasConflict: true,
           title: conflictTitle,
           unresolvedSummary: `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`,
           fixedEventTitle: fixedEvent?.title ?? footprint.conflict.fixedEventTitle,
@@ -690,7 +691,10 @@ function normalizeAgentFootprint(
           overlapLabel: confirmedGroup.overlapLabel,
           impactLabel: "Decision needed",
         }
-      : footprint.conflict,
+      : {
+          ...footprint.conflict,
+          hasConflict: false,
+        },
     sponsorTrace: confirmedGroup
       ? [
           {

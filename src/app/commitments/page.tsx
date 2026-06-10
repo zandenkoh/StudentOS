@@ -129,6 +129,7 @@ const defaultConflictTitle = defaultFixedEvent && defaultConflictingEvent
   : "Schedule conflict";
 
 const defaultConflictAnalysis: AIConflictAnalysis = {
+  hasConflict: Boolean(defaultConflictGroup),
   title: defaultConflictTitle,
   unresolvedSummary: defaultConflictGroup
     ? `${defaultConflictTitle}. StudentOS found a cleaner schedule.`
@@ -361,6 +362,93 @@ const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
 
 function capitalize(value: string) {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function looksLikeSourceFilename(value: string) {
+  const title = value.trim();
+
+  return (
+    /\.(png|jpe?g|webp|gif|heic|pdf|txt|docx?)$/i.test(title) ||
+    /^(IMG|DSC|Screenshot|Photo|Scan|Document|File)[_\-\s]?\d/i.test(title)
+  );
+}
+
+function compactTitle(value: string, maxLength = 68) {
+  const title = value
+    .replace(/^(source|student note|interpreted summary|extracted tasks?):\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!title) return "";
+  return title.length > maxLength ? `${title.slice(0, maxLength - 3).trim()}...` : title;
+}
+
+function sourceTitleCandidate(source: StudentOSAgentFootprint["sources"][number] | undefined) {
+  if (!source) return "";
+
+  const candidates = [
+    source.interpretedItems?.find((item) => !looksLikeSourceFilename(item.title))?.title,
+    source.extractedTasks?.find((task) => !looksLikeSourceFilename(task)),
+    source.sourceSummary,
+    source.snippet,
+    source.clarificationPrompt,
+  ];
+
+  return compactTitle(candidates.find((candidate) => candidate && !looksLikeSourceFilename(candidate)) ?? "");
+}
+
+function findSourceForTitle(
+  title: string,
+  sourceLabel: string | undefined,
+  sources: StudentOSAgentFootprint["sources"],
+) {
+  const normalizedTitle = title.toLowerCase();
+  const normalizedSourceLabel = sourceLabel?.toLowerCase() ?? "";
+
+  return sources.find((source) => {
+    const labels = [source.id, source.title, source.source].map((value) => value.toLowerCase());
+    return labels.includes(normalizedTitle) || Boolean(normalizedSourceLabel && labels.includes(normalizedSourceLabel));
+  });
+}
+
+function normalizeFilenameCommitmentTitles(
+  commitments: Commitment[],
+  sources: StudentOSAgentFootprint["sources"],
+) {
+  return commitments.map((commitment) => {
+    if (!looksLikeSourceFilename(commitment.title)) return commitment;
+
+    const source = findSourceForTitle(commitment.title, commitment.source, sources);
+    const title = sourceTitleCandidate(source) || `Clarify ${commitment.source || "uploaded source"}`;
+
+    return {
+      ...commitment,
+      title,
+      state: commitment.state === "confirmed" ? "needs_clarification" : commitment.state,
+      explanation: commitment.explanation || "Title was normalized from source evidence because the original title was a filename.",
+    };
+  });
+}
+
+function normalizeFilenamePlanTaskTitles(
+  tasks: DemoPlanTask[],
+  commitments: Commitment[],
+) {
+  return tasks.map((task) => {
+    if (!looksLikeSourceFilename(task.title)) return task;
+
+    const matchingCommitment = commitments.find(
+      (commitment) =>
+        commitment.id === task.goalId ||
+        commitment.source === task.source ||
+        task.id.startsWith(commitment.id),
+    );
+
+    return {
+      ...task,
+      title: matchingCommitment?.title ?? `Review ${task.source || "uploaded source"}`,
+    };
+  });
 }
 
 function AddSourceButton({
@@ -792,9 +880,10 @@ export default function CommitmentsPage() {
     return resolutionMode === "manual" ? manualResolvedTimelineEvents : resolvedTimelineEvents;
   }, [aiResolvedTimeline, baseTimeline, conflictResolved, resolutionMode]);
   const hasConfirmedConflict = useMemo(
-    () => validateTimelineConflicts(baseTimeline).groups.length > 0,
-    [baseTimeline],
+    () => Boolean(conflictAnalysis?.hasConflict) && validateTimelineConflicts(baseTimeline).groups.length > 0,
+    [baseTimeline, conflictAnalysis?.hasConflict],
   );
+  const hasPendingClarifications = unresolvedCount > 0;
   const selectedTask = useMemo(() => {
     if (!selectedTaskForEdit) return null;
     return planTasks.find((task) => task.id === selectedTaskForEdit.id) ?? selectedTaskForEdit;
@@ -903,27 +992,39 @@ export default function CommitmentsPage() {
           Array.isArray(parsedFootprint.planTasks) &&
           parsedFootprint.rationale
         ) {
-          hydratedFootprintSignature = commitmentListSignature(parsedFootprint.commitments);
+          const normalizedCommitments = normalizeFilenameCommitmentTitles(
+            parsedFootprint.commitments,
+            parsedFootprint.sources ?? [],
+          );
+          const normalizedPlanTasks = normalizeFilenamePlanTaskTitles(
+            parsedFootprint.planTasks,
+            normalizedCommitments,
+          );
+          const normalizedFootprint = {
+            ...parsedFootprint,
+            commitments: normalizedCommitments,
+            planTasks: normalizedPlanTasks,
+          };
+
+          hydratedFootprintSignature = commitmentListSignature(normalizedCommitments);
           window.localStorage.setItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY, hydratedFootprintSignature);
-          setAiFootprint(parsedFootprint);
-          setCommitments(parsedFootprint.commitments);
-          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedFootprint.planTasks)));
-          setBaseTimeline(parsedFootprint.timelineEvents);
-          setAiResolvedTimeline(parsedFootprint.resolvedTimelineEvents);
-          setConflictAnalysis(parsedFootprint.conflict);
-          setSponsorTrace(mergeSponsorTraces(parsedFootprint.sponsorTrace, persistedTrace));
+          window.localStorage.setItem("studentos_ai_footprint", JSON.stringify(normalizedFootprint));
+          setAiFootprint(normalizedFootprint);
+          setCommitments(normalizedCommitments);
+          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(normalizedPlanTasks)));
+          setBaseTimeline(normalizedFootprint.timelineEvents);
+          setAiResolvedTimeline(normalizedFootprint.resolvedTimelineEvents);
+          setConflictAnalysis(normalizedFootprint.conflict);
+          setSponsorTrace(mergeSponsorTraces(normalizedFootprint.sponsorTrace, persistedTrace));
           setAiPlan({
-            provider: parsedFootprint.provider,
-            status: parsedFootprint.status,
-            model: parsedFootprint.model,
-            rationale: parsedFootprint.rationale,
+            provider: normalizedFootprint.provider,
+            status: normalizedFootprint.status,
+            model: normalizedFootprint.model,
+            rationale: normalizedFootprint.rationale,
             dailyPlan: {
-              focus:
-                parsedFootprint.planTasks.find((task) => task.section === "do_now")?.title ??
-                parsedFootprint.planTasks[0]?.title ??
-                "Today's focus",
+              focus: normalizedPlanTasks.find((task) => task.section === "do_now")?.title ?? normalizedPlanTasks[0]?.title ?? "Today's focus",
             },
-            trace: parsedFootprint.sponsorTrace,
+            trace: normalizedFootprint.sponsorTrace,
           });
           aiPlanRequestStarted.current = true;
         }
@@ -1007,15 +1108,18 @@ export default function CommitmentsPage() {
       ).length;
 
       let localTimeline: TimelineEvent[] = timelineEvents;
+      let localAiDeemsConflictNecessary = defaultConflictAnalysis.hasConflict ?? false;
       if (rawFootprint) {
         try {
           const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
           if (parsedFootprint && Array.isArray(parsedFootprint.timelineEvents)) {
             localTimeline = parsedFootprint.timelineEvents;
           }
+          localAiDeemsConflictNecessary = Boolean(parsedFootprint.conflict?.hasConflict);
         } catch {}
       }
       const localHasConflict = validateTimelineConflicts(localTimeline).groups.length > 0;
+      const localShouldShowConflict = localAiDeemsConflictNecessary && localHasConflict;
 
       const savedFlowState = window.localStorage.getItem(SAVED_FLOW_STATE_KEY);
       if (savedFlowState) {
@@ -1033,7 +1137,7 @@ export default function CommitmentsPage() {
           parsedFlowState.step === "conflict" ||
           parsedFlowState.step === "plan"
         ) {
-          if (parsedFlowState.step === "conflict" && (localUnresolvedCount > 0 || !localHasConflict)) {
+          if (parsedFlowState.step === "conflict" && (localUnresolvedCount > 0 || !localShouldShowConflict)) {
             setStep("commitments");
           } else {
             setStep(parsedFlowState.step);
@@ -1071,7 +1175,7 @@ export default function CommitmentsPage() {
       }
 
       if (conflictRouteRequested) {
-        if (localUnresolvedCount > 0 || !localHasConflict) {
+        if (localUnresolvedCount > 0 || !localShouldShowConflict) {
           router.replace("/commitments");
           setStep("commitments");
           persistFlowState({
@@ -1322,9 +1426,13 @@ export default function CommitmentsPage() {
         setHighlightedTaskId(focusPlanTaskId);
       }
       if (trigger === "clarification") {
-        const nextUnresolvedCount = effectiveResult.commitments.filter((item) => item.state === "needs_clarification").length;
+        const nextUnresolvedCount = effectiveResult.commitments.filter(
+          (item) => item.state === "needs_clarification" || item.state === "unsure",
+        ).length;
         if (nextUnresolvedCount === 0) {
-          const nextHasConflict = validateTimelineConflicts(effectiveResult.timelineEvents).groups.length > 0;
+          const nextHasConflict =
+            Boolean(effectiveResult.conflict?.hasConflict) &&
+            validateTimelineConflicts(effectiveResult.timelineEvents).groups.length > 0;
           if (nextHasConflict) {
             router.push("/conflicts");
           } else {
@@ -2323,8 +2431,12 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader
-                title="Commmitments Identified"
-                subtitle="StudentOS separated obligations from longer-term goals."
+                title={hasPendingClarifications ? "Clarifications needed" : "Commitments identified"}
+                subtitle={
+                  hasPendingClarifications
+                    ? "Answer the MCQ prompts before StudentOS checks conflicts or locks the plan."
+                    : "StudentOS separated obligations from longer-term goals."
+                }
               />
               <div className="lg:hidden">
                 <SponsorProofStrip trace={sponsorTrace} />
@@ -2380,6 +2492,10 @@ export default function CommitmentsPage() {
                 <button
                   disabled={!planHydrated || !hasExtractedItems || unresolvedCount > 0 || replanLoading}
                   onClick={() => {
+                    if (hasPendingClarifications) {
+                      showToast(`Clarify ${unresolvedCount} item${unresolvedCount === 1 ? "" : "s"} first`);
+                      return;
+                    }
                     if (hasConfirmedConflict) {
                       router.push("/conflicts");
                     } else {
@@ -2398,7 +2514,7 @@ export default function CommitmentsPage() {
                       ? "Loading extracted items"
                       : !hasExtractedItems
                         ? "Add a source-backed item to continue"
-                        : unresolvedCount > 0
+                        : hasPendingClarifications
                           ? `Clarify ${unresolvedCount} items to continue`
                           : hasConfirmedConflict
                             ? "Continue to conflicts"
