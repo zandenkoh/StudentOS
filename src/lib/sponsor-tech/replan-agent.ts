@@ -470,6 +470,8 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
   const { output } = await generateText({
     model: gatewayLanguageModel(model),
     output: Output.object({ schema: ReplanAgentOutputSchema }),
+    temperature: 0,
+    maxOutputTokens: 4096,
     system:
       "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
     prompt: JSON.stringify(

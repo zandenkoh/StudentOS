@@ -195,8 +195,8 @@ USE_REAL_BEDROCK=false
 # ==========================================
 AI_GATEWAY_API_KEY=your_vercel_ai_gateway_key
 VERCEL_OIDC_TOKEN=your_vercel_oidc_token
-AI_GATEWAY_MODEL=anthropic/claude-sonnet-4.6
-AI_GATEWAY_FALLBACK_MODEL=anthropic/claude-sonnet-4.6
+AI_GATEWAY_MODEL=google/gemini-3.5-flash
+AI_GATEWAY_FALLBACK_MODEL=
 AI_GATEWAY_RESEARCH_MODEL=anthropic/claude-sonnet-4.6
 
 # AWS Lambda agent and judge mode

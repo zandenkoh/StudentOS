@@ -108,16 +108,31 @@ export function resolveCommitmentSourcePreview(
   const rankedSources = sources
     .map((source) => {
       const searchable = sourceTextForMatch(source);
+      const normalizedTitle = normalizeSearchText(source.title);
+      const normalizedSourceStr = normalizeSearchText(source.source);
       let score = 0;
 
-      if (source.id === commitment.id) score += 12;
-      if (source.id.includes(commitment.id) || commitment.id.includes(source.id)) score += 8;
-      if (sourceLabel && searchable.includes(sourceLabel)) score += 5;
+      if (source.id === commitment.id) score += 50;
+      if (source.id.includes(commitment.id) || commitment.id.includes(source.id)) score += 20;
+      
+      if (sourceLabel) {
+        if (normalizedTitle === sourceLabel || normalizedSourceStr === sourceLabel) {
+          score += 50;
+        } else if (searchable.includes(sourceLabel)) {
+          score += 5;
+        }
+      }
+
       if (keywordMatcher?.test(searchable)) score += 5;
 
-      for (const token of commitmentText.split(" ").filter((token) => token.length > 3)) {
-        if (searchable.includes(token)) score += 1;
+      const tokens = commitmentText.split(" ").filter((token) => token.length > 3);
+      let tokenMatches = 0;
+      for (const token of tokens) {
+        if (searchable.includes(token)) tokenMatches += 1;
       }
+      
+      // Cap token match score to prevent massive OCR text from dominating
+      score += Math.min(tokenMatches, 5);
 
       return { source, score };
     })
