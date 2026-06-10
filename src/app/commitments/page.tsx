@@ -163,6 +163,15 @@ type EditDraft = {
   title: string;
   type: Commitment["type"];
   estimatedDuration: string;
+  date: string;
+};
+
+type ReplanCrudOperation = {
+  action: "create" | "update" | "delete";
+  entity: "commitment" | "plan_task" | "timeline_event";
+  id: string;
+  before?: unknown;
+  after?: unknown;
 };
 
 type ResolutionMode = "recommended" | "manual" | null;
@@ -522,6 +531,105 @@ function normalizeFilenamePlanTaskTitles(
       title: matchingCommitment?.title ?? `Review ${task.source || "uploaded source"}`,
     };
   });
+}
+
+function sourceCommitmentType(
+  type: StudentOSAgentFootprint["sources"][number]["sourceKind"] | NonNullable<StudentOSAgentFootprint["sources"][number]["interpretedItems"]>[number]["type"] | undefined,
+): Commitment["type"] {
+  if (type === "goal") return "goal";
+  if (type === "event") return "event";
+  if (type === "deadline") return "deadline";
+  return "task";
+}
+
+function sourceCommitmentDuration(type: Commitment["type"]) {
+  if (type === "goal") return "30min/session";
+  if (type === "event") return "30min";
+  return "30min";
+}
+
+function sourceCommitmentId(sourceId: string, title: string, index: number) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 42);
+  const sourceSlug = sourceId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+
+  return `source-${sourceSlug || "item"}-${slug || index + 1}`;
+}
+
+function sourceTypeForExtractedTitle(
+  sourceKind: StudentOSAgentFootprint["sources"][number]["sourceKind"],
+  title: string,
+): "task" | "event" | "deadline" | "goal" {
+  if (sourceKind === "goal") return "goal";
+  if (sourceKind === "event") return "event";
+  if (sourceKind === "deadline") return "deadline";
+  if (/\b(goal|learn|improve|practice|become|proficient|roadmap)\b/i.test(title)) return "goal";
+  return "task";
+}
+
+function commitmentsFromSource(
+  source: StudentOSAgentFootprint["sources"][number],
+) {
+  const interpretedItems = source.interpretedItems?.length
+    ? source.interpretedItems
+    : source.extractedTasks?.map((title) => ({
+        title,
+        type: sourceTypeForExtractedTitle(source.sourceKind, title),
+        evidence: source.extractedEvidence?.find((item) => item.includes(title)),
+      })) ?? [];
+
+  if (!interpretedItems.length) {
+    const title = sourceTitleCandidate(source);
+    if (!title) return [];
+
+    const type = sourceCommitmentType(source.sourceKind);
+
+    return [{
+      id: sourceCommitmentId(source.id, title, 0),
+      title,
+      type,
+      source: source.title || source.source,
+      confidence: source.sourceConfidence ?? 74,
+      estimatedDuration: sourceCommitmentDuration(type),
+      state: source.needsClarification ? "needs_clarification" as const : "confirmed" as const,
+      explanation: source.sourceSummary || source.snippet || "Extracted from source evidence.",
+    }];
+  }
+
+  return interpretedItems
+    .map((item, index) => {
+      const title = taskTitleFromEvidence(item.title);
+      if (!title || looksLikeWeakGeneratedTitle(title)) return null;
+      const type = sourceCommitmentType(item.type);
+
+      return {
+        id: sourceCommitmentId(source.id, title, index),
+        title,
+        type,
+        source: source.title || source.source,
+        confidence: source.sourceConfidence ?? (item.type === "unclear" ? 52 : 82),
+        estimatedDuration: sourceCommitmentDuration(type),
+        state:
+          source.needsClarification || item.type === "unclear"
+            ? "needs_clarification" as const
+            : "confirmed" as const,
+        explanation:
+          item.evidence ||
+          source.sourceSummary ||
+          source.snippet ||
+          "Extracted from source evidence.",
+      } satisfies Commitment;
+    })
+    .filter((item): item is Commitment => Boolean(item));
+}
+
+function commitmentsWithSourceBackedItems(
+  commitments: Commitment[],
+  sources: StudentOSAgentFootprint["sources"],
+) {
+  const sourceBackedCommitments = sources.flatMap(commitmentsFromSource);
+  if (!sourceBackedCommitments.length) return commitments;
+
+  return mergeDuplicateCommitments([...commitments, ...sourceBackedCommitments]);
 }
 
 function AddSourceButton({
@@ -886,7 +994,8 @@ export default function CommitmentsPage() {
   const [editDraft, setEditDraft] = useState<EditDraft>({
     title: "",
     type: "task",
-    estimatedDuration: ""
+    estimatedDuration: "",
+    date: ""
   });
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<TimelineEvent | null>(null);
@@ -1072,8 +1181,11 @@ export default function CommitmentsPage() {
           Array.isArray(parsedFootprint.planTasks) &&
           parsedFootprint.rationale
         ) {
-          const normalizedCommitments = normalizeFilenameCommitmentTitles(
-            parsedFootprint.commitments,
+          const normalizedCommitments = commitmentsWithSourceBackedItems(
+            normalizeFilenameCommitmentTitles(
+              parsedFootprint.commitments,
+              hydratedSources,
+            ),
             hydratedSources,
           );
           hydratedCommitments = normalizedCommitments;
@@ -1183,8 +1295,11 @@ export default function CommitmentsPage() {
         try {
           const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
           if (parsedFootprint && Array.isArray(parsedFootprint.commitments)) {
-            localCommitments = normalizeFilenameCommitmentTitles(
-              parsedFootprint.commitments,
+            localCommitments = commitmentsWithSourceBackedItems(
+              normalizeFilenameCommitmentTitles(
+                parsedFootprint.commitments,
+                parsedFootprint.sources ?? [],
+              ),
               parsedFootprint.sources ?? [],
             );
           }
@@ -1384,6 +1499,7 @@ export default function CommitmentsPage() {
     beforePlanTasks = planTasks,
     runId,
     sourceContext,
+    operations = [],
     preservePlanTaskIds = [],
     focusPlanTaskId,
   }: {
@@ -1398,6 +1514,7 @@ export default function CommitmentsPage() {
     beforePlanTasks?: DemoPlanTask[];
     runId?: string;
     sourceContext?: Record<string, unknown>;
+    operations?: ReplanCrudOperation[];
     preservePlanTaskIds?: string[];
     focusPlanTaskId?: string;
   }) {
@@ -1424,6 +1541,7 @@ export default function CommitmentsPage() {
             : aiResolvedTimeline,
           conflict: conflictAnalysis,
           clarificationAnswers: nextClarificationAnswers,
+          operations,
           manualConflictInstruction: manualInstruction,
           sourceContext: {
             conflictResolution: nextResolutionMode ?? "none",
@@ -1573,6 +1691,8 @@ export default function CommitmentsPage() {
           ? "Schedule rebuilt from instruction"
           : trigger === "add_task"
             ? "Plan updated with added task"
+            : trigger === "commitment_crud"
+              ? "Plan updated from item edit"
             : "Schedule updated from clarification",
       );
     } catch (error) {
@@ -1585,6 +1705,8 @@ export default function CommitmentsPage() {
             ? "Agent replanned manual conflict"
             : trigger === "add_task"
               ? "Agent replanned added task"
+              : trigger === "commitment_crud"
+                ? "Agent replanned item operation"
               : "Agent replanned after clarification",
         status: "error",
         detail,
@@ -2196,6 +2318,20 @@ export default function CommitmentsPage() {
       beforePlanTasks,
       preservePlanTaskIds: commitment.state === "needs_clarification" ? [] : [task.id],
       focusPlanTaskId: commitment.state === "needs_clarification" ? undefined : task.id,
+      operations: [
+        {
+          action: "create",
+          entity: "commitment",
+          id: commitment.id,
+          after: commitment,
+        },
+        {
+          action: "create",
+          entity: "plan_task",
+          id: task.id,
+          after: task,
+        },
+      ],
       sourceContext: {
         addedSource: text,
         addedSourceKey: nextSourceKey ?? undefined,
@@ -2426,12 +2562,67 @@ export default function CommitmentsPage() {
     router.push("/roadmap");
   }
 
+  function planTaskMatchesCommitment(task: DemoPlanTask, commitment: Commitment) {
+    const normalizedTaskTitle = task.title.toLowerCase();
+    const normalizedCommitmentTitle = commitment.title.toLowerCase();
+    const normalizedTaskSource = task.source?.toLowerCase();
+    const normalizedCommitmentSource = commitment.source.toLowerCase();
+
+    return (
+      task.id === commitment.id ||
+      task.id === `clarified-${commitment.id}` ||
+      task.goalId === commitment.id ||
+      task.id.startsWith(`${commitment.id}-`) ||
+      normalizedTaskTitle.includes(normalizedCommitmentTitle) ||
+      normalizedCommitmentTitle.includes(normalizedTaskTitle) ||
+      Boolean(normalizedTaskSource && normalizedTaskSource === normalizedCommitmentSource)
+    );
+  }
+
+  function dateForCommitment(commitment: Commitment) {
+    const task = planTasks.find((item) => planTaskMatchesCommitment(item, commitment));
+    return task?.scheduledDateId ?? task?.deadlineDateId ?? "";
+  }
+
+  function applyEditedDateToTasks(
+    tasks: DemoPlanTask[],
+    previousCommitment: Commitment,
+    nextCommitment: Commitment,
+    dateId: string,
+  ) {
+    if (!dateId) return tasks;
+
+    const dateLabel = formatScheduleDateLabel(dateId);
+    const isFutureDate = dateId > todayDateId();
+
+    return tasks.map((task) => {
+      if (!planTaskMatchesCommitment(task, previousCommitment) && !planTaskMatchesCommitment(task, nextCommitment)) {
+        return task;
+      }
+
+      const nextTask = {
+        ...task,
+        section: isFutureDate ? "subsequent_days" as const : task.section,
+        scheduledDateId: dateId,
+        scheduledDate: dateLabel,
+        scheduledDateRange: undefined,
+        deadlineDateId: nextCommitment.type === "deadline" ? dateId : task.deadlineDateId,
+        deadline: nextCommitment.type === "deadline" ? dateLabel : task.deadline,
+        scheduleRationale: `StudentOS updated this scheduled task after the item date was edited to ${dateLabel}.`,
+        updated: true,
+      };
+
+      return ensureTaskTimeRange(nextTask);
+    });
+  }
+
   function openEditor(commitment: Commitment) {
     setEditing(commitment);
     setEditDraft({
       title: commitment.title,
       type: commitment.type,
-      estimatedDuration: commitment.estimatedDuration
+      estimatedDuration: commitment.estimatedDuration,
+      date: dateForCommitment(commitment)
     });
   }
 
@@ -2455,6 +2646,8 @@ export default function CommitmentsPage() {
   function saveEdit() {
     if (!editing) return;
     const previousCommitment = editing;
+    const beforeCommitments = commitments;
+    const beforePlanTasks = planTasks;
     const nextCommitment: Commitment = {
       ...editing,
       title: editDraft.title.trim() || editing.title,
@@ -2465,9 +2658,13 @@ export default function CommitmentsPage() {
     const nextCommitments = commitments.map((item) =>
       item.id === editing.id ? nextCommitment : item,
     );
+    const editedTasks = planTasksWithEditedCommitment(planTasks, previousCommitment, nextCommitment);
     const nextPlanTasks = enrichPlanTasksWithRationales(
-      planTasksWithEditedCommitment(planTasks, previousCommitment, nextCommitment),
+      applyEditedDateToTasks(editedTasks, previousCommitment, nextCommitment, editDraft.date),
     );
+    const affectedTaskIds = nextPlanTasks
+      .filter((task) => planTaskMatchesCommitment(task, previousCommitment) || planTaskMatchesCommitment(task, nextCommitment))
+      .map((task) => task.id);
 
     setCommitments(nextCommitments);
     persistCommitments(nextCommitments);
@@ -2482,11 +2679,34 @@ export default function CommitmentsPage() {
     clearAiPlanCaches();
     setEditing(null);
     showToast("Item updated");
+    void runAgentReplan({
+      trigger: "commitment_crud",
+      nextCommitments,
+      nextPlanTasks,
+      beforeCommitments,
+      beforePlanTasks,
+      operations: [
+        {
+          action: "update",
+          entity: "commitment",
+          id: previousCommitment.id,
+          before: previousCommitment,
+          after: nextCommitment,
+        },
+      ],
+      preservePlanTaskIds: affectedTaskIds,
+      sourceContext: {
+        editedDate: editDraft.date || undefined,
+        editedCommitment: nextCommitment,
+      },
+    });
   }
 
   function deleteEditing() {
     if (!editing) return;
     const removedCommitment = editing;
+    const beforeCommitments = commitments;
+    const beforePlanTasks = planTasks;
     const nextCommitments = commitments.filter((item) => item.id !== removedCommitment.id);
     const nextPlanTasks = planTasksWithoutCommitment(planTasks, removedCommitment);
 
@@ -2502,13 +2722,32 @@ export default function CommitmentsPage() {
     clearAiPlanCaches();
     setEditing(null);
     showToast("Item deleted");
+    void runAgentReplan({
+      trigger: "commitment_crud",
+      nextCommitments,
+      nextPlanTasks,
+      beforeCommitments,
+      beforePlanTasks,
+      operations: [
+        {
+          action: "delete",
+          entity: "commitment",
+          id: removedCommitment.id,
+          before: removedCommitment,
+        },
+      ],
+      sourceContext: {
+        deletedCommitment: removedCommitment,
+      },
+    });
   }
 
   const editHasUnsavedChanges = Boolean(
     editing &&
       (editDraft.title !== editing.title ||
         editDraft.type !== editing.type ||
-        editDraft.estimatedDuration !== editing.estimatedDuration),
+        editDraft.estimatedDuration !== editing.estimatedDuration ||
+        editDraft.date !== dateForCommitment(editing)),
   );
   const addSourceHasUnsavedChanges = addSourceOpen && sourceDraft.trim().length > 0;
 
@@ -2534,8 +2773,8 @@ export default function CommitmentsPage() {
                 title={hasPendingClarifications ? "Clarifications needed" : "Commitments identified"}
                 subtitle={
                   hasPendingClarifications
-                    ? "Answer the MCQ prompts before StudentOS checks conflicts or locks the plan."
-                    : "StudentOS separated obligations from longer-term goals."
+                    ? "Answer MCQs for uncertain items; confident tasks and goals can be edited directly."
+                    : "StudentOS separated tasks, events, deadlines, and longer-term goals from your sources."
                 }
               />
               <div className="lg:hidden">
@@ -2544,9 +2783,9 @@ export default function CommitmentsPage() {
               <div className="space-y-6 pb-8">
                 <section className="space-y-3">
                   <div className="px-1">
-                    <h2 className="text-[18px] font-semibold text-ink">Commitments</h2>
+                    <h2 className="text-[18px] font-semibold text-ink">Tasks</h2>
                     <p className="mt-1 text-[13px] leading-5 text-muted">
-                      Tasks, fixed events, and deadlines StudentOS must schedule around.
+                      Tasks, fixed events, and deadlines found across the submitted sources.
                     </p>
                   </div>
                   {planHydrated && !hasExtractedItems ? (
@@ -2820,6 +3059,20 @@ export default function CommitmentsPage() {
                 />
               </label>
             </div>
+            <label className="block">
+              <span className="text-sm font-semibold">Date</span>
+              <input
+                type="date"
+                value={editDraft.date}
+                onChange={(event) =>
+                  setEditDraft((current) => ({
+                    ...current,
+                    date: event.target.value
+                  }))
+                }
+                className="mt-2 h-12 w-full rounded-[18px] border border-neutral-200 px-4 text-[15px] font-semibold focus:border-neutral-400 focus:ring-0"
+              />
+            </label>
             <button
               type="button"
               onClick={() => openSourcePreview(editing, { closeEditor: true })}

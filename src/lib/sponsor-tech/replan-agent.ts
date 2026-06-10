@@ -76,8 +76,16 @@ const ClarificationAnswerSchema = z.object({
   answeredAt: z.string(),
 });
 
+const ReplanCrudOperationSchema = z.object({
+  action: z.enum(["create", "update", "delete"]),
+  entity: z.enum(["commitment", "plan_task", "timeline_event"]),
+  id: z.string(),
+  before: z.unknown().optional(),
+  after: z.unknown().optional(),
+});
+
 const ReplanAgentInputSchema = z.object({
-  trigger: z.enum(["clarification", "manual_conflict", "add_task"]),
+  trigger: z.enum(["clarification", "manual_conflict", "add_task", "commitment_crud"]),
   currentDate: z.string().min(1),
   commitments: z.array(CommitmentSchema).default([]),
   planTasks: z.array(PlanTaskSchema).default([]),
@@ -85,15 +93,16 @@ const ReplanAgentInputSchema = z.object({
   resolvedTimelineEvents: z.array(TimelineEventSchema).default([]),
   conflict: ConflictSchema.optional(),
   clarificationAnswers: z.array(ClarificationAnswerSchema).default([]),
+  operations: z.array(ReplanCrudOperationSchema).default([]),
   manualConflictInstruction: z.string().optional(),
   sourceContext: z.unknown().optional(),
 });
 
 const ReplanAgentOutputSchema = z.object({
-  commitments: z.array(CommitmentSchema).min(1),
-  planTasks: z.array(PlanTaskSchema).min(1),
-  timelineEvents: z.array(TimelineEventSchema).min(1),
-  resolvedTimelineEvents: z.array(TimelineEventSchema).min(1),
+  commitments: z.array(CommitmentSchema),
+  planTasks: z.array(PlanTaskSchema),
+  timelineEvents: z.array(TimelineEventSchema),
+  resolvedTimelineEvents: z.array(TimelineEventSchema),
   conflict: ConflictSchema,
   rationale: z.object({
     summary: z.string(),
@@ -146,6 +155,21 @@ function arrayValue(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function parseCommitment(value: unknown) {
+  const parsed = CommitmentSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parsePlanTask(value: unknown) {
+  const parsed = PlanTaskSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function parseTimelineEvent(value: unknown) {
+  const parsed = TimelineEventSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 function stringArrayValue(value: unknown, fallback: string[]) {
   const values = Array.isArray(value)
     ? value.map((item) => textValue(item)).filter(Boolean)
@@ -194,6 +218,83 @@ function normalizeTasks(tasks: z.infer<typeof PlanTaskSchema>[], busyBlocks: Bus
     ...task,
     updated: task.updated || undefined,
   }));
+}
+
+function taskDependsOnCommitmentId(task: z.infer<typeof PlanTaskSchema>, commitmentId: string) {
+  return (
+    task.id === commitmentId ||
+    task.id === `clarified-${commitmentId}` ||
+    task.id.startsWith(`${commitmentId}-`) ||
+    task.goalId === commitmentId
+  );
+}
+
+function applyCrudOperations(input: ReplanAgentInput) {
+  let commitments = input.commitments;
+  let planTasks = input.planTasks;
+  let timelineEvents = input.timelineEvents;
+  let resolvedTimelineEvents = input.resolvedTimelineEvents;
+
+  input.operations.forEach((operation) => {
+    if (operation.entity === "commitment") {
+      const nextCommitment = parseCommitment(operation.after);
+
+      if (operation.action === "delete") {
+        commitments = commitments.filter((item) => item.id !== operation.id);
+        planTasks = planTasks.filter((task) => !taskDependsOnCommitmentId(task, operation.id));
+        return;
+      }
+
+      if (!nextCommitment) return;
+
+      commitments =
+        operation.action === "create"
+          ? commitments.some((item) => item.id === nextCommitment.id)
+            ? commitments.map((item) => item.id === nextCommitment.id ? nextCommitment : item)
+            : [...commitments, nextCommitment]
+          : commitments.map((item) => item.id === operation.id ? nextCommitment : item);
+      return;
+    }
+
+    if (operation.entity === "plan_task") {
+      const nextTask = parsePlanTask(operation.after);
+
+      if (operation.action === "delete") {
+        planTasks = planTasks.filter((item) => item.id !== operation.id);
+        return;
+      }
+
+      if (!nextTask) return;
+
+      planTasks =
+        operation.action === "create"
+          ? planTasks.some((item) => item.id === nextTask.id)
+            ? planTasks.map((item) => item.id === nextTask.id ? nextTask : item)
+            : [...planTasks, nextTask]
+          : planTasks.map((item) => item.id === operation.id ? nextTask : item);
+      return;
+    }
+
+    const nextEvent = parseTimelineEvent(operation.after);
+    const applyEvent = (events: z.infer<typeof TimelineEventSchema>[]) => {
+      if (operation.action === "delete") return events.filter((item) => item.id !== operation.id);
+      if (!nextEvent) return events;
+      if (operation.action === "create" && !events.some((item) => item.id === nextEvent.id)) {
+        return [...events, nextEvent];
+      }
+      return events.map((item) => item.id === operation.id ? nextEvent : item);
+    };
+
+    timelineEvents = applyEvent(timelineEvents);
+    resolvedTimelineEvents = applyEvent(resolvedTimelineEvents);
+  });
+
+  return {
+    commitments,
+    planTasks,
+    timelineEvents,
+    resolvedTimelineEvents,
+  };
 }
 
 function ensureUpdatedReplanTask(
@@ -304,14 +405,22 @@ function fallbackConflict(input: ReplanAgentInput, resolvedEvents: z.infer<typeo
 }
 
 function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentResponse {
+  const crudApplied = input.operations.length ? applyCrudOperations(input) : input;
+  const effectiveInput = {
+    ...input,
+    commitments: crudApplied.commitments,
+    planTasks: crudApplied.planTasks,
+    timelineEvents: crudApplied.timelineEvents,
+    resolvedTimelineEvents: crudApplied.resolvedTimelineEvents,
+  };
   const clarificationText = input.clarificationAnswers
     .map((item) => `${item.commitmentTitle}: ${item.answer}`)
     .join("; ");
   const manualInstruction = input.manualConflictInstruction?.trim();
   const addedText = addedSourceText(input);
   const addedId = addedCommitmentId(input);
-  const nextCommitments = input.commitments.map((commitment) => {
-    const matchedAnswer = input.clarificationAnswers.find((item) => item.commitmentId === commitment.id);
+  const nextCommitments = effectiveInput.commitments.map((commitment) => {
+    const matchedAnswer = effectiveInput.clarificationAnswers.find((item) => item.commitmentId === commitment.id);
     if (!matchedAnswer) return commitment;
 
     return {
@@ -321,7 +430,7 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
       explanation: `${commitment.explanation} Clarification reviewed: ${matchedAnswer.answer}.`,
     };
   });
-  const existingTasks: z.infer<typeof PlanTaskSchema>[] = input.planTasks.length ? input.planTasks : nextCommitments.map((commitment, index) => ({
+  const existingTasks: z.infer<typeof PlanTaskSchema>[] = effectiveInput.planTasks.length ? effectiveInput.planTasks : nextCommitments.map((commitment, index) => ({
     id: `agent-${slugFrom(commitment.title, "task")}`,
     title: commitment.type === "goal" ? `Plan next step for ${commitment.title}` : commitment.title,
     section: index === 0 ? "do_now" as const : "do_next" as const,
@@ -334,59 +443,70 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
   }));
   const nextTasks = normalizeTasks(existingTasks.map((task, index) => {
     const taskIsAdded =
-      input.trigger === "add_task" &&
+      effectiveInput.trigger === "add_task" &&
       (task.id === addedId || task.source === "Added task" || task.id.startsWith("added-"));
-    const taskWasLocallyMoved = input.trigger === "add_task" && task.updated;
-    const manualTargetIndex = input.trigger === "manual_conflict"
+    const taskWasLocallyMoved = effectiveInput.trigger === "add_task" && task.updated;
+    const manualTargetIndex = effectiveInput.trigger === "manual_conflict"
       ? existingTasks.findIndex((item) => {
           const text = `${item.title} ${item.reason ?? ""} ${item.source ?? ""}`.toLowerCase();
           return item.section !== "do_now" && !/\bfixed\b|calendar|appointment|class|lesson/.test(text);
         })
       : -1;
     const taskIsManualConflictTarget =
-      input.trigger === "manual_conflict" && (index === manualTargetIndex || (manualTargetIndex < 0 && index === 0));
+      effectiveInput.trigger === "manual_conflict" && (index === manualTargetIndex || (manualTargetIndex < 0 && index === 0));
+    const taskIsCrudTarget =
+      effectiveInput.trigger === "commitment_crud" &&
+      effectiveInput.operations.some((operation) =>
+        operation.entity === "plan_task"
+          ? operation.id === task.id
+          : operation.entity === "commitment" && (operation.id === task.id || operation.id === task.goalId),
+      );
 
     return {
       ...task,
       reason:
-        input.trigger === "manual_conflict" && manualInstruction
+        effectiveInput.trigger === "manual_conflict" && manualInstruction
           ? "Updated after your conflict instruction"
-          : input.trigger === "clarification" && clarificationText
+          : effectiveInput.trigger === "clarification" && clarificationText
             ? "Updated after clarification"
-            : taskIsAdded
-              ? "Added task scheduled"
+          : taskIsAdded
+            ? "Added task scheduled"
+            : taskIsCrudTarget
+              ? "Updated after item edit"
               : task.reason,
       scheduleRationale:
-        input.trigger === "manual_conflict" && manualInstruction
+        effectiveInput.trigger === "manual_conflict" && manualInstruction
           ? `StudentOS reviewed this task after applying the user's manual conflict instruction: ${manualInstruction}.`
-          : input.trigger === "clarification" && clarificationText
+          : effectiveInput.trigger === "clarification" && clarificationText
             ? `StudentOS used the clarification answer before choosing this slot: ${clarificationText}.`
             : taskIsAdded
               ? `StudentOS scheduled this from the submitted added task${addedText ? `: ${addedText}` : ""}.`
-              : task.scheduleRationale,
+              : taskIsCrudTarget
+                ? "StudentOS rebuilt this task after the user edited the underlying item."
+                : task.scheduleRationale,
       updated:
-        input.trigger === "add_task"
+        effectiveInput.trigger === "add_task"
           ? taskIsAdded || taskWasLocallyMoved || undefined
-          : taskIsManualConflictTarget ? true : task.updated,
+          : taskIsManualConflictTarget || taskIsCrudTarget ? true : task.updated,
     };
-  }), busyBlocksFromTimeline(input.timelineEvents.length ? input.timelineEvents : input.resolvedTimelineEvents));
+  }), busyBlocksFromTimeline(effectiveInput.timelineEvents.length ? effectiveInput.timelineEvents : effectiveInput.resolvedTimelineEvents));
   const candidateResolvedEvents =
-    input.trigger === "manual_conflict"
-      ? resolvedEventsForManualInstruction(input)
-      : (input.resolvedTimelineEvents.length ? input.resolvedTimelineEvents : input.timelineEvents).map((event) => ({
+    effectiveInput.trigger === "manual_conflict"
+      ? resolvedEventsForManualInstruction(effectiveInput)
+      : (effectiveInput.resolvedTimelineEvents.length ? effectiveInput.resolvedTimelineEvents : effectiveInput.timelineEvents).map((event) => ({
           ...event,
           tone: event.tone === "conflict" ? undefined : event.tone,
           conflictGroupId: undefined,
           chip: event.chip === "Needs decision" ? "Resolved" : event.chip,
           scheduleRationale:
-            input.trigger === "manual_conflict" && manualInstruction
+            effectiveInput.trigger === "manual_conflict" && manualInstruction
               ? `Updated after manual instruction: ${manualInstruction}.`
-              : event.scheduleRationale,
+            : event.scheduleRationale,
         }));
   const resolvedValidation = validateTimelineConflicts(candidateResolvedEvents);
   const resolvedEvents = resolvedValidation.events;
-  const currentValidation = validateTimelineConflicts(input.timelineEvents.length ? input.timelineEvents : resolvedEvents);
-  const conflict = fallbackConflict(input, resolvedEvents);
+  const currentValidation = validateTimelineConflicts(effectiveInput.timelineEvents.length ? effectiveInput.timelineEvents : resolvedEvents);
+  const conflict = fallbackConflict(effectiveInput, resolvedEvents);
 
   return {
     provider: "fallback",
@@ -399,16 +519,20 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
     conflict,
     rationale: {
       summary:
-        input.trigger === "manual_conflict"
+        effectiveInput.trigger === "manual_conflict"
           ? "StudentOS applied the manual conflict instruction and rebuilt the visible schedule from the current commitments."
-          : input.trigger === "add_task"
+          : effectiveInput.trigger === "add_task"
             ? "StudentOS scheduled the added task from the submitted text and kept the rest of the plan grounded in current commitments."
+            : effectiveInput.trigger === "commitment_crud"
+              ? "StudentOS applied the requested create, update, or delete action and rebuilt affected visible plan items."
             : "StudentOS reviewed the clarification answer and rebuilt the visible schedule from the current commitments.",
       bullets: [
         "Replanning stayed grounded in current commitments.",
         "Updated tasks keep exact clock ranges.",
-        input.trigger === "add_task"
+        effectiveInput.trigger === "add_task"
           ? "Fallback scheduling used the submitted added text only."
+          : effectiveInput.trigger === "commitment_crud"
+            ? "Fallback CRUD used the explicit operation list as source truth."
           : "Flexible work remains movable around fixed constraints.",
       ],
     },
@@ -423,6 +547,8 @@ function fallbackReplan(input: ReplanAgentInput, reason: string): ReplanAgentRes
             ? "Manual conflict replanning fallback"
             : input.trigger === "add_task"
               ? "Add-task replanning fallback"
+              : input.trigger === "commitment_crud"
+                ? "Commitment CRUD replanning fallback"
               : "Clarification replanning fallback",
         status: "fallback",
         detail: reason,
@@ -489,6 +615,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
         currentResolvedTimelineEvents: input.resolvedTimelineEvents,
         currentConflict: input.conflict,
         clarificationAnswers: input.clarificationAnswers,
+        operations: input.operations,
         manualConflictInstruction: input.manualConflictInstruction,
         sourceContext: input.sourceContext,
         outputContract: {
@@ -508,7 +635,9 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "For trigger=add_task, read sourceContext.addedSource first, classify the added commitment, and schedule it without inventing details not present in that text.",
           "For trigger=clarification, review the clarification answers first, then reschedule the affected commitment or goal in the plan.",
           "For trigger=manual_conflict, only run if manualConflictInstruction is non-empty. Treat it as a high-priority scheduling constraint.",
+          "For trigger=commitment_crud, apply operations in order. create inserts the after object, update replaces the matching id with after, and delete removes the matching id plus dependent plan tasks.",
           "For trigger=add_task, preserve existing commitments and fixed events unless the added task creates a real scheduling constraint.",
+          "For CRUD updates, keep unaffected commitments and plan tasks unchanged except for necessary timing repairs.",
           "Do not keep stale conflict text after a manual instruction resolves or changes the conflict.",
           "Do not replace the user's plan with Physics/CCA/demo data unless those exact items are in currentCommitments.",
           "Move flexible work before moving fixed events unless the manual instruction explicitly says a fixed event changed.",
@@ -591,6 +720,8 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
               ? "Agent replanned manual conflict"
               : input.trigger === "add_task"
                 ? "Agent replanned added task"
+                : input.trigger === "commitment_crud"
+                  ? "Agent replanned commitment CRUD"
                 : "Agent replanned after clarification",
           status: "success",
           detail: `${primaryModel} returned updated commitments, timeline, conflict copy, and plan tasks.`,
@@ -646,10 +777,12 @@ export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAg
               provider: "Vercel AI Gateway",
               action:
                 input.trigger === "manual_conflict"
-                  ? "Agent replanned manual conflict"
-                  : input.trigger === "add_task"
-                    ? "Agent replanned added task"
-                    : "Agent replanned after clarification",
+                ? "Agent replanned manual conflict"
+                : input.trigger === "add_task"
+                  ? "Agent replanned added task"
+                  : input.trigger === "commitment_crud"
+                    ? "Agent replanned commitment CRUD"
+                  : "Agent replanned after clarification",
               status: "success",
               detail: `${fallbackModel} returned updated schedule data after ${primaryModel} failed: ${
                 primaryError instanceof Error ? primaryError.message : "Unknown primary model error"

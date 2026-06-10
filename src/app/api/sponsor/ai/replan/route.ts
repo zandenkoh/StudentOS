@@ -83,6 +83,30 @@ function initialEvents(input: ParsedReplanInput): AgentActivityEvent[] {
     ];
   }
 
+  if (input.trigger === "commitment_crud") {
+    return [
+      agentEvent({
+        id: "crud-reading-operation",
+        kind: "observed",
+        title: "Reading item operation",
+        body: "StudentOS is applying the requested create, update, or delete action to the current plan state.",
+      }),
+      agentEvent({
+        id: "crud-updating-dependent-plan",
+        kind: "decision",
+        title: "Updating dependent tasks",
+        body: "The agent is keeping unaffected items stable while rebuilding tasks tied to the edited item.",
+      }),
+      agentEvent({
+        id: "crud-calling-gateway",
+        kind: "tool",
+        title: "Calling Gateway replanning agent",
+        body: "The explicit CRUD operation is being sent through the Vercel AI Gateway replanning path when configured.",
+        provider: "Vercel AI Gateway",
+      }),
+    ];
+  }
+
   return [
     agentEvent({
       id: "clarification-received",
@@ -133,6 +157,18 @@ function completionEvents(input: ParsedReplanInput, status: "success" | "fallbac
         kind: "result",
         title: "Updating plan",
         body: "StudentOS is applying the new commitment and any schedule shifts returned by the agent.",
+        status,
+      }),
+    ];
+  }
+
+  if (input.trigger === "commitment_crud") {
+    return [
+      agentEvent({
+        id: "crud-plan-updated",
+        kind: "result",
+        title: "Item operation applied",
+        body: "StudentOS applied the CRUD action and updated affected visible plan items.",
         status,
       }),
     ];
@@ -193,6 +229,8 @@ function streamReplan(input: ParsedReplanInput) {
           ? ["Still validating fixed-time constraints", "Waiting for Gateway replanning result", "Applying manual instruction"]
           : input.trigger === "add_task"
             ? ["Still classifying the added source", "Waiting for Gateway replanning result", "Scheduling added task"]
+            : input.trigger === "commitment_crud"
+              ? ["Still applying item operation", "Waiting for Gateway replanning result", "Repairing affected schedule"]
             : ["Still applying clarified evidence", "Waiting for Gateway replanning result", "Updating clarified plan"];
       const stopHeartbeat = () => {
         if (!heartbeat) return;

@@ -11,7 +11,7 @@ import {
   type AgentActivityRun,
 } from "@/lib/agent-activity";
 
-export type ReplanTrigger = "clarification" | "manual_conflict" | "add_task";
+export type ReplanTrigger = "clarification" | "manual_conflict" | "add_task" | "commitment_crud";
 
 const runMeta: Record<ReplanTrigger, { agentName: string; title: string; body: string }> = {
   add_task: {
@@ -28,6 +28,11 @@ const runMeta: Record<ReplanTrigger, { agentName: string; title: string; body: s
     agentName: "Clarification replanning agent",
     title: "Clarification agent started",
     body: "StudentOS is applying the clarified answer before rebuilding the affected plan items.",
+  },
+  commitment_crud: {
+    agentName: "Commitment CRUD replanning agent",
+    title: "Commitment edit received",
+    body: "StudentOS is applying the create, update, or delete action before rebuilding affected plan items.",
   },
 };
 
