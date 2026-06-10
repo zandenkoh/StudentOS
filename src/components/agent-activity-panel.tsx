@@ -320,10 +320,14 @@ function RunChanges({ run }: { run: AgentActivityRun }) {
 
 function RunCard({
   run,
+  isCollapsed,
+  onToggleCollapsed,
   fullHistory,
   onToggleFullHistory,
 }: {
   run: AgentActivityRun;
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
   fullHistory: boolean;
   onToggleFullHistory: () => void;
 }) {
@@ -337,47 +341,61 @@ function RunCard({
 
   return (
     <article className="border-b border-neutral-100 p-3 last:border-b-0">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="break-words text-[13px] font-semibold leading-4 text-ink">{run.agentName}</p>
-          <p className="mt-1 break-words text-[11px] font-medium leading-4 text-neutral-500">{run.currentStep}</p>
+      <button
+        type="button"
+        onClick={onToggleCollapsed}
+        aria-expanded={!isCollapsed}
+        className="flex w-full items-start justify-between gap-2 rounded-[7px] text-left outline-none hover:bg-neutral-50 focus-visible:ring-2 focus-visible:ring-neutral-300"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-start gap-2">
+            <ChevronDown className={cn("mt-0.5 size-4 shrink-0 transition-transform", isCollapsed && "-rotate-90")} />
+            <div className="min-w-0">
+              <p className="break-words text-[13px] font-semibold leading-4 text-ink">{run.agentName}</p>
+              <p className="mt-1 break-words text-[11px] font-medium leading-4 text-neutral-500">{run.currentStep}</p>
+            </div>
+          </div>
         </div>
         <StatusPill status={run.status} />
-      </div>
+      </button>
 
-      <TraceChips run={run} />
+      {!isCollapsed && (
+        <>
+          <TraceChips run={run} />
 
-      <ul className="mt-2 rounded-[8px] border border-neutral-100 bg-white px-2">
-        {hasEvents ? (
-          latestEvents.map((event) => <EventRow key={event.id} event={event} />)
-        ) : (
-          <EventRow
-            event={{
-              id: `${run.runId}-queued`,
-              at: run.startedAt,
-              kind: "observed",
-              title: "Queued",
-              body: "StudentOS created the run and is waiting for the next step.",
-              provider: "StudentOS",
-              status: run.status,
-            }}
-          />
-        )}
-      </ul>
+          <ul className="mt-2 rounded-[8px] border border-neutral-100 bg-white px-2">
+            {hasEvents ? (
+              latestEvents.map((event) => <EventRow key={event.id} event={event} />)
+            ) : (
+              <EventRow
+                event={{
+                  id: `${run.runId}-queued`,
+                  at: run.startedAt,
+                  kind: "observed",
+                  title: "Queued",
+                  body: "StudentOS created the run and is waiting for the next step.",
+                  provider: "StudentOS",
+                  status: run.status,
+                }}
+              />
+            )}
+          </ul>
 
-      {summarizedEvents.length > DEFAULT_EVENT_LIMIT ? (
-        <button
-          type="button"
-          onClick={onToggleFullHistory}
-          aria-expanded={fullHistory}
-          className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-[7px] px-1 text-[11px] font-semibold text-neutral-500 outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-neutral-300"
-        >
-          {fullHistory ? "Show latest events" : `Show full history (${hiddenCount} more)`}
-          <ChevronDown className={cn("size-3.5 transition-transform", fullHistory && "rotate-180")} />
-        </button>
-      ) : null}
+          {summarizedEvents.length > DEFAULT_EVENT_LIMIT ? (
+            <button
+              type="button"
+              onClick={onToggleFullHistory}
+              aria-expanded={fullHistory}
+              className="mt-2 inline-flex min-h-8 items-center gap-1 rounded-[7px] px-1 text-[11px] font-semibold text-neutral-500 outline-none hover:text-ink focus-visible:ring-2 focus-visible:ring-neutral-300"
+            >
+              {fullHistory ? "Show latest events" : `Show full history (${hiddenCount} more)`}
+              <ChevronDown className={cn("size-3.5 transition-transform", fullHistory && "rotate-180")} />
+            </button>
+          ) : null}
 
-      <RunChanges run={run} />
+          <RunChanges run={run} />
+        </>
+      )}
     </article>
   );
 }
@@ -394,6 +412,8 @@ function PanelSurface({
   orderedRuns,
   headline,
   activeCount,
+  collapsedRunIds,
+  onToggleRunCollapsed,
   expandedRunIds,
   onToggleRunHistory,
   onCollapse,
@@ -402,6 +422,8 @@ function PanelSurface({
   orderedRuns: AgentActivityRun[];
   headline: string;
   activeCount: number;
+  collapsedRunIds: ReadonlySet<string>;
+  onToggleRunCollapsed: (runId: string) => void;
   expandedRunIds: ReadonlySet<string>;
   onToggleRunHistory: (runId: string) => void;
   onCollapse: () => void;
@@ -442,6 +464,8 @@ function PanelSurface({
             <RunCard
               key={run.runId}
               run={run}
+              isCollapsed={collapsedRunIds.has(run.runId)}
+              onToggleCollapsed={() => onToggleRunCollapsed(run.runId)}
               fullHistory={expandedRunIds.has(run.runId)}
               onToggleFullHistory={() => onToggleRunHistory(run.runId)}
             />
@@ -465,12 +489,31 @@ export function AgentActivityPanel({
   const [hasSavedDesktopPreference, setHasSavedDesktopPreference] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileTouched, setMobileTouched] = useState(false);
+  const [collapsedRunIds, setCollapsedRunIds] = useState<ReadonlySet<string>>(() => {
+    // Initialize all runs as collapsed by default
+    return new Set<string>();
+  });
   const [expandedRunIds, setExpandedRunIds] = useState<ReadonlySet<string>>(() => new Set());
 
   const orderedRuns = useMemo(
     () => runs.slice().sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt)),
     [runs],
   );
+
+  // Initialize new runs as collapsed by default
+  useEffect(() => {
+    setCollapsedRunIds((current) => {
+      const orderedRunIds = new Set(orderedRuns.map((run) => run.runId));
+      const next = new Set(orderedRunIds);
+      // Keep existing collapsed state for runs that are still there
+      for (const id of current) {
+        if (orderedRunIds.has(id)) {
+          next.add(id);
+        }
+      }
+      return next;
+    });
+  }, [orderedRuns]);
   const activeCount = orderedRuns.filter(isActiveRun).length;
   const latestRun = orderedRuns[0];
   const latestStatus = latestRun?.status ?? "success";
@@ -511,6 +554,15 @@ export function AgentActivityPanel({
     } catch {
       // Local preference is optional.
     }
+  }, []);
+
+  const toggleRunCollapsed = useCallback((runId: string) => {
+    setCollapsedRunIds((current) => {
+      const next = new Set(current);
+      if (next.has(runId)) next.delete(runId);
+      else next.add(runId);
+      return next;
+    });
   }, []);
 
   const toggleRunHistory = useCallback((runId: string) => {
@@ -563,6 +615,8 @@ export function AgentActivityPanel({
             orderedRuns={orderedRuns}
             headline={headline}
             activeCount={activeCount}
+            collapsedRunIds={collapsedRunIds}
+            onToggleRunCollapsed={toggleRunCollapsed}
             expandedRunIds={expandedRunIds}
             onToggleRunHistory={toggleRunHistory}
             onCollapse={() => setDesktopPreference(true)}
@@ -587,6 +641,8 @@ export function AgentActivityPanel({
               orderedRuns={orderedRuns}
               headline={headline}
               activeCount={activeCount}
+              collapsedRunIds={collapsedRunIds}
+              onToggleRunCollapsed={toggleRunCollapsed}
               expandedRunIds={expandedRunIds}
               onToggleRunHistory={toggleRunHistory}
               onCollapse={openMobile}
