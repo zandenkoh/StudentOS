@@ -6,7 +6,12 @@ import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/
 import { normalizeDurationLabel } from "@/lib/duration-label";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
-import { isFixedTimeConflictCandidate, validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
+import {
+  isFixedTimeConflictCandidate,
+  parseTimeInterval,
+  validateTimelineConflicts,
+  type ConfirmedConflictGroup,
+} from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTask, splitLongStudyTasks } from "@/lib/session-splitting";
 import { ensureTaskTimeRanges, type BusyTimeBlock } from "@/lib/time-scheduling";
 import type {
@@ -1816,13 +1821,49 @@ function sourceTruthPackets(sources: CapturedSourceForAI[]) {
 
 function normalizeConflictAnalysis(
   conflict: GeneratedCore["conflict"],
+  events: ReturnType<typeof normalizeTimelineEvent>[],
   groups: ConfirmedConflictGroup[],
 ) {
   const firstConfirmedGroup = groups[0];
 
   if (firstConfirmedGroup) {
+    const confirmedEvents = events.filter((event) => firstConfirmedGroup.eventIds.includes(event.id));
+    let confirmedPair = confirmedEvents.slice(0, 2);
+    let largestOverlap = -1;
+
+    for (let firstIndex = 0; firstIndex < confirmedEvents.length; firstIndex += 1) {
+      for (let secondIndex = firstIndex + 1; secondIndex < confirmedEvents.length; secondIndex += 1) {
+        const firstInterval = parseTimeInterval(confirmedEvents[firstIndex].duration ?? confirmedEvents[firstIndex].time);
+        const secondInterval = parseTimeInterval(confirmedEvents[secondIndex].duration ?? confirmedEvents[secondIndex].time);
+        if (!firstInterval || !secondInterval) continue;
+
+        const overlap = Math.max(
+          0,
+          Math.min(firstInterval.endMinutes, secondInterval.endMinutes) -
+            Math.max(firstInterval.startMinutes, secondInterval.startMinutes),
+        );
+        if (overlap > largestOverlap) {
+          largestOverlap = overlap;
+          confirmedPair = [confirmedEvents[firstIndex], confirmedEvents[secondIndex]];
+        }
+      }
+    }
+
+    const [fixedEvent, conflictingEvent] = confirmedPair;
+    const conflictTitle =
+      fixedEvent && conflictingEvent
+        ? `${fixedEvent.title} overlaps with ${conflictingEvent.title}`
+        : conflict.title;
+
     return {
       ...conflict,
+      title: conflictTitle,
+      unresolvedSummary: `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`,
+      fixedEventTitle: fixedEvent?.title ?? conflict.fixedEventTitle,
+      fixedEventTime: fixedEvent?.duration ?? fixedEvent?.time ?? conflict.fixedEventTime,
+      conflictingEventTitle: conflictingEvent?.title ?? conflict.conflictingEventTitle,
+      conflictingEventTime:
+        conflictingEvent?.duration ?? conflictingEvent?.time ?? conflict.conflictingEventTime,
       overlapLabel: firstConfirmedGroup.overlapLabel,
     };
   }
@@ -1882,7 +1923,7 @@ function buildFootprintFromCore({
     clarificationQuestions: core.clarificationQuestions.map(normalizeClarificationQuestion),
     timelineEvents: timelineValidation.events,
     resolvedTimelineEvents: resolvedTimelineValidation.events,
-    conflict: normalizeConflictAnalysis(core.conflict, timelineValidation.groups),
+    conflict: normalizeConflictAnalysis(core.conflict, timelineValidation.events, timelineValidation.groups),
     planTasks: normalizedTasks,
     roadmapSteps: core.roadmapSteps.map(normalizeRoadmapStep),
     rationale: core.rationale,

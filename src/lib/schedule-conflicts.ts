@@ -69,14 +69,35 @@ export function intervalsOverlap(first: TimeInterval, second: TimeInterval) {
 }
 
 function isMovableLabel(value: string) {
-  return ["flexible", "moved", "weekly goal", "high priority", "priority", "handled", "review", "unscheduled"].some((label) =>
+  return ["flexible", "movable", "moved", "weekly goal", "high priority", "priority", "focus", "buffer", "research", "task", "handled", "review", "unscheduled"].some((label) =>
     value.includes(label),
   );
 }
 
+function isFixedLabel(value: string) {
+  return [
+    "fixed",
+    "locked",
+    "calendar",
+    "class",
+    "lesson",
+    "tuition",
+    "appointment",
+    "meeting",
+    "briefing",
+    "event",
+    "needs decision",
+    "conflict",
+    "rescheduled",
+  ].some((label) => value.includes(label));
+}
+
 export function isFixedTimeConflictCandidate(event: SchedulableTimelineEvent) {
   const chip = event.chip?.toLowerCase() ?? "";
-  return !isMovableLabel(chip) && Boolean(parseTimeInterval(event.duration ?? event.time));
+  if (isMovableLabel(chip)) return false;
+
+  const explicitlyMarkedConflict = Boolean(event.conflictGroupId) || event.tone === "conflict";
+  return (explicitlyMarkedConflict || isFixedLabel(chip)) && Boolean(parseTimeInterval(event.duration ?? event.time));
 }
 
 export function formatOverlapLabel(minutes: number) {

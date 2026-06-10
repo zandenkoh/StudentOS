@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowUp,
@@ -714,7 +714,11 @@ function insertMissingPreservedPlanTasks(
 
 export default function CommitmentsPage() {
   const router = useRouter();
-  const [step, setStep] = useState<CommitmentsStep>("commitments");
+  const pathname = usePathname();
+  const conflictRouteRequested = pathname === "/conflicts";
+  const [step, setStep] = useState<CommitmentsStep>(
+    conflictRouteRequested ? "conflict" : "commitments",
+  );
   const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [clarifying, setClarifying] = useState<ClarifyingState>(null);
   const [editing, setEditing] = useState<Commitment | null>(null);
@@ -1027,6 +1031,17 @@ export default function CommitmentsPage() {
           resolutionMode: "recommended",
         });
       }
+
+      if (conflictRouteRequested) {
+        setStep("conflict");
+        setConflictResolved(false);
+        setResolutionMode(null);
+        persistFlowState({
+          step: "conflict",
+          conflictResolved: false,
+          resolutionMode: null,
+        });
+      }
     } catch {
       setCommitments([]);
       setPlanTasks([]);
@@ -1036,7 +1051,7 @@ export default function CommitmentsPage() {
     } finally {
       setPlanHydrated(true);
     }
-  }, []);
+  }, [conflictRouteRequested]);
 
   const addSponsorTrace = useCallback((item: SponsorTraceItem) => {
     const existing = window.localStorage.getItem("studentos_sponsor_trace");
@@ -1745,7 +1760,18 @@ export default function CommitmentsPage() {
 
   function applyAndContinue() {
     if (!conflictResolved && resolutionMode !== "manual") {
-      applySuggestedConflict(true);
+      applySuggestedConflict(unresolvedCount === 0);
+      if (unresolvedCount > 0) {
+        setStep("commitments");
+        persistFlowState({ step: "commitments" });
+        showToast(`Conflict handled; clarify ${unresolvedCount} item${unresolvedCount === 1 ? "" : "s"}`);
+      }
+      return;
+    }
+    if (unresolvedCount > 0) {
+      setStep("commitments");
+      persistFlowState({ step: "commitments" });
+      showToast(`Clarify ${unresolvedCount} item${unresolvedCount === 1 ? "" : "s"} before planning`);
       return;
     }
     setStep("plan");
@@ -2365,7 +2391,9 @@ export default function CommitmentsPage() {
                   onClick={applyAndContinue}
                   className="flex h-[60px] w-full items-center justify-center gap-2 rounded-full bg-ink text-[15px] font-bold text-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all hover:scale-[1.01] active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-neutral-300 disabled:text-white"
                 >
-                  <span>Apply fix and continue</span>
+                  <span>
+                    {unresolvedCount > 0 ? "Apply fix and review commitments" : "Apply fix and continue"}
+                  </span>
                   <ChevronRight className="size-4.5" />
                 </button>
               </div>
