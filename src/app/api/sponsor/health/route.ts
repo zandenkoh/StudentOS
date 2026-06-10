@@ -152,7 +152,6 @@ async function exaCheck(live: boolean): Promise<SponsorHealthCheck> {
     const result = await exaSearch("StudentOS sponsor verification health check", {
       numResults: 1,
       maxCharacters: 120,
-      timeoutMs: 5000,
     });
 
     return checkFromTrace("exa", "Exa live context", false, {

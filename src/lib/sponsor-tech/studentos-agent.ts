@@ -16,8 +16,6 @@ import type {
   StudentOSAgentFootprint,
 } from "@/lib/studentos-ai-types";
 
-const FAST_CONTEXT_RESEARCH_TIMEOUT_MS = 4500;
-const GATEWAY_FOOTPRINT_TIMEOUT_MS = 12000;
 const GATEWAY_REASONING_BUDGET_TOKENS = 2000;
 const GATEWAY_REASONING_LOG_MIN_INTERVAL_MS = 250;
 
@@ -299,24 +297,6 @@ type AnalyseStudentChaosOptions = {
   onEvent?: (event: AnalyseStudentChaosStreamEvent) => void | Promise<void>;
 };
 type GatewayReasoningDeltaHandler = (text: string) => void | Promise<void>;
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
 
 function parseJsonObject(text: string) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -1432,14 +1412,10 @@ async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<Stud
 
   const queryPlan = await generateResearchQueryPlan(researchEvidencePacket(sources) || researchContext);
 
-  return withTimeout(
-    deepResearchGoal(queryPlan.subject, {
-      searchQueries: queryPlan.queries,
-      model: queryPlan.model,
-    }),
-    FAST_CONTEXT_RESEARCH_TIMEOUT_MS,
-    "Exa fast context research",
-  );
+  return deepResearchGoal(queryPlan.subject, {
+    searchQueries: queryPlan.queries,
+    model: queryPlan.model,
+  });
 }
 
 function optionalText(value: string) {
@@ -1599,40 +1575,36 @@ async function generateFootprintCore(
 ) {
   const sources = input.sources;
 
-  const text = await withTimeout(
-    (async () => {
-      const result = streamText({
-        model: gatewayLanguageModel(model),
-        timeout: GATEWAY_FOOTPRINT_TIMEOUT_MS,
-        maxRetries: 0,
-        providerOptions: gatewayReasoningProviderOptions(model),
-        system:
-          "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
-        prompt: JSON.stringify(
-          {
-            currentDate: input.currentDate,
-            sourceContext: input.sourceContext,
-            sources: sources.map((source) => ({
-              ...source,
-              interpretedSummary: source.sourceSummary,
-              interpretedTasks: source.extractedTasks,
-              sourceNeedsClarification: source.needsClarification,
-              sourceClarificationPrompt: source.clarificationPrompt,
-              evidenceText: sourceText(source).slice(0, 1400),
-            })),
-            exaGoalResearch: goalResearch,
-            outputContract: {
-              commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
-              clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
-              timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
-              resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
-              conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
-              planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
-              roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
-              rationale: "summary plus 3-6 bullets.",
-              emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
-            },
-            requirements: [
+  const result = streamText({
+    model: gatewayLanguageModel(model),
+    providerOptions: gatewayReasoningProviderOptions(model),
+    system:
+      "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
+    prompt: JSON.stringify(
+      {
+        currentDate: input.currentDate,
+        sourceContext: input.sourceContext,
+        sources: sources.map((source) => ({
+          ...source,
+          interpretedSummary: source.sourceSummary,
+          interpretedTasks: source.extractedTasks,
+          sourceNeedsClarification: source.needsClarification,
+          sourceClarificationPrompt: source.clarificationPrompt,
+          evidenceText: sourceText(source).slice(0, 1400),
+        })),
+        exaGoalResearch: goalResearch,
+        outputContract: {
+          commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
+          clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
+          timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
+          resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
+          conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
+          planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
+          roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
+          rationale: "summary plus 3-6 bullets.",
+          emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
+        },
+        requirements: [
               "Extract commitments from evidence, not generic todo items.",
           "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
           "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",
@@ -1666,30 +1638,24 @@ async function generateFootprintCore(
           "Every roadmap step task must repeat the full task fields even if the same task appears in planTasks.",
           "If there is no confirmed conflict, still return at least three recommendedActions and three manualActions that ask the student to confirm exact times, avoid locking tentative events, and keep flexible work movable.",
           "Keep titles short enough for a mobile UI.",
-          ],
-        },
-        null,
-        2,
-      ),
-      });
-      let streamedText = "";
+        ],
+      },
+      null,
+      2,
+    ),
+  });
+  let text = "";
 
-      for await (const part of result.fullStream) {
-        if (part.type === "reasoning-delta") {
-          await onReasoningDelta?.(streamPartText(part, ["delta", "text"]));
-          continue;
-        }
+  for await (const part of result.fullStream) {
+    if (part.type === "reasoning-delta") {
+      await onReasoningDelta?.(streamPartText(part, ["delta", "text"]));
+      continue;
+    }
 
-        if (part.type === "text-delta") {
-          streamedText += streamPartText(part, ["textDelta", "text"]);
-        }
-      }
-
-      return streamedText;
-    })(),
-    GATEWAY_FOOTPRINT_TIMEOUT_MS,
-    `Gateway footprint model ${model}`,
-  );
+    if (part.type === "text-delta") {
+      text += streamPartText(part, ["textDelta", "text"]);
+    }
+  }
 
   const core = GeneratedCoreSchema.parse(coerceGeneratedCore(parseJsonObject(text)));
   assertGeneratedCoreGrounded(core, input);

@@ -7,28 +7,6 @@ import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTasks } from "@/lib/session-splitting";
 import type { AISponsorTraceItem } from "@/lib/studentos-ai-types";
 
-const GATEWAY_PREFLIGHT_TIMEOUT_MS = 3500;
-const GATEWAY_CLARIFICATION_TIMEOUT_MS = 5000;
-const GATEWAY_PLAN_TIMEOUT_MS = 9000;
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms.`));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
-
 const PlanItemSchema = z.object({
   title: z.string(),
   timeLabel: z.string(),
@@ -103,18 +81,12 @@ export async function gatewayHealthTrace(): Promise<AISponsorTraceItem> {
   }
 
   try {
-    const result = await withTimeout(
-      generateText({
-        model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
-        prompt: "Reply with exactly: StudentOS Gateway OK",
-        temperature: 0,
-        maxOutputTokens: 16,
-        timeout: GATEWAY_PREFLIGHT_TIMEOUT_MS,
-        maxRetries: 0,
-      }),
-      GATEWAY_PREFLIGHT_TIMEOUT_MS,
-      "Gateway preflight",
-    );
+    const result = await generateText({
+      model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
+      prompt: "Reply with exactly: StudentOS Gateway OK",
+      temperature: 0,
+      maxOutputTokens: 16,
+    });
     const text = result.text.trim();
 
     return {
@@ -298,53 +270,47 @@ function mergeSourceContextWithReview(sourceContext: unknown, review: Clarificat
 }
 
 async function reviewClarificationsWithModel(model: string, input: PlanDayInput) {
-  const { output } = await withTimeout(
-    generateText({
-      model: gatewayLanguageModel(model),
-      timeout: GATEWAY_CLARIFICATION_TIMEOUT_MS,
-      maxRetries: 0,
-      output: Output.object({ schema: ClarificationReviewSchema }),
-      system:
-        "You are the StudentOS clarification-review agent. Review user clarification answers before the planner schedules anything. Resolve what is now known, keep unresolved uncertainty explicit, and never invent commitments unrelated to the supplied input.",
-      prompt: JSON.stringify(
-        {
-          task:
-            "Review clarification answers and return planning directives that the scheduler must follow.",
-          input: {
-            commitments: input.commitments,
-            goals: input.goals,
-            fixedEvents: input.fixedEvents,
-            clarificationAnswers: input.clarificationAnswers,
-            sourceContext: input.sourceContext,
-          },
-          rules: [
+  const { output } = await generateText({
+    model: gatewayLanguageModel(model),
+    output: Output.object({ schema: ClarificationReviewSchema }),
+    system:
+      "You are the StudentOS clarification-review agent. Review user clarification answers before the planner schedules anything. Resolve what is now known, keep unresolved uncertainty explicit, and never invent commitments unrelated to the supplied input.",
+    prompt: JSON.stringify(
+      {
+        task:
+          "Review clarification answers and return planning directives that the scheduler must follow.",
+        input: {
+          commitments: input.commitments,
+          goals: input.goals,
+          fixedEvents: input.fixedEvents,
+          clarificationAnswers: input.clarificationAnswers,
+          sourceContext: input.sourceContext,
+        },
+        rules: [
             "Treat clarification answers as source-of-truth evidence, but check whether the answer actually resolves the question.",
             "If an answer names a deadline, duration, scope, event status, or target outcome, convert it into a schedulingDirective.",
             "If the answer is vague or contradictory, list the remaining uncertainty instead of pretending it is resolved.",
             "Do not add demo tasks or unrelated defaults.",
           ],
-          outputShape: {
-            summary: "string",
-            resolvedCommitments: [
-              {
-                commitmentId: "string",
-                revisedTitle: "string",
-                resolvedState: "confirmed|needs_clarification|unsure|resolved",
-                estimatedDuration: "string",
-                schedulingDirective: "string",
-              },
-            ],
-            planningDirectives: ["string"],
-            remainingUncertainties: ["string"],
-          },
+        outputShape: {
+          summary: "string",
+          resolvedCommitments: [
+            {
+              commitmentId: "string",
+              revisedTitle: "string",
+              resolvedState: "confirmed|needs_clarification|unsure|resolved",
+              estimatedDuration: "string",
+              schedulingDirective: "string",
+            },
+          ],
+          planningDirectives: ["string"],
+          remainingUncertainties: ["string"],
         },
-        null,
-        2,
-      ),
-    }),
-    GATEWAY_CLARIFICATION_TIMEOUT_MS,
-    `Gateway clarification review ${model}`,
-  );
+      },
+      null,
+      2,
+    ),
+  });
 
   return output;
 }
@@ -378,20 +344,17 @@ async function reviewClarifications(input: PlanDayInput) {
 }
 
 async function generatePlanWithModel(model: string, input: PlanDayInput) {
-  const { output } = await withTimeout(
-    generateText({
-      model: gatewayLanguageModel(model),
-      timeout: GATEWAY_PLAN_TIMEOUT_MS,
-      maxRetries: 0,
-      output: Output.object({ schema: GatewayPlanSchema }),
-      system:
-        "You are StudentOS, an AI chief-of-staff for ambitious students. Produce a realistic daily plan from messy commitments, broad goals, and fixed constraints. Keep the plan student-specific, deadline-aware, and concise. Do not invent unrelated tasks.",
-      prompt: JSON.stringify(
-        {
-          task:
-            "Return planning rationale and daily plan JSON. Prioritise urgent deadlines, preserve fixed events, explain conflicts, and turn broad goals into scheduled next actions.",
-          input,
-          schemaNotes: [
+  const { output } = await generateText({
+    model: gatewayLanguageModel(model),
+    output: Output.object({ schema: GatewayPlanSchema }),
+    system:
+      "You are StudentOS, an AI chief-of-staff for ambitious students. Produce a realistic daily plan from messy commitments, broad goals, and fixed constraints. Keep the plan student-specific, deadline-aware, and concise. Do not invent unrelated tasks.",
+    prompt: JSON.stringify(
+      {
+        task:
+          "Return planning rationale and daily plan JSON. Prioritise urgent deadlines, preserve fixed events, explain conflicts, and turn broad goals into scheduled next actions.",
+        input,
+        schemaNotes: [
             "Return every field in the schema.",
             "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
             "When sourceContext.clarificationReview is present, follow its planningDirectives and remainingUncertainties before making schedule decisions.",
@@ -402,15 +365,12 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
             `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
             "If the user gave no preferred time, choose a reasonable after-school/evening clock range instead of returning an empty timeLabel.",
             "Use 0 for an unknown estimatedMinutes value.",
-          ],
-        },
-        null,
-        2,
-      ),
-    }),
-    GATEWAY_PLAN_TIMEOUT_MS,
-    `Gateway day planner ${model}`,
-  );
+        ],
+      },
+      null,
+      2,
+    ),
+  });
 
   return output;
 }
