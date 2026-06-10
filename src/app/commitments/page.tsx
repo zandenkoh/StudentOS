@@ -983,6 +983,40 @@ export default function CommitmentsPage() {
       window.localStorage.setItem("studentos_roadmap_added", "true");
       setRoadmapAdded(true);
 
+      let localCommitments: Commitment[] = [];
+      if (rawFootprint) {
+        try {
+          const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
+          if (parsedFootprint && Array.isArray(parsedFootprint.commitments)) {
+            localCommitments = parsedFootprint.commitments;
+          }
+        } catch {}
+      }
+
+      if (savedCommitments) {
+        try {
+          const parsedCommitments = JSON.parse(savedCommitments) as Commitment[];
+          if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0 && (!hydratedFootprintSignature || window.localStorage.getItem(SAVED_COMMITMENTS_FOOTPRINT_KEY) === hydratedFootprintSignature)) {
+            localCommitments = parsedCommitments;
+          }
+        } catch {}
+      }
+
+      const localUnresolvedCount = localCommitments.filter(
+        (item) => item.state === "needs_clarification" || item.state === "unsure"
+      ).length;
+
+      let localTimeline: TimelineEvent[] = timelineEvents;
+      if (rawFootprint) {
+        try {
+          const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
+          if (parsedFootprint && Array.isArray(parsedFootprint.timelineEvents)) {
+            localTimeline = parsedFootprint.timelineEvents;
+          }
+        } catch {}
+      }
+      const localHasConflict = validateTimelineConflicts(localTimeline).groups.length > 0;
+
       const savedFlowState = window.localStorage.getItem(SAVED_FLOW_STATE_KEY);
       if (savedFlowState) {
         const parsedFlowState = JSON.parse(savedFlowState) as {
@@ -999,7 +1033,11 @@ export default function CommitmentsPage() {
           parsedFlowState.step === "conflict" ||
           parsedFlowState.step === "plan"
         ) {
-          setStep(parsedFlowState.step);
+          if (parsedFlowState.step === "conflict" && (localUnresolvedCount > 0 || !localHasConflict)) {
+            setStep("commitments");
+          } else {
+            setStep(parsedFlowState.step);
+          }
         }
         if (typeof parsedFlowState.conflictResolved === "boolean") {
           setConflictResolved(parsedFlowState.conflictResolved);
@@ -1033,14 +1071,22 @@ export default function CommitmentsPage() {
       }
 
       if (conflictRouteRequested) {
-        setStep("conflict");
-        setConflictResolved(false);
-        setResolutionMode(null);
-        persistFlowState({
-          step: "conflict",
-          conflictResolved: false,
-          resolutionMode: null,
-        });
+        if (localUnresolvedCount > 0 || !localHasConflict) {
+          router.replace("/commitments");
+          setStep("commitments");
+          persistFlowState({
+            step: "commitments",
+          });
+        } else {
+          setStep("conflict");
+          setConflictResolved(false);
+          setResolutionMode(null);
+          persistFlowState({
+            step: "conflict",
+            conflictResolved: false,
+            resolutionMode: null,
+          });
+        }
       }
     } catch {
       setCommitments([]);
@@ -1051,7 +1097,7 @@ export default function CommitmentsPage() {
     } finally {
       setPlanHydrated(true);
     }
-  }, [conflictRouteRequested]);
+  }, [conflictRouteRequested, router]);
 
   const addSponsorTrace = useCallback((item: SponsorTraceItem) => {
     const existing = window.localStorage.getItem("studentos_sponsor_trace");
@@ -1280,14 +1326,7 @@ export default function CommitmentsPage() {
         if (nextUnresolvedCount === 0) {
           const nextHasConflict = validateTimelineConflicts(effectiveResult.timelineEvents).groups.length > 0;
           if (nextHasConflict) {
-            setStep("conflict");
-            setConflictResolved(false);
-            setResolutionMode(null);
-            persistFlowState({
-              step: "conflict",
-              conflictResolved: false,
-              resolutionMode: null,
-            });
+            router.push("/conflicts");
           } else {
             setStep("plan");
             persistFlowState({
@@ -2341,9 +2380,12 @@ export default function CommitmentsPage() {
                 <button
                   disabled={!planHydrated || !hasExtractedItems || unresolvedCount > 0 || replanLoading}
                   onClick={() => {
-                    const nextStep = hasConfirmedConflict ? "conflict" : "plan";
-                    setStep(nextStep);
-                    persistFlowState({ step: nextStep });
+                    if (hasConfirmedConflict) {
+                      router.push("/conflicts");
+                    } else {
+                      setStep("plan");
+                      persistFlowState({ step: "plan" });
+                    }
                   }}
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
                     planHydrated && hasExtractedItems && unresolvedCount === 0 && !replanLoading

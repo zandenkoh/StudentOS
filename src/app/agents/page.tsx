@@ -12,7 +12,6 @@ import {
 
 import { AppShell } from "@/components/app-shell";
 import { SponsorProofStrip } from "@/components/sponsor-proof-strip";
-import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { cn } from "@/lib/utils";
 import type {
   AIAgentLog,
@@ -293,7 +292,6 @@ export default function AgentsThinkingPage() {
     function storeFootprint(result: StudentOSAgentFootprint) {
       if (cancelled) return;
       const nextTrace = mergeSponsorTraces(result.sponsorTrace, storedSponsorTrace());
-      const hasConfirmedConflict = validateTimelineConflicts(result.timelineEvents).groups.length > 0;
 
       setAiFootprint(result);
       setAgentLogs(result.agentLogs.map(toClientLog));
@@ -306,7 +304,7 @@ export default function AgentsThinkingPage() {
       window.localStorage.setItem(
         "studentos_flow_state",
         JSON.stringify({
-          step: hasConfirmedConflict ? "conflict" : "commitments",
+          step: "commitments",
           conflictResolved: false,
           resolutionMode: null,
         }),
@@ -668,13 +666,11 @@ export default function AgentsThinkingPage() {
   useEffect(() => {
     if (!readyToRedirect) return;
     const redirectTimer = window.setTimeout(() => {
-      const hasConfirmedConflict =
-        aiFootprint && validateTimelineConflicts(aiFootprint.timelineEvents).groups.length > 0;
-      router.push(hasConfirmedConflict ? "/conflicts" : "/commitments");
+      router.push("/commitments");
     }, 650);
 
     return () => window.clearTimeout(redirectTimer);
-  }, [aiFootprint, readyToRedirect, router]);
+  }, [readyToRedirect, router]);
 
   return (
     <AppShell
