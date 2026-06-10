@@ -1255,14 +1255,80 @@ function compactFallbackCopy(value: string, maxLength: number) {
   return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...` : text;
 }
 
-function cleanFallbackItemText(value: string) {
-  return compactFallbackCopy(
-    value
-      .replace(/^(source|source type|student note|manual input|goal command|interpreted summary|ocr text|textract text|extracted tasks?):\s*/i, "")
-      .replace(/^[\-•*]\s*/, "")
-      .trim(),
-    96,
-  );
+function looksLikeFilename(value: string) {
+  return /^[A-Za-z0-9_\-]+\.[a-z]{2,5}$/i.test(value.trim()) ||
+    /^(IMG|DSC|Screenshot|Photo|Scan|Document|File|image|pdf)[_\-\s]?\d/i.test(value.trim());
+}
+
+function looksLikeRawOcrDump(value: string) {
+  const trimmed = value.trim();
+  // Starts with a long descriptive fragment that reads like OCR output rather than an action
+  if (trimmed.length > 60 && !/\b(do|complete|finish|submit|attend|study|review|prepare|write|read)\b/i.test(trimmed.slice(0, 40))) {
+    return true;
+  }
+  // Contains exam/worksheet boilerplate patterns
+  if (/\b(instructions to all candidates|index number|end.of.year examination|cover sheet|scores recorded)\b/i.test(trimmed)) {
+    return true;
+  }
+  // Starts with a number pattern that looks like OCR page fragments
+  if (/^\d{4,}|^from \d{4}/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+function deriveCleanTaskTitle(rawText: string, source?: { title?: string; sourceKind?: string; sourceSummary?: string }) {
+  const trimmed = rawText.trim();
+
+  // If it's a filename, generate a better title from context
+  if (looksLikeFilename(trimmed)) {
+    const kind = source?.sourceKind;
+    const nameWithoutExt = trimmed.replace(/\.[a-z]{2,5}$/i, "").replace(/[_\-]+/g, " ").trim();
+    if (kind === "task" || kind === "deadline") return `Complete ${nameWithoutExt}`;
+    if (kind === "event") return `Attend ${nameWithoutExt}`;
+    if (kind === "goal") return `Work on ${nameWithoutExt}`;
+    return `Review ${nameWithoutExt}`;
+  }
+
+  // If it's raw OCR dump, try to extract the subject/topic
+  if (looksLikeRawOcrDump(trimmed)) {
+    // Try to find a subject keyword
+    const subjectMatch = trimmed.match(/\b(biology|physics|chemistry|math(?:ematics)?|english|history|geography|chinese|malay|tamil|science|computing|literature)\b/i);
+    const taskTypeMatch = trimmed.match(/\b(exam(?:ination)?|worksheet|homework|assignment|test|quiz|paper|lab report|essay|project)\b/i);
+
+    if (subjectMatch && taskTypeMatch) {
+      return `${subjectMatch[0]} ${taskTypeMatch[0]} revision`.replace(/^[a-z]/, (c) => c.toUpperCase());
+    }
+    if (subjectMatch) {
+      return `${subjectMatch[0]} task`.replace(/^[a-z]/, (c) => c.toUpperCase());
+    }
+    if (taskTypeMatch) {
+      return `Complete ${taskTypeMatch[0]}`.replace(/^[a-z]/, (c) => c.toUpperCase());
+    }
+
+    // Last resort: take first meaningful short phrase
+    const firstSentence = trimmed.split(/[.!?\n]/).find((s) => s.trim().length > 5 && s.trim().length < 60);
+    if (firstSentence) {
+      const cleaned = firstSentence.trim().replace(/^[a-z]/, (c) => c.toUpperCase());
+      return cleaned.length > 55 ? `${cleaned.slice(0, 52).trim()}...` : cleaned;
+    }
+
+    return source?.sourceSummary
+      ? compactFallbackCopy(source.sourceSummary, 55)
+      : "Review uploaded source";
+  }
+
+  return trimmed;
+}
+
+function cleanFallbackItemText(value: string, source?: { title?: string; sourceKind?: string; sourceSummary?: string }) {
+  const stripped = value
+    .replace(/^(source|source type|student note|manual input|goal command|interpreted summary|ocr text|textract text|extracted tasks?):\s*/i, "")
+    .replace(/^[\-•*]\s*/, "")
+    .trim();
+
+  const cleaned = deriveCleanTaskTitle(stripped, source);
+  return compactFallbackCopy(cleaned, 72);
 }
 
 function streamPartText(part: unknown, fields: string[]) {
@@ -1280,13 +1346,15 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
   const seen = new Set<string>();
 
   sources.forEach((source) => {
+    const sourceContext = { title: source.title, sourceKind: source.sourceKind, sourceSummary: source.sourceSummary };
     const interpretedItems =
       source.interpretedItems
-        ?.map((item) => cleanFallbackItemText(item.title))
+        ?.map((item) => cleanFallbackItemText(item.title, sourceContext))
         .filter(Boolean) ?? [];
-    const extractedTasks = source.extractedTasks?.map(cleanFallbackItemText).filter(Boolean) ?? [];
+    const extractedTasks = source.extractedTasks?.map((t) => cleanFallbackItemText(t, sourceContext)).filter(Boolean) ?? [];
     const fallbackSummary = cleanFallbackItemText(
       source.sourceSummary || source.snippet || source.clarificationPrompt || "",
+      sourceContext,
     );
     const candidates = interpretedItems.length
       ? interpretedItems
@@ -1309,7 +1377,7 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
   return [
     {
       source: sources[0],
-      text: sources[0] ? cleanFallbackItemText(sourceText(sources[0])) : "Review captured student input",
+      text: sources[0] ? cleanFallbackItemText(sourceText(sources[0]), { title: sources[0].title, sourceKind: sources[0].sourceKind, sourceSummary: sources[0].sourceSummary }) : "Review captured student input",
       index: 0,
     },
   ];
@@ -1381,9 +1449,12 @@ function sourceDrivenFallbackFootprint(
       source?.needsClarification ||
       (!source?.interpretedItems?.length && !source?.extractedTasks?.length);
     const type = isUnclearSource ? "task" as const : fallbackCommitmentType(text);
+    const rawTitle = isUnclearSource
+      ? source?.title || "uploaded source"
+      : text;
     const title = isUnclearSource
-      ? `Clarify action for ${compactFallbackCopy(source?.title || "uploaded source", 48)}`
-      : compactFallbackCopy(text, 72);
+      ? `Clarify action for ${deriveCleanTaskTitle(rawTitle, { title: source?.title, sourceKind: source?.sourceKind, sourceSummary: source?.sourceSummary })}`
+      : deriveCleanTaskTitle(text, { title: source?.title, sourceKind: source?.sourceKind, sourceSummary: source?.sourceSummary });
 
     return {
       id: `${slugFrom(title, "commitment")}-${index + 1}`,
