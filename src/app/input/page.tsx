@@ -59,7 +59,7 @@ type InputSource = {
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
-  sponsorStatus?: "cached" | "uploaded" | "extracted" | "fallback" | "error";
+  sponsorStatus?: "cached" | "uploaded" | "extracting" | "extracted" | "fallback" | "error";
   durationSeconds?: number;
 };
 
@@ -383,6 +383,13 @@ export default function InputPage() {
     items.forEach(addSponsorTrace);
   };
 
+  const patchSource = (id: string, patch: Partial<InputSource>) => {
+    setSources((prev) =>
+      prev.map((source) => (source.id === id ? { ...source, ...patch } : source)),
+    );
+    setPreviewSource((current) => (current?.id === id ? { ...current, ...patch } : current));
+  };
+
   const formatFileSize = (size: number) => {
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -446,18 +453,11 @@ export default function InputPage() {
           status: "fallback",
           detail: upload.warning || "S3 upload skipped; demo fallback source kept.",
         });
-        setSources((prev) =>
-          prev.map((source) =>
-            source.id === pendingSource.id
-              ? {
-                  ...source,
-                  snippet: fallbackSnippetForFile(file),
-                  provider: upload.provider,
-                  sponsorStatus: "fallback",
-                }
-              : source,
-          ),
-        );
+        patchSource(pendingSource.id, {
+          snippet: fallbackSnippetForFile(file),
+          provider: upload.provider,
+          sponsorStatus: "fallback",
+        });
         return;
       }
 
@@ -480,7 +480,14 @@ export default function InputPage() {
       let clarificationPrompt: string | undefined;
       let sourceProvider = upload.provider;
 
-      if (fileType === "image" || fileType === "pdf") {
+      if (fileType === "image" || fileType === "pdf" || fileType === "text") {
+        patchSource(pendingSource.id, {
+          source: "AWS",
+          snippet: "Extracting source evidence with AWS...",
+          s3Key: upload.key,
+          sponsorStatus: "extracting",
+        });
+
         const extractResponse = await fetch("/api/sponsor/aws/extract-source", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -493,7 +500,7 @@ export default function InputPage() {
         });
         const extraction = (await extractResponse.json()) as AwsExtractResponse;
 
-        if (extraction.provider === "aws-textract" && (extraction.text || extraction.summary)) {
+        if (extraction.text || extraction.summary) {
           ocrText = extraction.text || "";
           sourceSummary = extraction.summary;
           extractedTasks = extraction.extractedTasks;
@@ -523,46 +530,38 @@ export default function InputPage() {
         }
       }
 
-      setSources((prev) =>
-        prev.map((source) =>
-          source.id === pendingSource.id
-            ? {
-                ...source,
-                source: sponsorStatus === "extracted" ? "AWS Textract" : "AWS S3",
-                snippet,
-                s3Key: upload.key,
-                provider: sourceProvider,
-                ocrText,
-                sourceSummary,
-                extractedTasks,
-                extractedEvidence,
-                sourceConfidence,
-                languageNotes,
-                needsClarification,
-                clarificationPrompt,
-                sponsorStatus,
-              }
-            : source,
-        ),
-      );
+      patchSource(pendingSource.id, {
+        source: sponsorStatus === "extracted"
+          ? fileType === "text"
+            ? "AWS S3"
+            : "AWS Textract"
+          : "AWS S3",
+        snippet,
+        s3Key: upload.key,
+        provider: sourceProvider,
+        ocrText,
+        sourceSummary,
+        extractedTasks,
+        extractedEvidence,
+        sourceConfidence,
+        languageNotes,
+        needsClarification,
+        clarificationPrompt,
+        sponsorStatus,
+      });
     } catch (error) {
+      const uploadError = error instanceof Error ? error.message : "Upload failed.";
       addSponsorTrace({
         provider: "AWS",
         action: "Processed uploaded source",
         status: "error",
-        detail: error instanceof Error ? error.message : "Upload failed.",
+        detail: uploadError,
       });
-      setSources((prev) =>
-        prev.map((source) =>
-          source.id === pendingSource.id
-            ? {
-                ...source,
-                snippet: fallbackSnippetForFile(file),
-                sponsorStatus: "error",
-              }
-            : source,
-        ),
-      );
+      patchSource(pendingSource.id, {
+        source: "Upload error",
+        snippet: `Upload failed before AWS extraction could start: ${uploadError}`,
+        sponsorStatus: "error",
+      });
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -986,10 +985,14 @@ export default function InputPage() {
                               {source.sponsorStatus === "cached"
                                 ? "Cached"
                                 : source.sponsorStatus === "extracted"
-                                  ? "Textract"
-                                  : source.sponsorStatus === "uploaded"
-                                    ? "S3"
-                                    : "Fallback"}
+                                  ? "Extracted"
+                                : source.sponsorStatus === "extracting"
+                                    ? "Extracting"
+                                    : source.sponsorStatus === "uploaded"
+                                      ? "S3"
+                                      : source.sponsorStatus === "error"
+                                        ? "Error"
+                                        : "Fallback"}
                             </span>
                           )}
                           <span className="inline-flex rounded-full border border-neutral-100 bg-[#FAFAFA] px-1.5 py-0.5 text-[9px] font-bold leading-none text-neutral-500">

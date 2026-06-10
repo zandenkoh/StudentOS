@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { detectTextFromS3 } from "@/lib/sponsor-tech/aws-textract";
+import { getObjectText } from "@/lib/sponsor-tech/aws-s3";
 import { isAwsReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { interpretSourceAttachment } from "@/lib/sponsor-tech/source-interpreter";
 
@@ -37,7 +38,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await detectTextFromS3(parsed.data.key);
+    const isTextSource = parsed.data.fileType === "text" || parsed.data.mimeType?.startsWith("text/");
+    const result = isTextSource
+      ? { text: await getObjectText(parsed.data.key), raw: { Blocks: [] } }
+      : await detectTextFromS3(parsed.data.key);
     const interpretation = await interpretSourceAttachment({
       title: parsed.data.name || parsed.data.key,
       fileType: parsed.data.fileType,
@@ -47,7 +51,7 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({
-      provider: "aws-textract",
+      provider: isTextSource ? "aws-s3-text" : "aws-textract",
       region: sponsorEnv.awsTextractRegion,
       text: result.text,
       blockCount: result.raw.Blocks?.length || 0,
