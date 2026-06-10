@@ -37,9 +37,9 @@ export function BottomSheet({
           >
             <div className="mx-auto mb-4 h-1.5 w-11 rounded-full bg-neutral-200" />
             <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-[22px] font-semibold leading-tight">{title}</h2>
-                {subtitle ? <p className="mt-2 text-[14px] leading-5 text-muted">{subtitle}</p> : null}
+              <div className="min-w-0 flex-1">
+                <h2 className="break-words text-[22px] font-semibold leading-tight">{title}</h2>
+                {subtitle ? <p className="mt-2 break-words text-[14px] leading-5 text-muted">{subtitle}</p> : null}
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {headerAction}

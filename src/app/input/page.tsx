@@ -412,7 +412,7 @@ export default function InputPage() {
     if (!file || isUploading) return;
 
     const fileType = inferFileType(file);
-    const localPreviewUrl = fileType === "image" ? URL.createObjectURL(file) : undefined;
+    const localPreviewUrl = fileType === "image" || fileType === "pdf" ? URL.createObjectURL(file) : undefined;
     const pendingSource: InputSource = {
       id: `upload-${Date.now()}`,
       icon: iconForFileType(fileType),
@@ -478,6 +478,7 @@ export default function InputPage() {
       let languageNotes: string | undefined;
       let needsClarification: boolean | undefined;
       let clarificationPrompt: string | undefined;
+      let sourceProvider = upload.provider;
 
       if (fileType === "image" || fileType === "pdf") {
         const extractResponse = await fetch("/api/sponsor/aws/extract-source", {
@@ -501,6 +502,7 @@ export default function InputPage() {
           languageNotes = extraction.languageNotes;
           needsClarification = extraction.needsClarification;
           clarificationPrompt = extraction.clarificationPrompt;
+          sourceProvider = extraction.interpretationProvider || upload.provider;
           snippet = extraction.summary || (extraction.text ?? "").split("\n").find(Boolean)?.slice(0, 110) || snippet;
           sponsorStatus = "extracted";
           addSponsorTrace({
@@ -529,7 +531,7 @@ export default function InputPage() {
                 source: sponsorStatus === "extracted" ? "AWS Textract" : "AWS S3",
                 snippet,
                 s3Key: upload.key,
-                provider: upload.provider,
+                provider: sourceProvider,
                 ocrText,
                 sourceSummary,
                 extractedTasks,
@@ -1089,20 +1091,53 @@ export default function InputPage() {
           )}
 
           {previewSource?.fileType === "pdf" && (
-            <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4 font-mono text-xs text-neutral-700 space-y-3">
-              <div className="border-b border-neutral-200 pb-2 flex justify-between font-sans font-semibold text-[10px] uppercase text-neutral-400">
-                <span>physics_chapter12.pdf</span>
-                <span>Page 1 of 1</span>
-              </div>
-              <p className="font-sans font-bold text-sm text-ink">Chapter 12: Electromagnetic Induction</p>
-              <p className="leading-relaxed font-sans text-neutral-600">
-                Determine the magnetic flux and calculate the induced electromotive force (EMF) in a coil of 500 turns when the magnetic field changes from 0.1 T to 0.5 T in 2.0 seconds.
-              </p>
-              <p className="leading-relaxed font-sans text-neutral-600">
-                Explain how Lenz&apos;s law dictates the direction of the induced current in accordance with the conservation of energy.
-              </p>
-              <div className="rounded-lg bg-amber-50/70 p-2.5 border border-amber-100 font-sans text-amber-800 text-[11px] font-semibold">
-                ⚠️ Submit all problems via LMS before 10 June (tomorrow) at 8:00 AM.
+            <div className="space-y-3">
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50 p-4 text-xs text-neutral-700">
+                <div className="flex items-start justify-between gap-3 border-b border-neutral-200 pb-2 font-sans text-[10px] font-semibold uppercase text-neutral-400">
+                  <span className="min-w-0 break-words">{previewSource.title}</span>
+                  <span className="shrink-0">PDF upload</span>
+                </div>
+
+                {previewSource.sourceSummary || previewSource.snippet ? (
+                  <div className="mt-3 space-y-2 font-sans">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                      Extracted preview
+                    </p>
+                    <p className="text-sm font-semibold leading-relaxed text-ink">
+                      {previewSource.sourceSummary || previewSource.snippet}
+                    </p>
+                  </div>
+                ) : null}
+
+                {previewSource.extractedTasks?.length ? (
+                  <div className="mt-3 rounded-lg border border-neutral-200 bg-white p-3 font-sans">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                      Extracted commitments
+                    </p>
+                    <ul className="space-y-1.5 text-xs font-semibold leading-snug text-neutral-700">
+                      {previewSource.extractedTasks.slice(0, 5).map((task) => (
+                        <li key={task}>- {task}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {!previewSource.sourceSummary && !previewSource.ocrText ? (
+                  <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 font-sans text-[11px] font-semibold leading-relaxed text-amber-800">
+                    No readable PDF text has been extracted yet. StudentOS will use this file as an uploaded source, but it will not show demo worksheet content here.
+                  </div>
+                ) : null}
+
+                {previewSource.filePath ? (
+                  <a
+                    href={previewSource.filePath}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-3 inline-flex rounded-full border border-neutral-200 bg-white px-3 py-2 font-sans text-[11px] font-bold text-neutral-700"
+                  >
+                    Open original PDF
+                  </a>
+                ) : null}
               </div>
             </div>
           )}
