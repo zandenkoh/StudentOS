@@ -78,6 +78,7 @@ const TimelineEventSchema = z.object({
   id: z.string(),
   time: z.string(),
   title: z.string(),
+  dateKey: z.string().optional(),
   duration: z.string().optional(),
   chip: z.string(),
   tone: z.enum(["conflict", "success", "priority"]).optional(),
@@ -1349,8 +1350,7 @@ function streamPartText(part: unknown, fields: string[]) {
 function sourceFallbackItems(sources: CapturedSourceForAI[]) {
   const items: Array<{ source: CapturedSourceForAI | undefined; text: string; index: number }> = [];
   const seen = new Set<string>();
-
-  sources.forEach((source) => {
+  const candidatesBySource = sources.map((source) => {
     const sourceContext = { title: source.title, sourceKind: source.sourceKind, sourceSummary: source.sourceSummary };
     const interpretedItems =
       source.interpretedItems
@@ -1369,12 +1369,21 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
           ? [fallbackSummary]
           : [];
 
-    candidates.forEach((candidate) => {
+    return { source, candidates };
+  });
+
+  function addCandidate(source: CapturedSourceForAI, candidate: string) {
       const key = `${source.id}:${candidate}`.toLowerCase();
       if (seen.has(key) || items.length >= 6) return;
       seen.add(key);
       items.push({ source, text: candidate, index: items.length });
-    });
+  }
+
+  candidatesBySource.forEach(({ source, candidates }) => {
+    if (candidates[0]) addCandidate(source, candidates[0]);
+  });
+  candidatesBySource.forEach(({ source, candidates }) => {
+    candidates.slice(1).forEach((candidate) => addCandidate(source, candidate));
   });
 
   if (items.length) return items;
@@ -1386,6 +1395,34 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
       index: 0,
     },
   ];
+}
+
+function confirmedSourceFact(source: CapturedSourceForAI, field: "date" | "start_time" | "end_time") {
+  return source.verifiedFacts?.find((fact) => fact.field === field && fact.status === "confirmed")?.value.trim();
+}
+
+function fallbackFixedTimelineEvents(sources: CapturedSourceForAI[]) {
+  return sources.flatMap((source) => {
+    const startTime = confirmedSourceFact(source, "start_time");
+    const endTime = confirmedSourceFact(source, "end_time");
+    if (!startTime || !endTime) return [];
+
+    const eventItem = source.interpretedItems?.find((item) => item.type === "event");
+    const title = cleanFallbackItemText(
+      eventItem?.title || source.sourceSummary || source.snippet,
+      { title: source.title, sourceKind: source.sourceKind, sourceSummary: source.sourceSummary },
+    );
+
+    return [{
+      id: `fixed-${slugFrom(source.id, "event")}`,
+      time: startTime,
+      dateKey: confirmedSourceFact(source, "date"),
+      title,
+      duration: `${startTime}-${endTime}`,
+      chip: "Fixed event",
+      scheduleRationale: "StudentOS preserved this fixed event from confirmed source date and time facts.",
+    }];
+  });
 }
 
 function fallbackCommitmentType(text: string) {
@@ -1502,8 +1539,10 @@ function sourceDrivenFallbackFootprint(
     goalId: commitment.type === "goal" ? roadmapGoalId : "",
     isRoadmapTask: commitment.type === "goal",
   }));
+  const fixedTimelineEvents = fallbackFixedTimelineEvents(sources);
   const timelineEvents = [
-    ...planTasks.slice(0, 3).map((task, index) => ({
+    ...fixedTimelineEvents,
+    ...planTasks.slice(0, Math.max(1, 5 - fixedTimelineEvents.length)).map((task, index) => ({
       id: `${task.id}-timeline`,
       time: task.timeLabel?.split("-")[0] ?? ["3:30 PM", "4:15 PM", "5:00 PM"][index],
       title: task.title,
@@ -1528,7 +1567,17 @@ function sourceDrivenFallbackFootprint(
       chip: "Research",
       scheduleRationale: "This short check keeps external event or roadmap assumptions from becoming stale.",
     },
-  ].slice(0, Math.max(3, Math.min(5, planTasks.length + 2)));
+  ].slice(0, Math.max(3, Math.min(7, fixedTimelineEvents.length + planTasks.length)));
+  const timelineValidation = validateTimelineConflicts(timelineEvents);
+  const confirmedConflictGroup = timelineValidation.groups[0];
+  const confirmedConflictEvents = confirmedConflictGroup
+    ? timelineValidation.events.filter((event) => confirmedConflictGroup.eventIds.includes(event.id))
+    : [];
+  const fixedConflictEvent = confirmedConflictEvents[0];
+  const conflictingEvent = confirmedConflictEvents[1];
+  const conflictTitle = fixedConflictEvent && conflictingEvent
+    ? `${fixedConflictEvent.title} overlaps with ${conflictingEvent.title}`
+    : "No confirmed conflict from submitted sources";
   const clarificationTarget =
     commitments.find((commitment) => commitment.state === "needs_clarification") ?? firstCommitment;
   const clarificationKind = clarificationTarget.type === "goal" ? "goal" as const : "general" as const;
@@ -1642,19 +1691,21 @@ function sourceDrivenFallbackFootprint(
     sources,
     commitments,
     clarificationQuestions,
-    timelineEvents,
-    resolvedTimelineEvents: timelineEvents,
+    timelineEvents: timelineValidation.events,
+    resolvedTimelineEvents: timelineValidation.events,
     conflict: {
-      title: "No confirmed conflict from submitted sources",
-      unresolvedSummary: "The local planner did not find two fixed overlapping time ranges in the submitted evidence.",
+      title: conflictTitle,
+      unresolvedSummary: confirmedConflictGroup
+        ? `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`
+        : "The local planner did not find two fixed overlapping time ranges in the submitted evidence.",
       resolvedTitle: "Timing kept flexible",
       resolvedSummary: "StudentOS keeps the submitted items visible and asks for missing timing details before locking the plan.",
-      fixedEventTitle: firstCommitment.title,
-      fixedEventTime: "Time to confirm",
-      conflictingEventTitle: "No confirmed overlap",
-      conflictingEventTime: "Not confirmed",
-      overlapLabel: "Not confirmed",
-      impactLabel: "Confirm details",
+      fixedEventTitle: fixedConflictEvent?.title ?? firstCommitment.title,
+      fixedEventTime: fixedConflictEvent?.duration ?? "Time to confirm",
+      conflictingEventTitle: conflictingEvent?.title ?? "No confirmed overlap",
+      conflictingEventTime: conflictingEvent?.duration ?? "Not confirmed",
+      overlapLabel: confirmedConflictGroup?.overlapLabel ?? "Not confirmed",
+      impactLabel: confirmedConflictGroup ? "Decision needed" : "Confirm details",
       resolvedImpactLabel: "Plan can proceed",
       recommendationSummary: `Confirm the most important missing details for ${firstCommitment.title} before treating the schedule as final.`,
       recommendedActions: [

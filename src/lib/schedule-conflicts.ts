@@ -1,6 +1,7 @@
 export type SchedulableTimelineEvent = {
   id: string;
   time: string;
+  dateKey?: string;
   chip?: string;
   duration?: string;
   tone?: "conflict" | "success" | "priority";
@@ -140,6 +141,7 @@ export function validateTimelineConflicts<TEvent extends SchedulableTimelineEven
     for (let secondIndex = firstIndex + 1; secondIndex < fixedIntervals.length; secondIndex += 1) {
       const first = fixedIntervals[firstIndex];
       const second = fixedIntervals[secondIndex];
+      if (first.event.dateKey && second.event.dateKey && first.event.dateKey !== second.event.dateKey) continue;
       const minutes = overlapMinutes(first.interval, second.interval);
       if (minutes <= 0) continue;
       if (first.event.conflictGroupId && second.event.conflictGroupId) continue;
@@ -161,6 +163,7 @@ export function validateTimelineConflicts<TEvent extends SchedulableTimelineEven
       for (let secondIndex = firstIndex + 1; secondIndex < fixedIntervals.length; secondIndex += 1) {
         const first = fixedIntervals[firstIndex];
         const second = fixedIntervals[secondIndex];
+        if (first.event.dateKey && second.event.dateKey && first.event.dateKey !== second.event.dateKey) continue;
         if (!first.event.conflictGroupId || !second.event.conflictGroupId) continue;
         if (first.event.conflictGroupId === second.event.conflictGroupId) continue;
         if (!intervalsOverlap(first.interval, second.interval)) continue;
@@ -197,6 +200,7 @@ export function validateTimelineConflicts<TEvent extends SchedulableTimelineEven
       for (let secondIndex = firstIndex + 1; secondIndex < intervals.length; secondIndex += 1) {
         const first = intervals[firstIndex];
         const second = intervals[secondIndex];
+        if (first.event.dateKey && second.event.dateKey && first.event.dateKey !== second.event.dateKey) continue;
         if (!first.interval || !second.interval) continue;
 
         const minutes = overlapMinutes(first.interval, second.interval);

@@ -96,6 +96,7 @@ export type TimelineEvent = {
   id: string;
   time: string;
   title: string;
+  dateKey?: string;
   duration?: string;
   chip: string;
   tone?: "conflict" | "success" | "priority";
