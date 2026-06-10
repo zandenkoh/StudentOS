@@ -19,6 +19,34 @@ export type ClarificationQuestion = {
 
 export type ClarificationAnswers = Record<number, string>;
 
+function answerSignature(answers: ClarificationAnswers) {
+  return JSON.stringify(
+    Object.entries(answers)
+      .filter(([, answer]) => answer.trim().length > 0)
+      .sort(([left], [right]) => Number(left) - Number(right)),
+  );
+}
+
+function splitInitialAnswers(
+  questions: ClarificationQuestion[],
+  initialAnswers: ClarificationAnswers,
+) {
+  const customAnswers: Record<number, string> = {};
+
+  Object.entries(initialAnswers).forEach(([rawIndex, answer]) => {
+    const index = Number(rawIndex);
+    const question = questions[index];
+    if (!question || !answer.trim()) return;
+
+    const matchesOption = question.options.some((option) => option.label === answer);
+    if (!matchesOption) {
+      customAnswers[index] = answer;
+    }
+  });
+
+  return customAnswers;
+}
+
 export function MCQOption({
   label,
   description,
@@ -135,7 +163,8 @@ export function ClarificationBottomSheet({
   onSubmit,
   questionsOverride,
   titleOverride,
-  subtitleOverride
+  subtitleOverride,
+  initialAnswers = {}
 }: {
   open: boolean;
   kind: "goal" | "team";
@@ -144,6 +173,7 @@ export function ClarificationBottomSheet({
   questionsOverride?: ClarificationQuestion[];
   titleOverride?: string;
   subtitleOverride?: string;
+  initialAnswers?: ClarificationAnswers;
 }) {
   const questions = questionsOverride?.length
     ? questionsOverride
@@ -155,9 +185,18 @@ export function ClarificationBottomSheet({
   const [customAnswers, setCustomAnswers] = useState<Record<number, string>>({});
   const customInputRef = useRef<HTMLInputElement>(null);
   const advanceTimeoutRef = useRef<number | null>(null);
+  const initialAnswersSignature = answerSignature(initialAnswers);
+  const questionsSignature = JSON.stringify(
+    questions.map((question) => [
+      question.question,
+      question.customPlaceholder,
+      question.options.map((option) => option.label).join("|"),
+    ]),
+  );
   const safeActiveIndex = Math.min(activeIndex, questions.length - 1);
   const activeQuestion = questions[safeActiveIndex];
   const progress = (safeActiveIndex + 1) / questions.length;
+  const isEditingSavedAnswers = initialAnswersSignature !== "[]";
 
   useEffect(() => {
     if (advanceTimeoutRef.current) {
@@ -166,9 +205,9 @@ export function ClarificationBottomSheet({
     }
     if (!open) return;
     setActiveIndex(0);
-    setAnswers({});
-    setCustomAnswers({});
-  }, [kind, open]);
+    setAnswers(initialAnswers);
+    setCustomAnswers(splitInitialAnswers(questions, initialAnswers));
+  }, [initialAnswers, initialAnswersSignature, kind, open, questions, questionsSignature]);
 
   useEffect(() => {
     return () => {
@@ -183,15 +222,22 @@ export function ClarificationBottomSheet({
       setActiveIndex((current) => current + 1);
       return;
     }
+    if (isEditingSavedAnswers) return;
     onSubmit(nextAnswers);
   }
 
   function chooseAnswer(answer: string) {
     const nextAnswers = { ...answers, [safeActiveIndex]: answer };
     setAnswers(nextAnswers);
+    setCustomAnswers((current) => {
+      const next = { ...current };
+      delete next[safeActiveIndex];
+      return next;
+    });
     if (advanceTimeoutRef.current) {
       window.clearTimeout(advanceTimeoutRef.current);
     }
+    if (isEditingSavedAnswers) return;
     advanceTimeoutRef.current = window.setTimeout(() => {
       advanceTimeoutRef.current = null;
       advance(nextAnswers);
@@ -206,20 +252,35 @@ export function ClarificationBottomSheet({
   }
 
   function skipQuestion() {
+    if (isEditingSavedAnswers) return;
     setAnswers((current) => ({ ...current, [safeActiveIndex]: "Skipped" }));
     advance();
   }
 
+  function previousQuestion() {
+    setActiveIndex((current) => Math.max(0, current - 1));
+  }
+
+  function saveAnswers() {
+    onSubmit(answersToSave);
+  }
+
+  const mergedAnswers = {
+    ...answers,
+    ...Object.fromEntries(
+      Object.entries(customAnswers)
+        .map(([index, answer]) => [index, answer.trim()])
+        .filter(([, answer]) => answer.length > 0),
+    ),
+  };
   const hasUnsavedClarification =
     open &&
-    (Object.keys(answers).length > 0 ||
-      Object.values(customAnswers).some((answer) => answer.trim().length > 0));
-  const answersToSave = {
-    ...answers,
-    ...(customAnswers[safeActiveIndex]?.trim()
-      ? { [safeActiveIndex]: customAnswers[safeActiveIndex].trim() }
-      : {}),
-  };
+    (isEditingSavedAnswers
+      ? answerSignature(mergedAnswers) !== initialAnswersSignature
+      : Object.keys(answers).length > 0 ||
+        Object.values(customAnswers).some((answer) => answer.trim().length > 0));
+  const answersToSave = mergedAnswers;
+  const canSaveAnswers = Object.keys(answersToSave).length > 0;
 
   return (
     <BottomSheet
@@ -230,7 +291,7 @@ export function ClarificationBottomSheet({
       closeConfirmationTitle="Save clarification?"
       closeConfirmationSubtitle="StudentOS can use your current answers, or you can discard them and return to the unresolved item."
       closeConfirmationSaveLabel="Save answers"
-      closeConfirmationSaveDisabled={Object.keys(answersToSave).length === 0}
+      closeConfirmationSaveDisabled={!canSaveAnswers}
       title={titleOverride ?? (kind === "goal" ? "Clarify coding goal" : "Clarify team meeting")}
       subtitle={
         subtitleOverride ??
@@ -293,7 +354,7 @@ export function ClarificationBottomSheet({
               {customAnswers[safeActiveIndex]?.trim() ? <Check className="ml-3 size-4 shrink-0" /> : null}
             </button>
 
-            {customAnswers[safeActiveIndex]?.trim() ? (
+            {customAnswers[safeActiveIndex]?.trim() && !isEditingSavedAnswers ? (
               <button
                 type="button"
                 onClick={() => advance()}
@@ -305,13 +366,44 @@ export function ClarificationBottomSheet({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={skipQuestion}
-          className="w-full rounded-full py-2.5 text-sm font-semibold text-neutral-400 transition hover:text-ink"
-        >
-          Skip
-        </button>
+        {isEditingSavedAnswers ? (
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={previousQuestion}
+              disabled={safeActiveIndex === 0}
+              className="h-12 rounded-full border border-neutral-200 bg-white px-4 text-sm font-bold text-ink transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-300"
+            >
+              Back
+            </button>
+            {safeActiveIndex < questions.length - 1 ? (
+              <button
+                type="button"
+                onClick={() => setActiveIndex((current) => Math.min(questions.length - 1, current + 1))}
+                className="h-12 rounded-full bg-ink px-4 text-sm font-bold text-white"
+              >
+                Next
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={saveAnswers}
+                disabled={!canSaveAnswers}
+                className="h-12 rounded-full bg-ink px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
+              >
+                Update
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={skipQuestion}
+            className="w-full rounded-full py-2.5 text-sm font-semibold text-neutral-400 transition hover:text-ink"
+          >
+            Skip
+          </button>
+        )}
       </div>
     </BottomSheet>
   );

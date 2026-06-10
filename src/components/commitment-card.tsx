@@ -34,7 +34,9 @@ export function CommitmentCard({
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[16px] font-semibold leading-5 text-ink">{commitment.title}</p>
-          <p className="mt-2 text-[13px] leading-5 text-muted">{commitment.explanation}</p>
+          <p className="mt-2 truncate whitespace-nowrap text-[13px] leading-5 text-muted">
+            {commitment.explanation}
+          </p>
         </div>
         <ChevronRight className="mt-1 size-5 shrink-0 text-neutral-300" />
       </div>

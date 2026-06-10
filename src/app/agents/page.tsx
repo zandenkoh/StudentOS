@@ -38,10 +38,11 @@ type AgentLog = {
   };
 };
 
-const REDIRECT_MIN_AT = 1600;
-const TYPE_BASE_DELAY_MS = 13;
-const TYPE_JITTER_MS = 24;
-const LOG_REVEAL_DELAYS_MS = [180, 520, 310, 760, 430, 960, 590, 690, 360];
+const REDIRECT_MIN_AT = 900;
+const AGENT_PRESENTATION_MAX_MS = 15000;
+const TYPE_BASE_DELAY_MS = 2;
+const TYPE_JITTER_MS = 4;
+const LOG_REVEAL_DELAYS_MS = [45, 95, 65, 130, 80, 155, 105, 120, 70];
 const loadingMessages = [
   "Reading submitted sources",
   "Generating focused Exa searches",
@@ -71,8 +72,8 @@ function revealDelayForLog(log: AgentLog, index: number) {
 }
 
 function typeDelayForCharacter(character: string) {
-  if (character === "." || character === "," || character === ";") return 90 + Math.random() * 140;
-  if (character === " ") return 8 + Math.random() * 18;
+  if (character === "." || character === "," || character === ";") return 12 + Math.random() * 18;
+  if (character === " ") return 1 + Math.random() * 3;
   return TYPE_BASE_DELAY_MS + Math.random() * TYPE_JITTER_MS;
 }
 
@@ -555,7 +556,8 @@ export default function AgentsThinkingPage() {
   const visibleLogs = displayedLogs;
   const activeLog = visibleLogs[visibleLogs.length - 1];
   const presentationComplete = agentLogs.length > 0 && displayedLogs.length >= agentLogs.length;
-  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT && presentationComplete;
+  const presentationOverBudget = elapsedMs >= AGENT_PRESENTATION_MAX_MS;
+  const readyToRedirect = Boolean(aiFootprint) && elapsedMs >= REDIRECT_MIN_AT && (presentationComplete || presentationOverBudget);
   const done = Boolean(aiFootprint);
   const progressPercent = done ? 100 : Math.min(92, visibleLogs.length ? 12 + visibleLogs.length * 10 : 8);
   const statusLabel = analysisFailed ? "Error" : done ? "Done" : "Live";
@@ -600,6 +602,13 @@ export default function AgentsThinkingPage() {
       window.clearInterval(interval);
     };
   }, []);
+
+  useEffect(() => {
+    if (!presentationOverBudget || displayedLogs.length >= agentLogs.length) return;
+
+    displayedLogIdsRef.current = new Set(agentLogs.map((log) => log.id));
+    setDisplayedLogs(agentLogs);
+  }, [agentLogs, displayedLogs.length, presentationOverBudget]);
 
   useEffect(() => {
     if (!readyToRedirect) return;

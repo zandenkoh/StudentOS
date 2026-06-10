@@ -317,8 +317,8 @@ function GoalCandidateCard({
           <p className="text-[16px] font-semibold leading-5 text-ink">
             {commitment.title}
           </p>
-          <p className="mt-2 text-[13px] leading-5 text-muted">
-            StudentOS will break this into scheduled steps.
+          <p className="mt-2 truncate whitespace-nowrap text-[13px] leading-5 text-muted">
+            {commitment.explanation}
           </p>
         </div>
         <ChevronRight className="mt-1 size-5 shrink-0 text-neutral-300" />
@@ -403,6 +403,43 @@ function questionsForSheet(questions: AIClarificationQuestion[]): ClarificationQ
   }));
 }
 
+function savedAnswersForQuestions(
+  commitmentId: string,
+  questions: AIClarificationQuestion[],
+  records: ClarificationAnswerRecord[],
+) {
+  const commitmentRecords = records.filter((record) => record.commitmentId === commitmentId);
+  const answers: ClarificationAnswers = {};
+
+  questions.forEach((question, index) => {
+    const matchingRecord =
+      commitmentRecords.find((record) => record.question === question.question) ??
+      commitmentRecords[index];
+
+    if (matchingRecord?.answer) {
+      answers[index] = matchingRecord.answer;
+    }
+  });
+
+  return answers;
+}
+
+function clarificationRecordsSignature(records: ClarificationAnswerRecord[]) {
+  return JSON.stringify(
+    records
+      .map((record) => ({
+        commitmentId: record.commitmentId,
+        question: record.question,
+        answer: record.answer,
+      }))
+      .sort((left, right) =>
+        `${left.commitmentId}:${left.question}`.localeCompare(
+          `${right.commitmentId}:${right.question}`,
+        ),
+      ),
+  );
+}
+
 function persistCommitments(commitments: Commitment[]) {
   window.localStorage.setItem(SAVED_COMMITMENTS_KEY, JSON.stringify(commitments));
 }
@@ -415,6 +452,16 @@ function clearAiPlanCaches() {
   Object.keys(window.localStorage)
     .filter((key) => key.startsWith("studentos_vercel_plan_day_"))
     .forEach((key) => window.localStorage.removeItem(key));
+}
+
+function cacheKeyForText(value: string) {
+  let hash = 0;
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+
+  return Math.abs(hash).toString(36);
 }
 
 function completedTaskIds() {
@@ -613,16 +660,29 @@ export default function CommitmentsPage() {
   const canScheduleLater = canMoveTaskDate(selectedTask, 1);
   const aiPlanSummary = aiPlan?.rationale.summary ?? fallbackPlanSummary(commitments, planTasks);
   const aiPlanBullets = aiPlan?.rationale.bullets ?? fallbackPlanBullets(commitments, planTasks);
-  const activeClarification = clarifying
-    ? aiFootprint?.clarificationQuestions.find(
-        (question) => question.commitmentId === clarifying.commitmentId,
-      )
-    : undefined;
-  const activeClarifications = clarifying
-    ? aiFootprint?.clarificationQuestions.filter(
-        (question) => question.commitmentId === clarifying.commitmentId,
-      ) ?? []
-    : [];
+  const activeClarifications = useMemo(() => {
+    if (!clarifying) return [];
+
+    return aiFootprint?.clarificationQuestions.filter(
+      (question) => question.commitmentId === clarifying.commitmentId,
+    ) ?? [];
+  }, [aiFootprint?.clarificationQuestions, clarifying]);
+  const activeClarification = activeClarifications[0];
+  const activeClarificationQuestionsForSheet = useMemo(
+    () => questionsForSheet(activeClarifications),
+    [activeClarifications],
+  );
+  const activeClarificationInitialAnswers = useMemo(
+    () =>
+      clarifying
+        ? savedAnswersForQuestions(
+            clarifying.commitmentId,
+            activeClarifications,
+            clarificationAnswerRecords,
+          )
+        : {},
+    [activeClarifications, clarificationAnswerRecords, clarifying],
+  );
   const focusTask = planTasks.find((task) => task.section === "do_now") ?? planTasks[0];
   const roadmapGoal = goalItems[0];
   const nextRoadmapTask = planTasks.find((task) => task.isRoadmapTask);
@@ -1130,7 +1190,7 @@ export default function CommitmentsPage() {
     const clarificationSignature = clarificationAnswerRecords
       .map((item) => `${item.commitmentId}:${item.question}:${item.answer}`)
       .join("|");
-    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${addedInterpretation?.commitment.id ?? "standard"}_${clarificationSignature.length}`;
+    const cacheKey = `studentos_vercel_plan_day_${resolutionMode ?? "base"}_${addedInterpretation?.commitment.id ?? "standard"}_${cacheKeyForText(clarificationSignature)}`;
     const cached = window.localStorage.getItem(cacheKey);
 
     if (cached) {
@@ -1310,6 +1370,25 @@ export default function CommitmentsPage() {
     const clarificationSummary = answeredRecords.length
       ? answeredRecords.map((item) => `${item.question} ${item.answer}`).join("; ")
       : selectedAnswer ?? "confirmed";
+    const existingRecordsForCommitment = clarificationAnswerRecords.filter(
+      (item) => item.commitmentId === target.commitmentId,
+    );
+    const answersChanged =
+      clarificationRecordsSignature(existingRecordsForCommitment) !==
+      clarificationRecordsSignature(answeredRecords);
+
+    if (
+      answeredRecords.length > 0 &&
+      !answersChanged &&
+      currentCommitment &&
+      currentCommitment.state !== "needs_clarification" &&
+      currentCommitment.state !== "unsure"
+    ) {
+      setClarifying(null);
+      showToast("Answer unchanged");
+      return;
+    }
+
     let resolvedCommitmentForPlan: Commitment | undefined;
 
     if (currentCommitment && resolved) {
@@ -1380,6 +1459,7 @@ export default function CommitmentsPage() {
     }
     setAiPlan(null);
     aiPlanRequestStarted.current = false;
+    clearAiPlanCaches();
     setClarifying(null);
     void runAgentReplan({
       trigger: "clarification",
@@ -2109,9 +2189,10 @@ export default function CommitmentsPage() {
         kind={clarifying?.kind === "goal" ? "goal" : "team"}
         onClose={() => setClarifying(null)}
         onSubmit={(answers) => clarifying && clarify(clarifying, answers)}
-        questionsOverride={questionsForSheet(activeClarifications)}
+        questionsOverride={activeClarificationQuestionsForSheet}
         titleOverride={activeClarification?.title}
         subtitleOverride={activeClarification?.subtitle}
+        initialAnswers={activeClarificationInitialAnswers}
       />
 
       <BottomSheet
@@ -2145,6 +2226,14 @@ export default function CommitmentsPage() {
                 className="mt-2 h-12 w-full rounded-[18px] border border-neutral-200 px-4 text-[15px] focus:border-neutral-400 focus:ring-0"
               />
             </label>
+            <div className="rounded-[18px] border border-neutral-200 bg-neutral-50 px-4 py-3">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+                Summary
+              </p>
+              <p className="mt-2 text-[14px] font-semibold leading-6 text-neutral-700">
+                {editing.explanation}
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-sm font-semibold">Type</span>
