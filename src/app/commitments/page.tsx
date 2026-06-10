@@ -2234,7 +2234,7 @@ export default function CommitmentsPage() {
               className="space-y-6"
             >
               <ScreenHeader
-                title="Review extracted items"
+                title="Commmitments Identified"
                 subtitle="StudentOS separated obligations from longer-term goals."
               />
               <div className="lg:hidden">
