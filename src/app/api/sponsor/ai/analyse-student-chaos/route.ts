@@ -25,6 +25,9 @@ import type {
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+const AWS_AGENT_DEADLINE_MS = Number(process.env.AWS_AGENT_DEADLINE_MS ?? 32000);
+const GATEWAY_HEALTH_DEADLINE_MS = Number(process.env.GATEWAY_HEALTH_DEADLINE_MS ?? 6000);
+
 function configuredAwsAgentEndpoint() {
   return sponsorEnv.awsAgentEndpoint?.trim() || "";
 }
@@ -75,20 +78,73 @@ function missingAwsEndpointError() {
   return new Error("AWS_AGENT_ENDPOINT is not set, so the Next.js route has no AWS Lambda agent URL to call.");
 }
 
+function deadlineError(label: string, timeoutMs: number) {
+  return new Error(`${label} did not finish within ${Math.round(timeoutMs / 1000)} seconds.`);
+}
+
+function safeDeadlineMs(value: number, fallback: number) {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function withDeadline<T>(work: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  const budget = safeDeadlineMs(timeoutMs, 32000);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  return Promise.race([
+    work.finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(deadlineError(label, budget)), budget);
+    }),
+  ]);
+}
+
+async function boundedGatewayHealthTrace(): Promise<AISponsorTraceItem> {
+  try {
+    return await withDeadline(gatewayHealthTrace(), GATEWAY_HEALTH_DEADLINE_MS, "Vercel AI Gateway preflight");
+  } catch (error) {
+    return {
+      provider: "Vercel AI Gateway",
+      action: "Verified Gateway preflight",
+      status: "fallback",
+      detail: error instanceof Error ? error.message : "Gateway preflight timed out.",
+    };
+  }
+}
+
 async function callAwsAgent(
   endpoint: string,
   input: AnalyseStudentChaosRequest,
   extraTraces: AISponsorTraceItem[] = [],
 ): Promise<StudentOSAgentFootprint> {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input),
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeoutMs = safeDeadlineMs(AWS_AGENT_DEADLINE_MS, 32000);
+  const timer = setTimeout(() => controller.abort(deadlineError("AWS Lambda agent", timeoutMs)), timeoutMs);
+
+  let response: Response;
+
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw deadlineError("AWS Lambda agent", timeoutMs);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
   const text = await response.text();
   const payload = text ? JSON.parse(text) as unknown : undefined;
 
@@ -512,7 +568,9 @@ async function analyseWithLocalFallback(
   error: unknown,
   extraTraces: AISponsorTraceItem[] = [],
 ): Promise<StudentOSAgentFootprint> {
-  const fallback = await analyseStudentChaos(input);
+  const fallback = await analyseStudentChaos(input, {
+    forceFallbackReason: error instanceof Error ? error.message : "AWS Lambda agent failed before returning a footprint.",
+  });
 
   return prependSponsorTraces(fallback, [
     awsFallbackTrace(endpoint, error),
@@ -619,8 +677,11 @@ function streamAwsAgentRequest(
         }),
       });
 
+      let gatewayTrace: AISponsorTraceItem | undefined;
+      let goalResearch: AIGoalResearch | undefined;
+
       try {
-        const gatewayTrace = await gatewayHealthTrace();
+        gatewayTrace = await boundedGatewayHealthTrace();
 
         send({ type: "trace", trace: gatewayTrace });
         send({
@@ -647,7 +708,7 @@ function streamAwsAgentRequest(
           return;
         }
 
-        const goalResearch = await preResearchGoalForPlanning(input, { elapsed, send });
+        goalResearch = await preResearchGoalForPlanning(input, { elapsed, send });
         const planningInput = goalResearch
           ? {
               ...input,
@@ -686,7 +747,7 @@ function streamAwsAgentRequest(
 
         const trace = awsFallbackTrace(endpoint, error);
         const sourceTrace = bedrockTextractTrace(input.sources);
-        const gatewayTrace = await gatewayHealthTrace();
+        gatewayTrace = gatewayTrace ?? await boundedGatewayHealthTrace();
 
         send({ type: "trace", trace });
         send({ type: "trace", trace: gatewayTrace });
@@ -694,7 +755,7 @@ function streamAwsAgentRequest(
           type: "log",
           log: {
             id: "aws-agent-local-fallback",
-            at: 250,
+            at: elapsed(),
             kind: "decision",
             title: "AWS agent fallback selected",
             body: "The AWS endpoint did not complete, so StudentOS kept the demo flow moving locally.",
@@ -702,7 +763,7 @@ function streamAwsAgentRequest(
           },
         });
 
-        const goalResearch = await preResearchGoalForPlanning(input, { elapsed, send });
+        goalResearch = goalResearch ?? await preResearchGoalForPlanning(input, { elapsed, send });
         const fallbackInput = goalResearch
           ? {
               ...input,
@@ -711,6 +772,9 @@ function streamAwsAgentRequest(
           : input;
         const fallback = await analyseStudentChaos(fallbackInput, {
           onEvent: send,
+          forceFallbackReason: error instanceof Error
+            ? error.message
+            : "AWS Lambda agent failed before returning a footprint.",
         });
 
         send({
@@ -766,7 +830,7 @@ export async function POST(req: Request) {
   if (!wantsStream) {
     if (awsAgentEndpoint) {
       try {
-        const gatewayTrace = await gatewayHealthTrace();
+        const gatewayTrace = await boundedGatewayHealthTrace();
 
         if (strict && gatewayTrace.status !== "success") {
           return strictJudgeErrorResponse(new Error(gatewayTrace.detail));
@@ -797,7 +861,7 @@ export async function POST(req: Request) {
         }
 
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
-        const gatewayTrace = await gatewayHealthTrace();
+        const gatewayTrace = await boundedGatewayHealthTrace();
         const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
         const fallbackInput = goalResearch
           ? {
@@ -824,7 +888,7 @@ export async function POST(req: Request) {
       return awsAgentErrorResponse(missingAwsEndpointError());
     }
 
-    const gatewayTrace = await gatewayHealthTrace();
+    const gatewayTrace = await boundedGatewayHealthTrace();
     const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
     const planningInput = goalResearch
       ? {
@@ -877,7 +941,7 @@ export async function POST(req: Request) {
             result: sponsorEnv.aiGatewayModel,
           }),
         });
-        const gatewayTrace = await gatewayHealthTrace();
+        const gatewayTrace = await boundedGatewayHealthTrace();
 
         send({ type: "trace", trace: localTrace });
         send({ type: "trace", trace: gatewayTrace });

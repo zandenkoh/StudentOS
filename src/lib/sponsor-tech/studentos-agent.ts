@@ -295,6 +295,7 @@ type GeneratedClarificationQuestion = z.infer<typeof GeneratedClarificationQuest
 type GeneratedRoadmapStep = z.infer<typeof GeneratedRoadmapStepSchema>;
 type AnalyseStudentChaosOptions = {
   onEvent?: (event: AnalyseStudentChaosStreamEvent) => void | Promise<void>;
+  forceFallbackReason?: string;
 };
 type GatewayReasoningDeltaHandler = (text: string) => void | Promise<void>;
 
@@ -1997,13 +1998,15 @@ export async function analyseStudentChaos(
     });
   }
 
-  if (!isVercelAiReady()) {
-    const reason = "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.";
+  if (options.forceFallbackReason || !isVercelAiReady()) {
+    const reason = options.forceFallbackReason || "USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.";
     await emitLog({
-      id: "gateway-unavailable",
+      id: options.forceFallbackReason ? "deterministic-fallback-selected" : "gateway-unavailable",
       kind: "decision",
-      title: "Live planner unavailable",
-      body: "StudentOS cannot call Vercel AI Gateway in this environment.",
+      title: options.forceFallbackReason ? "Deterministic fallback selected" : "Live planner unavailable",
+      body: options.forceFallbackReason
+        ? "StudentOS is using the source-grounded fallback planner so the AWS recovery path can finish immediately."
+        : "StudentOS cannot call Vercel AI Gateway in this environment.",
       detail: reason,
     });
     const fallback = fallbackFootprint(normalizedInput, reason, goalResearch, observableLogs());
