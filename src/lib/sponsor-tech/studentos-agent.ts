@@ -1072,6 +1072,16 @@ function cleanFallbackItemText(value: string) {
   );
 }
 
+function streamPartText(part: unknown, fields: string[]) {
+  if (!part || typeof part !== "object") return "";
+  const record = part as Record<string, unknown>;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string") return value;
+  }
+  return "";
+}
+
 function sourceFallbackItems(sources: CapturedSourceForAI[]) {
   const items: Array<{ source: CapturedSourceForAI | undefined; text: string; index: number }> = [];
   const seen = new Set<string>();
@@ -1666,12 +1676,12 @@ async function generateFootprintCore(
 
       for await (const part of result.fullStream) {
         if (part.type === "reasoning-delta") {
-          await onReasoningDelta?.((part as any).delta || (part as any).text || "");
+          await onReasoningDelta?.(streamPartText(part, ["delta", "text"]));
           continue;
         }
 
         if (part.type === "text-delta") {
-          streamedText += (part as any).textDelta || (part as any).text || "";
+          streamedText += streamPartText(part, ["textDelta", "text"]);
         }
       }
 

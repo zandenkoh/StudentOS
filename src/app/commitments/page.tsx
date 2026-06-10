@@ -256,6 +256,9 @@ const commitmentTypes: Commitment["type"][] = ["task", "event", "deadline", "goa
 const SAVED_COMMITMENTS_KEY = "studentos_commitment_overrides";
 const SAVED_PLAN_TASKS_KEY = "studentos_plan_overrides";
 const SAVED_FLOW_STATE_KEY = "studentos_flow_state";
+const ACTIVE_FOOTPRINT_SIGNATURE_KEY = "studentos_active_footprint_signature";
+const SAVED_COMMITMENTS_FOOTPRINT_KEY = "studentos_commitment_overrides_footprint";
+const SAVED_PLAN_FOOTPRINT_KEY = "studentos_plan_overrides_footprint";
 const COMPLETED_TASK_IDS_KEY = "studentos_completed_task_ids";
 
 function capitalize(value: string) {
@@ -455,10 +458,33 @@ function clarificationAnswerValueSignature(records: ClarificationAnswerRecord[])
 
 function persistCommitments(commitments: Commitment[]) {
   window.localStorage.setItem(SAVED_COMMITMENTS_KEY, JSON.stringify(commitments));
+  const activeFootprintSignature = window.localStorage.getItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY);
+  if (activeFootprintSignature) {
+    window.localStorage.setItem(SAVED_COMMITMENTS_FOOTPRINT_KEY, activeFootprintSignature);
+  } else {
+    window.localStorage.removeItem(SAVED_COMMITMENTS_FOOTPRINT_KEY);
+  }
 }
 
 function persistPlanTasks(tasks: DemoPlanTask[]) {
   window.localStorage.setItem(SAVED_PLAN_TASKS_KEY, JSON.stringify(tasks));
+  const activeFootprintSignature = window.localStorage.getItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY);
+  if (activeFootprintSignature) {
+    window.localStorage.setItem(SAVED_PLAN_FOOTPRINT_KEY, activeFootprintSignature);
+  } else {
+    window.localStorage.removeItem(SAVED_PLAN_FOOTPRINT_KEY);
+  }
+}
+
+function commitmentListSignature(commitments: Commitment[]) {
+  return JSON.stringify(
+    commitments.map((commitment) => ({
+      id: commitment.id,
+      title: commitment.title,
+      source: commitment.source,
+      type: commitment.type,
+    })),
+  );
 }
 
 function clearAiPlanCaches() {
@@ -752,6 +778,7 @@ export default function CommitmentsPage() {
       const rawFootprint =
         window.localStorage.getItem("studentos_ai_footprint") ??
         window.localStorage.getItem("studentos_commitment_footprint");
+      let hydratedFootprintSignature: string | null = null;
 
       if (rawFootprint) {
         const parsedFootprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
@@ -761,6 +788,8 @@ export default function CommitmentsPage() {
           Array.isArray(parsedFootprint.planTasks) &&
           parsedFootprint.rationale
         ) {
+          hydratedFootprintSignature = commitmentListSignature(parsedFootprint.commitments);
+          window.localStorage.setItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY, hydratedFootprintSignature);
           setAiFootprint(parsedFootprint);
           setCommitments(parsedFootprint.commitments);
           setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedFootprint.planTasks)));
@@ -785,19 +814,35 @@ export default function CommitmentsPage() {
         }
       }
 
+      if (!hydratedFootprintSignature) {
+        window.localStorage.removeItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY);
+      }
+
       const savedCommitments = window.localStorage.getItem(SAVED_COMMITMENTS_KEY);
       if (savedCommitments) {
+        const savedFootprintSignature = window.localStorage.getItem(SAVED_COMMITMENTS_FOOTPRINT_KEY);
+        const savedCommitmentsMatchFootprint =
+          !hydratedFootprintSignature || savedFootprintSignature === hydratedFootprintSignature;
         const parsedCommitments = JSON.parse(savedCommitments) as Commitment[];
-        if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0) {
+        if (Array.isArray(parsedCommitments) && parsedCommitments.length > 0 && savedCommitmentsMatchFootprint) {
           setCommitments(parsedCommitments);
+        } else if (hydratedFootprintSignature) {
+          window.localStorage.removeItem(SAVED_COMMITMENTS_KEY);
+          window.localStorage.removeItem(SAVED_COMMITMENTS_FOOTPRINT_KEY);
         }
       }
 
       const savedPlan = window.localStorage.getItem(SAVED_PLAN_TASKS_KEY);
       if (savedPlan) {
+        const savedFootprintSignature = window.localStorage.getItem(SAVED_PLAN_FOOTPRINT_KEY);
+        const savedPlanMatchesFootprint =
+          !hydratedFootprintSignature || savedFootprintSignature === hydratedFootprintSignature;
         const parsedPlan = JSON.parse(savedPlan) as DemoPlanTask[];
-        if (Array.isArray(parsedPlan) && parsedPlan.length > 0) {
+        if (Array.isArray(parsedPlan) && parsedPlan.length > 0 && savedPlanMatchesFootprint) {
           setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(parsedPlan)));
+        } else if (hydratedFootprintSignature) {
+          window.localStorage.removeItem(SAVED_PLAN_TASKS_KEY);
+          window.localStorage.removeItem(SAVED_PLAN_FOOTPRINT_KEY);
         }
       }
 
