@@ -27,7 +27,6 @@ const chaosCardsData: ChaosCard[] = [
 
   { id: 7, text: "Ask teammate about deck", chip: "Reminder", icon: Bell, className: "-left-12 bottom-[176px] w-[155px] sm:left-8", rotate: 10 },
   { id: 8, text: "Chemistry lab report", chip: "PDF", icon: FileText, className: "right-[-42px] bottom-[184px] w-[145px] sm:right-8", rotate: -7 },
-  { id: 9, text: "Math tuition tomorrow", chip: "Event", icon: Calendar, className: "left-[32px] bottom-[116px] w-[155px] sm:left-[145px]", rotate: -4 },
   { id: 10, text: "Buy poster board", chip: "Task", icon: FileText, className: "right-[34px] bottom-[112px] w-[145px] sm:right-[150px]", rotate: 6 },
 
   { id: 11, text: "Late submission warning", chip: "Alert", icon: Bell, className: "-left-10 bottom-[52px] w-[150px] sm:left-8", rotate: 9 },
