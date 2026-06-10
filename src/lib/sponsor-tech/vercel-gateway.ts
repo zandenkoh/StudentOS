@@ -4,6 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
+import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { MAX_STUDY_SESSION_MINUTES, splitLongStudyTasks } from "@/lib/session-splitting";
 import type { AISponsorTraceItem } from "@/lib/studentos-ai-types";
 
@@ -41,6 +42,27 @@ const ClarificationReviewSchema = z.object({
 export type GatewayPlanResult = z.infer<typeof GatewayPlanSchema>;
 type ClarificationReview = z.infer<typeof ClarificationReviewSchema>;
 
+type ConflictSchedulerEvent = {
+  id: string;
+  time: string;
+  title: string;
+  duration?: string;
+  chip?: string;
+};
+
+type ConflictSchedulerResult = {
+  available: boolean;
+  detected: boolean;
+  events: ConflictSchedulerEvent[];
+  groups: Array<{
+    id: string;
+    eventIds: string[];
+    overlapMinutes: number;
+    overlapLabel: string;
+    events: ConflictSchedulerEvent[];
+  }>;
+};
+
 export type PlanDayInput = {
   currentDate: string;
   commitments: unknown[];
@@ -64,10 +86,15 @@ export type PlanDayResponse = {
   dailyPlan: GatewayPlanResult["dailyPlan"];
   trace: Array<{
     provider: "Vercel AI Gateway";
-    action: "Reviewed clarification answers" | "Vercel AI Gateway generated planning rationale" | "Vercel AI Gateway fallback planning";
+    action:
+      | "Reviewed clarification answers"
+      | "Conflict scheduler checked fixed events"
+      | "Vercel AI Gateway generated planning rationale"
+      | "Vercel AI Gateway fallback planning";
     status: PlanDayTraceStatus;
     detail: string;
   }>;
+  conflictScheduler?: ConflictSchedulerResult;
 };
 
 export async function gatewayHealthTrace(): Promise<AISponsorTraceItem> {
@@ -269,6 +296,50 @@ function mergeSourceContextWithReview(sourceContext: unknown, review: Clarificat
   };
 }
 
+function fixedEventValue(value: unknown, fallback = "") {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function eventTimeLabel(event: ConflictSchedulerEvent) {
+  return event.duration || event.time || "Time not provided";
+}
+
+function conflictSchedulerForInput(input: PlanDayInput): ConflictSchedulerResult {
+  const fixedEvents: ConflictSchedulerEvent[] = input.fixedEvents
+    .filter(isRecord)
+    .map((event, index) => {
+      const title = fixedEventValue(event.title, `Fixed event ${index + 1}`);
+      const duration = fixedEventValue(event.duration);
+      const time = fixedEventValue(event.time, duration);
+
+      const schedulerEvent: ConflictSchedulerEvent = {
+        id: fixedEventValue(event.id, `fixed-event-${index + 1}`),
+        title,
+        time,
+        duration: duration || undefined,
+        chip: fixedEventValue(event.status, fixedEventValue(event.chip, "Fixed")),
+      };
+
+      return schedulerEvent;
+    })
+    .filter((event) => event.time || event.duration);
+
+  const validation = validateTimelineConflicts(fixedEvents);
+  const eventsById = new Map(validation.events.map((event) => [event.id, event]));
+
+  return {
+    available: true,
+    detected: validation.groups.length > 0,
+    events: validation.events,
+    groups: validation.groups.map((group) => ({
+      ...group,
+      events: group.eventIds
+        .map((eventId) => eventsById.get(eventId))
+        .filter((event): event is ConflictSchedulerEvent => Boolean(event)),
+    })),
+  };
+}
+
 async function reviewClarificationsWithModel(model: string, input: PlanDayInput) {
   const { output } = await generateText({
     model: gatewayLanguageModel(model),
@@ -344,16 +415,20 @@ async function reviewClarifications(input: PlanDayInput) {
 }
 
 async function generatePlanWithModel(model: string, input: PlanDayInput) {
+  const conflictScheduler = conflictSchedulerForInput(input);
   const { output } = await generateText({
     model: gatewayLanguageModel(model),
     output: Output.object({ schema: GatewayPlanSchema }),
     system:
-      "You are StudentOS, an AI chief-of-staff for ambitious students. Produce a realistic daily plan from messy commitments, broad goals, and fixed constraints. Keep the plan student-specific, deadline-aware, and concise. Do not invent unrelated tasks.",
+      "You are StudentOS, an AI chief-of-staff for ambitious students. Produce a realistic daily plan from messy commitments, broad goals, and fixed constraints. Keep the plan student-specific, deadline-aware, and concise. Do not invent unrelated tasks. A deterministic conflict scheduler is available in the prompt; if it detects a fixed-event conflict, treat that scheduler result as source-of-truth and schedule flexible work around it.",
     prompt: JSON.stringify(
       {
         task:
           "Return planning rationale and daily plan JSON. Prioritise urgent deadlines, preserve fixed events, explain conflicts, and turn broad goals into scheduled next actions.",
-        input,
+        input: {
+          ...input,
+          conflictScheduler,
+        },
         schemaNotes: [
             "Return every field in the schema.",
             "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
@@ -365,6 +440,7 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
             `If a big step cannot be made smaller, split it into multiple non-back-to-back sessions, each no longer than ${MAX_STUDY_SESSION_MINUTES} minutes, titled '[Goal Step] — Session N'.`,
             "If the user gave no preferred time, choose a reasonable after-school/evening clock range instead of returning an empty timeLabel.",
             "Use 0 for an unknown estimatedMinutes value.",
+            "If conflictScheduler.detected is true, mention the conflict in summary/bullets and do not schedule flexible work inside any conflicting fixed-event range.",
         ],
       },
       null,
@@ -376,8 +452,23 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
 }
 
 export async function planDayWithVercelGateway(input: PlanDayInput): Promise<PlanDayResponse> {
+  const conflictScheduler = conflictSchedulerForInput(input);
+  const conflictSchedulerTrace: PlanDayResponse["trace"][number] = {
+    provider: "Vercel AI Gateway",
+    action: "Conflict scheduler checked fixed events",
+    status: "success",
+    detail: conflictScheduler.detected
+      ? `Conflict scheduler found ${conflictScheduler.groups.length} fixed-event overlap${conflictScheduler.groups.length === 1 ? "" : "s"}: ${conflictScheduler.groups
+          .map((group) => `${group.overlapLabel} between ${group.events.map((event) => `${event.title} (${eventTimeLabel(event)})`).join(" and ")}`)
+          .join("; ")}.`
+      : "Conflict scheduler found no overlapping fixed-event ranges.",
+  };
+
   if (!isVercelAiReady()) {
-    return buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.", input);
+    return {
+      ...buildFallbackPlan("USE_REAL_VERCEL_AI is disabled or Gateway auth is missing.", input),
+      conflictScheduler,
+    };
   }
 
   const primaryModel = sponsorEnv.aiGatewayModel;
@@ -425,6 +516,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
       dailyPlan: result.dailyPlan,
       trace: [
         ...prePlanTrace,
+        conflictSchedulerTrace,
         {
           provider: "Vercel AI Gateway",
           action: "Vercel AI Gateway generated planning rationale",
@@ -432,6 +524,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
           detail: `${primaryModel} returned a structured day plan.`,
         },
       ],
+      conflictScheduler,
     };
   } catch (primaryError) {
     if (fallbackModel && fallbackModel !== primaryModel) {
@@ -450,6 +543,7 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
           dailyPlan: result.dailyPlan,
           trace: [
             ...prePlanTrace,
+            conflictSchedulerTrace,
             {
               provider: "Vercel AI Gateway",
               action: "Vercel AI Gateway generated planning rationale",
@@ -457,9 +551,11 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
               detail: `${fallbackModel} returned a structured day plan after ${primaryModel} failed.`,
             },
           ],
+          conflictScheduler,
         };
       } catch (fallbackError) {
-        return buildFallbackPlan(
+        return {
+          ...buildFallbackPlan(
           `Primary and fallback Gateway calls failed: ${
             fallbackError instanceof Error
               ? fallbackError.message
@@ -468,13 +564,18 @@ export async function planDayWithVercelGateway(input: PlanDayInput): Promise<Pla
                 : "Unknown Gateway error"
           }`,
           input,
-        );
+          ),
+          conflictScheduler,
+        };
       }
     }
 
-    return buildFallbackPlan(
-      primaryError instanceof Error ? primaryError.message : "Unknown Gateway error",
-      input,
-    );
+    return {
+      ...buildFallbackPlan(
+        primaryError instanceof Error ? primaryError.message : "Unknown Gateway error",
+        input,
+      ),
+      conflictScheduler,
+    };
   }
 }
