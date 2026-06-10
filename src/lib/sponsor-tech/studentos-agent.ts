@@ -1406,6 +1406,22 @@ function fallbackFixedTimelineEvents(sources: CapturedSourceForAI[]) {
     const startTime = confirmedSourceFact(source, "start_time");
     const endTime = confirmedSourceFact(source, "end_time");
     if (!startTime || !endTime) return [];
+    const rawDate = confirmedSourceFact(source, "date");
+    const dateTimestamp = rawDate
+      ? Date.parse(rawDate.replace(/(\d)(st|nd|rd|th)\b/gi, "$1"))
+      : Number.NaN;
+    const dateKey = rawDate
+      ? Number.isNaN(dateTimestamp)
+        ? rawDate.toLowerCase()
+        : (() => {
+            const parsedDate = new Date(dateTimestamp);
+            return [
+              parsedDate.getFullYear(),
+              String(parsedDate.getMonth() + 1).padStart(2, "0"),
+              String(parsedDate.getDate()).padStart(2, "0"),
+            ].join("-");
+          })()
+      : undefined;
 
     const eventItem = source.interpretedItems?.find((item) => item.type === "event");
     const title = cleanFallbackItemText(
@@ -1416,7 +1432,7 @@ function fallbackFixedTimelineEvents(sources: CapturedSourceForAI[]) {
     return [{
       id: `fixed-${slugFrom(source.id, "event")}`,
       time: startTime,
-      dateKey: confirmedSourceFact(source, "date"),
+      dateKey,
       title,
       duration: `${startTime}-${endTime}`,
       chip: "Fixed event",

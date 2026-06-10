@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { normalizeDurationLabel } from "@/lib/duration-label";
+import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
@@ -530,7 +531,10 @@ function applyGoalResearchToFootprint(
   };
 }
 
-function normalizeAgentFootprint(footprint: StudentOSAgentFootprint): StudentOSAgentFootprint {
+function normalizeAgentFootprint(
+  footprint: StudentOSAgentFootprint,
+  sourceEvidence: CapturedSourceForAI[] = footprint.sources,
+): StudentOSAgentFootprint {
   const questions = footprint.clarificationQuestions.map((question) => ({
     ...question,
     options: question.options.slice(0, 4),
@@ -607,10 +611,99 @@ function normalizeAgentFootprint(footprint: StudentOSAgentFootprint): StudentOSA
       },
     }));
 
+  const sourceBackedFixedEvents = sourceEvidence.flatMap((source) => {
+    const confirmedFact = (field: "date" | "start_time" | "end_time") =>
+      source.verifiedFacts?.find((fact) => fact.field === field && fact.status === "confirmed")?.value.trim();
+    const startTime = confirmedFact("start_time");
+    const endTime = confirmedFact("end_time");
+    if (!startTime || !endTime) return [];
+    const rawDate = confirmedFact("date");
+    const normalizedDate = rawDate
+      ? (() => {
+          const timestamp = Date.parse(rawDate.replace(/(\d)(st|nd|rd|th)\b/gi, "$1"));
+          if (Number.isNaN(timestamp)) return rawDate.toLowerCase();
+          const parsedDate = new Date(timestamp);
+          return [
+            parsedDate.getFullYear(),
+            String(parsedDate.getMonth() + 1).padStart(2, "0"),
+            String(parsedDate.getDate()).padStart(2, "0"),
+          ].join("-");
+        })()
+      : undefined;
+
+    const eventItem = source.interpretedItems?.find((item) => item.type === "event");
+    const title = (
+      eventItem?.title ||
+      source.sourceSummary ||
+      source.snippet ||
+      source.title
+    ).replace(/\s+/g, " ").trim();
+
+    return [{
+      id: `verified-${source.id.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase()}`,
+      time: startTime,
+      dateKey: normalizedDate,
+      title,
+      duration: `${startTime}-${endTime}`,
+      chip: "Fixed event",
+      scheduleRationale: "StudentOS preserved this fixed event from confirmed source date and time facts.",
+    }];
+  });
+  const sourceBackedKeys = new Set(
+    footprint.timelineEvents.map((event) => `${event.title.toLowerCase()}|${event.duration ?? event.time}`),
+  );
+  const mergedTimeline = [
+    ...footprint.timelineEvents,
+    ...sourceBackedFixedEvents.filter(
+      (event) => !sourceBackedKeys.has(`${event.title.toLowerCase()}|${event.duration}`),
+    ),
+  ];
+  const allQuestions = [...questions, ...missingQuestions];
+  const needsClarification = allQuestions.length > 0;
+  const timelineValidation = validateTimelineConflicts(mergedTimeline);
+  const confirmedGroup = !needsClarification ? timelineValidation.groups[0] : undefined;
+  const confirmedEvents = confirmedGroup
+    ? timelineValidation.events.filter((event) => confirmedGroup.eventIds.includes(event.id))
+    : [];
+  const fixedEvent = confirmedEvents[0];
+  const conflictingEvent = confirmedEvents[1];
+  const conflictTitle = fixedEvent && conflictingEvent
+    ? `${fixedEvent.title} overlaps with ${conflictingEvent.title}`
+    : footprint.conflict.title;
+
   return {
     ...footprint,
+    sources: sourceEvidence,
     commitments,
-    clarificationQuestions: [...questions, ...missingQuestions].slice(0, 8),
+    clarificationQuestions: allQuestions.slice(0, 8),
+    timelineEvents: timelineValidation.events,
+    conflict: confirmedGroup
+      ? {
+          ...footprint.conflict,
+          title: conflictTitle,
+          unresolvedSummary: `${conflictTitle}. StudentOS opened the conflict solver before locking the plan.`,
+          fixedEventTitle: fixedEvent?.title ?? footprint.conflict.fixedEventTitle,
+          fixedEventTime: fixedEvent?.duration ?? fixedEvent?.time ?? footprint.conflict.fixedEventTime,
+          conflictingEventTitle: conflictingEvent?.title ?? footprint.conflict.conflictingEventTitle,
+          conflictingEventTime:
+            conflictingEvent?.duration ?? conflictingEvent?.time ?? footprint.conflict.conflictingEventTime,
+          overlapLabel: confirmedGroup.overlapLabel,
+          impactLabel: "Decision needed",
+        }
+      : footprint.conflict,
+    sponsorTrace: confirmedGroup
+      ? [
+          {
+            provider: "StudentOS",
+            action: "Validated source-backed schedule conflicts",
+            status: "success",
+            detail: `${conflictTitle} (${confirmedGroup.overlapLabel}).`,
+          },
+          ...footprint.sponsorTrace.filter(
+            (item) => item.action !== "Validated source-backed schedule conflicts",
+          ),
+        ]
+      : footprint.sponsorTrace,
   };
 }
 
@@ -850,7 +943,7 @@ function streamAwsAgentRequest(
         const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await callAwsAgent(endpoint, planningInput, [gatewayTrace]),
           goalResearch,
-        ));
+        ), parsed.data.sources);
         stopHeartbeat();
         send({
           type: "log",
@@ -912,7 +1005,7 @@ function streamAwsAgentRequest(
           footprint: normalizeAgentFootprint(applyGoalResearchToFootprint(
             prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
             goalResearch,
-          )),
+          ), parsed.data.sources),
         });
       } finally {
         controller.close();
@@ -977,7 +1070,7 @@ export async function POST(req: Request) {
         const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await callAwsAgent(awsAgentEndpoint, planningInput, [gatewayTrace]),
           goalResearch,
-        ));
+        ), parsed.data.sources);
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
@@ -1003,7 +1096,7 @@ export async function POST(req: Request) {
         const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await analyseWithLocalFallback(fallbackInput, awsAgentEndpoint, error, [gatewayTrace]),
           goalResearch,
-        ));
+        ), parsed.data.sources);
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "local-agent" },
@@ -1031,7 +1124,7 @@ export async function POST(req: Request) {
       localAwsTrace(),
       gatewayTrace,
       bedrockTextractTrace(analysisInput.sources),
-    ]), goalResearch));
+    ]), goalResearch), parsed.data.sources);
 
     return NextResponse.json(result, {
       headers: { "X-StudentOS-Agent-Compute": "local" },
@@ -1113,7 +1206,7 @@ export async function POST(req: Request) {
           footprint: normalizeAgentFootprint(applyGoalResearchToFootprint(
             prependSponsorTraces(result, [localTrace, gatewayTrace, sourceTrace]),
             goalResearch,
-          )),
+          ), parsed.data.sources),
         });
       } catch (error) {
         send({
