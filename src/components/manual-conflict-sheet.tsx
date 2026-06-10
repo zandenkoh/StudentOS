@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { BottomSheet } from "@/components/bottom-sheet";
 import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 
@@ -18,11 +19,33 @@ export function ManualConflictSheet({
   onClose: () => void;
   applying?: boolean;
 }) {
+  const initialInstructionRef = useRef(instruction);
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      initialInstructionRef.current = instruction;
+    }
+    wasOpenRef.current = open;
+  }, [instruction, open]);
+
+  const hasUnsavedInstruction = open && instruction !== initialInstructionRef.current;
+
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
       title="Tell StudentOS how to resolve it"
+      confirmClose={hasUnsavedInstruction}
+      onSaveBeforeClose={onApply}
+      onDiscardBeforeClose={() => {
+        onInstructionChange(initialInstructionRef.current);
+        onClose();
+      }}
+      closeConfirmationTitle="Save this instruction?"
+      closeConfirmationSubtitle="StudentOS has not applied this manual scheduling instruction yet."
+      closeConfirmationSaveLabel={applying ? "Replanning..." : "Apply instruction"}
+      closeConfirmationSaveDisabled={applying || !instruction.trim()}
     >
       <div className="space-y-4">
         <textarea

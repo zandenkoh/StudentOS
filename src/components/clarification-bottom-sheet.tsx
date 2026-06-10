@@ -210,10 +210,27 @@ export function ClarificationBottomSheet({
     advance();
   }
 
+  const hasUnsavedClarification =
+    open &&
+    (Object.keys(answers).length > 0 ||
+      Object.values(customAnswers).some((answer) => answer.trim().length > 0));
+  const answersToSave = {
+    ...answers,
+    ...(customAnswers[safeActiveIndex]?.trim()
+      ? { [safeActiveIndex]: customAnswers[safeActiveIndex].trim() }
+      : {}),
+  };
+
   return (
     <BottomSheet
       open={open}
       onClose={onClose}
+      confirmClose={hasUnsavedClarification}
+      onSaveBeforeClose={() => onSubmit(answersToSave)}
+      closeConfirmationTitle="Save clarification?"
+      closeConfirmationSubtitle="StudentOS can use your current answers, or you can discard them and return to the unresolved item."
+      closeConfirmationSaveLabel="Save answers"
+      closeConfirmationSaveDisabled={Object.keys(answersToSave).length === 0}
       title={titleOverride ?? (kind === "goal" ? "Clarify coding goal" : "Clarify team meeting")}
       subtitle={
         subtitleOverride ??

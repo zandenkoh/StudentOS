@@ -4,7 +4,7 @@ export const sponsorEnv = {
   useExa: process.env.USE_REAL_EXA === "true",
   useVercelAi: process.env.USE_REAL_VERCEL_AI === "true",
   useBedrock: process.env.USE_REAL_BEDROCK === "true",
-  aiGatewayModel: process.env.AI_GATEWAY_MODEL || "openai/gpt-5.4",
+  aiGatewayModel: process.env.AI_GATEWAY_MODEL || "anthropic/claude-sonnet-4.6",
   aiGatewayFallbackModel: process.env.AI_GATEWAY_FALLBACK_MODEL || "anthropic/claude-sonnet-4.6",
   aiGatewayResearchModel: process.env.AI_GATEWAY_RESEARCH_MODEL || "anthropic/claude-sonnet-4.6",
   vercelOidcToken: process.env.VERCEL_OIDC_TOKEN,

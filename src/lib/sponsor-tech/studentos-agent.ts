@@ -766,6 +766,139 @@ function sourceText(source: CapturedSourceForAI) {
     .join("\n");
 }
 
+const groundingStopwords = new Set([
+  "about",
+  "action",
+  "added",
+  "after",
+  "before",
+  "commitment",
+  "complete",
+  "confirm",
+  "created",
+  "deadline",
+  "details",
+  "event",
+  "finish",
+  "from",
+  "goal",
+  "have",
+  "keep",
+  "needs",
+  "plan",
+  "prepare",
+  "review",
+  "schedule",
+  "source",
+  "student",
+  "studentos",
+  "task",
+  "that",
+  "this",
+  "uploaded",
+  "with",
+]);
+
+const protectedDemoDetailPatterns = [
+  /\bphysics\b/i,
+  /\bchapter\s*12\b/i,
+  /\binduction\b/i,
+  /\bcca\b/i,
+  /\btuition\b/i,
+  /\bsarah\b/i,
+  /\bauditorium\b/i,
+  /\bpython\b/i,
+  /\bdecember\b/i,
+  /\b11\s*june\b/i,
+];
+
+function groundingTokens(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .toLowerCase()
+        .replace(/['’]/g, "")
+        .match(/[a-z0-9\u4e00-\u9fff]{2,}/gi)
+        ?.map((token) => token.trim())
+        .filter((token) => token.length >= 2 && !groundingStopwords.has(token)) ?? [],
+    ),
+  );
+}
+
+function hasGroundingSupport(candidate: string, corpus: string) {
+  const candidateTokens = groundingTokens(candidate);
+  if (candidateTokens.length === 0) return true;
+
+  const corpusTokens = new Set(groundingTokens(corpus));
+  const overlap = candidateTokens.filter((token) => corpusTokens.has(token)).length;
+  const requiredOverlap = candidateTokens.length <= 2 ? 1 : 2;
+
+  return overlap >= requiredOverlap;
+}
+
+function hasUngroundedProtectedDemoDetail(candidate: string, sourceCorpus: string) {
+  return protectedDemoDetailPatterns.some(
+    (pattern) => pattern.test(candidate) && !pattern.test(sourceCorpus),
+  );
+}
+
+function generatedCoreEvidenceText(core: GeneratedCore) {
+  return [
+    core.commitments.map((commitment) => `${commitment.title}\n${commitment.source}\n${commitment.explanation}`).join("\n"),
+    core.planTasks.map((task) => `${task.title}\n${task.reason}\n${task.source}`).join("\n"),
+    core.roadmapSteps
+      .map((step) =>
+        [
+          step.title,
+          step.description,
+          step.tasks.map((task) => `${task.title}\n${task.reason}\n${task.source}`).join("\n"),
+        ].join("\n"),
+      )
+      .join("\n"),
+  ].join("\n");
+}
+
+function assertGeneratedCoreGrounded(core: GeneratedCore, input: AnalyseStudentChaosRequest) {
+  const sourceCorpus = input.sources.map(sourceText).join("\n");
+  const sourceCorpusTokens = groundingTokens(sourceCorpus);
+
+  if (sourceCorpusTokens.length === 0) return;
+
+  const unsupportedCommitments = core.commitments.filter((commitment) => {
+    const commitmentText = `${commitment.title}\n${commitment.explanation}`;
+
+    return (
+      hasUngroundedProtectedDemoDetail(commitmentText, sourceCorpus) ||
+      !hasGroundingSupport(commitmentText, sourceCorpus)
+    );
+  });
+
+  if (unsupportedCommitments.length > 0) {
+    throw new Error(
+      `Planner returned unsupported commitments: ${unsupportedCommitments
+        .map((commitment) => commitment.title)
+        .slice(0, 3)
+        .join("; ")}`,
+    );
+  }
+
+  const coreText = generatedCoreEvidenceText(core);
+  const missingSourceItems = sourceFallbackItems(input.sources).filter(({ text }) => {
+    const tokens = groundingTokens(text);
+    if (tokens.length === 0) return false;
+    return !hasGroundingSupport(text, coreText);
+  });
+
+  if (missingSourceItems.length > 0) {
+    throw new Error(
+      `Planner missed submitted source items: ${missingSourceItems
+        .map((item) => item.text)
+        .slice(0, 3)
+        .join("; ")}`,
+    );
+  }
+}
+
 function sourceStats(sources: CapturedSourceForAI[]) {
   return {
     totalSources: sources.length,
@@ -1445,6 +1578,8 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
         },
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
+          "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
+          "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",
           "Treat the submitted source text as the source of truth. For short manual inputs, preserve the exact named event, subject, or roadmap target in commitments, roadmap steps, and plan tasks.",
           "Never use built-in demo details such as Physics worksheet, CCA briefing, tuition, Python coding by December, Sarah, or the 11 June competition unless those exact details are explicitly present in the submitted sources.",
           "Prefer interpretedSummary and interpretedTasks over raw OCR when they conflict.",
@@ -1482,7 +1617,10 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
     ),
   });
 
-  return GeneratedCoreSchema.parse(coerceGeneratedCore(parseJsonObject(text)));
+  const core = GeneratedCoreSchema.parse(coerceGeneratedCore(parseJsonObject(text)));
+  assertGeneratedCoreGrounded(core, input);
+
+  return core;
 }
 
 export async function analyseStudentChaos(

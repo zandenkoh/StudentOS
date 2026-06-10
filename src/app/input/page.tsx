@@ -220,6 +220,30 @@ const exampleSources: InputSource[] = [
   }
 ];
 
+const FRESH_ANALYSIS_STORAGE_KEYS = [
+  "studentos_ai_footprint",
+  "studentos_commitment_footprint",
+  "studentos_footprint",
+  "studentos_commitment_overrides",
+  "studentos_plan_overrides",
+  "studentos_flow_state",
+  "studentos_completed_task_ids",
+  "studentos_clarification_answers",
+  "studentos_extra_source_added",
+  "studentos_roadmap_added",
+  "studentos_resume_step",
+  "studentos_calendar_saved",
+  "studentos_vercel_plan_day_recommended_standard",
+  "studentos_vercel_plan_day_recommended_chemistry",
+];
+
+function clearFreshAnalysisState() {
+  FRESH_ANALYSIS_STORAGE_KEYS.forEach((key) => window.localStorage.removeItem(key));
+  Object.keys(window.localStorage)
+    .filter((key) => key.startsWith("studentos_vercel_plan_day_"))
+    .forEach((key) => window.localStorage.removeItem(key));
+}
+
 export default function InputPage() {
   const router = useRouter();
   const [sources, setSources] = useState<InputSource[]>([]);
@@ -718,7 +742,6 @@ export default function InputPage() {
 
   const revealSources = (nextSources: InputSource[]) => {
     setIsInjecting(true);
-    setSources([]);
 
     let currentIndex = 0;
     injectionIntervalRef.current = setInterval(() => {
@@ -733,7 +756,10 @@ export default function InputPage() {
         return;
       }
 
-      setSources((prev) => [...prev, nextSource]);
+      setSources((prev) => {
+        if (prev.some((source) => source.id === nextSource.id)) return prev;
+        return [...prev, nextSource];
+      });
       currentIndex++;
 
       if (currentIndex >= nextSources.length) {
@@ -810,11 +836,7 @@ export default function InputPage() {
     }));
 
     window.localStorage.setItem("studentos_captured_sources", JSON.stringify(capturedSources));
-    window.localStorage.removeItem("studentos_commitment_footprint");
-    window.localStorage.removeItem("studentos_ai_footprint");
-    window.localStorage.removeItem("studentos_plan_overrides");
-    window.localStorage.removeItem("studentos_vercel_plan_day_recommended_standard");
-    window.localStorage.removeItem("studentos_vercel_plan_day_recommended_chemistry");
+    clearFreshAnalysisState();
     router.push("/agents");
   };
 

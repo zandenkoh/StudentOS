@@ -43,6 +43,7 @@ const sourceInterpreterSystemPrompt = [
   "Your job is to summarize messy student attachments before the planner sees them.",
   "Read the actual image or PDF when provided; use OCR as supporting evidence, not as the only truth.",
   "Do not infer tasks, events, subjects, deadlines, or summaries from filenames, S3 keys, or generated storage names.",
+  "Every extracted task must be grounded by quoted or near-quoted source evidence. If evidence is missing, return no task and ask for clarification.",
   "Preserve and interpret non-English text, including Chinese, instead of ignoring it.",
   "A single attachment may contain multiple worksheets, messages, events, or tasks; extract each distinct actionable item.",
   "If the source only identifies a packet, cover page, or unclear chat context, mark needsClarification=true.",
@@ -52,6 +53,119 @@ const sourceInterpreterSystemPrompt = [
 function compactText(value = "", maxLength = 5000) {
   const text = value.replace(/\n{3,}/g, "\n\n").trim();
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+const groundingStopwords = new Set([
+  "about",
+  "action",
+  "added",
+  "after",
+  "again",
+  "before",
+  "commitment",
+  "complete",
+  "confirm",
+  "details",
+  "from",
+  "have",
+  "need",
+  "needs",
+  "review",
+  "schedule",
+  "source",
+  "student",
+  "studentos",
+  "task",
+  "that",
+  "this",
+  "uploaded",
+  "with",
+]);
+
+function meaningfulTokens(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .toLowerCase()
+        .replace(/['’]/g, "")
+        .match(/[a-z0-9\u4e00-\u9fff]{2,}/gi)
+        ?.map((token) => token.trim())
+        .filter((token) => token.length >= 2 && !groundingStopwords.has(token)) ?? [],
+    ),
+  );
+}
+
+function supportedByEvidence(candidate: string, evidence: string) {
+  const candidateTokens = meaningfulTokens(candidate);
+  if (candidateTokens.length === 0) return true;
+
+  const evidenceTokens = new Set(meaningfulTokens(evidence));
+  const overlap = candidateTokens.filter((token) => evidenceTokens.has(token)).length;
+  const requiredOverlap = candidateTokens.length <= 2 ? 1 : 2;
+
+  return overlap >= requiredOverlap;
+}
+
+function appendLanguageNote(current: string, note: string) {
+  return [current, note].filter(Boolean).join(" ");
+}
+
+function groundedInterpretation(
+  input: SourceInterpretationInput,
+  interpretation: SourceInterpretation,
+): SourceInterpretation {
+  const rawText = compactText(input.rawText);
+  const hasReliableText = rawText.length >= 20 && !isLowSignalOcr(rawText);
+
+  if (!hasReliableText && interpretation.extractedTasks.length > 0) {
+    const fallback = fallbackInterpretSource(input);
+
+    return {
+      ...fallback,
+      needsClarification: true,
+      confidence: Math.min(fallback.confidence, 0.42),
+      languageNotes: appendLanguageNote(
+        fallback.languageNotes,
+        "Model-extracted tasks were withheld because they could not be grounded in readable source text.",
+      ),
+    };
+  }
+
+  if (!hasReliableText) return interpretation;
+
+  const supportedTasks = interpretation.extractedTasks.filter((task) =>
+    supportedByEvidence(`${task.title}\n${task.evidence}`, rawText),
+  );
+
+  if (supportedTasks.length === interpretation.extractedTasks.length) return interpretation;
+
+  if (supportedTasks.length === 0) {
+    const fallback = fallbackInterpretSource(input);
+
+    return {
+      ...fallback,
+      needsClarification: true,
+      confidence: Math.min(fallback.confidence, 0.48),
+      languageNotes: appendLanguageNote(
+        fallback.languageNotes,
+        "Unsupported model-extracted tasks were removed before the review step.",
+      ),
+    };
+  }
+
+  return {
+    ...interpretation,
+    extractedTasks: supportedTasks,
+    needsClarification: true,
+    clarificationPrompt:
+      interpretation.clarificationPrompt ||
+      "Some extracted items were not clearly supported by the source text. Which remaining item should StudentOS schedule?",
+    confidence: Math.min(interpretation.confidence, 0.74),
+    languageNotes: appendLanguageNote(
+      interpretation.languageNotes,
+      "Unsupported model-extracted tasks were removed before the review step.",
+    ),
+  };
 }
 
 function sourceInterpreterPrompt(input: SourceInterpretationInput) {
@@ -66,6 +180,7 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
         "Use the title only as an attachment label; do not use it as evidence for extracted tasks.",
         "summary: one sentence, under 180 characters if possible.",
         "extractedTasks: student commitments only; use type='unclear' for ambiguous actions.",
+        "For each extracted task, evidence must quote or closely paraphrase text visible in ocrText or the attachment.",
         "clarificationPrompt: direct question for the review page when needed.",
         "languageNotes: mention if OCR likely dropped Chinese/non-English text or visual context.",
       ],
@@ -177,7 +292,7 @@ async function interpretWithBedrock(input: SourceInterpretationInput): Promise<S
 
   if (!text) throw new Error("Bedrock returned no text.");
 
-  return SourceInterpretationSchema.parse(extractJsonObject(text));
+  return groundedInterpretation(input, SourceInterpretationSchema.parse(extractJsonObject(text)));
 }
 
 function looksLikeExamCoverPage(text: string) {
@@ -289,7 +404,7 @@ export async function interpretSourceAttachment(
     const rawText = compactText(input.rawText);
 
     const { output } = await generateText({
-      model: gatewayLanguageModel(sponsorEnv.aiGatewayModel),
+      model: gatewayLanguageModel(sponsorEnv.aiGatewayFallbackModel || sponsorEnv.aiGatewayModel),
       output: Output.object({ schema: SourceInterpretationSchema }),
       system: sourceInterpreterSystemPrompt,
       messages: [
@@ -306,7 +421,7 @@ export async function interpretSourceAttachment(
       ],
     });
 
-    return { ...output, provider: "vercel-ai-gateway" };
+    return { ...groundedInterpretation(input, output), provider: "vercel-ai-gateway" };
   } catch {
     return { ...fallback, provider: "fallback" };
   }

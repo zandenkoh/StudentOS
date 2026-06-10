@@ -1900,6 +1900,14 @@ export default function CommitmentsPage() {
     showToast("Item deleted");
   }
 
+  const editHasUnsavedChanges = Boolean(
+    editing &&
+      (editDraft.title !== editing.title ||
+        editDraft.type !== editing.type ||
+        editDraft.estimatedDuration !== editing.estimatedDuration),
+  );
+  const addSourceHasUnsavedChanges = addSourceOpen && sourceDraft.trim().length > 0;
+
   return (
     <AppShell
       onReset={reset}
@@ -2109,6 +2117,12 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={editing !== null}
         onClose={() => setEditing(null)}
+        confirmClose={editHasUnsavedChanges}
+        onSaveBeforeClose={saveEdit}
+        onDiscardBeforeClose={() => setEditing(null)}
+        closeConfirmationTitle="Save item changes?"
+        closeConfirmationSubtitle="You edited the extracted commitment details."
+        closeConfirmationSaveLabel="Save changes"
         title="Edit item"
         subtitle="Correct extracted details before StudentOS builds the day."
         headerAction={
@@ -2252,6 +2266,16 @@ export default function CommitmentsPage() {
       <BottomSheet
         open={addSourceOpen}
         onClose={() => setAddSourceOpen(false)}
+        confirmClose={addSourceHasUnsavedChanges}
+        onSaveBeforeClose={submitAdditionalSource}
+        onDiscardBeforeClose={() => {
+          setSourceDraft("");
+          setAddSourceOpen(false);
+        }}
+        closeConfirmationTitle="Save this task?"
+        closeConfirmationSubtitle="StudentOS has not added this task to your plan yet."
+        closeConfirmationSaveLabel={sourceProcessing ? "Saving..." : "Add task"}
+        closeConfirmationSaveDisabled={sourceProcessing || !sourceDraft.trim()}
         title="Add task"
         subtitle="StudentOS will work it into your plan."
       >
