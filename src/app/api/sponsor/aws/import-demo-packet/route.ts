@@ -78,7 +78,7 @@ async function discoverDemoPacketFiles(): Promise<DemoPacketFile[]> {
   const entries = await readdir(ASSETS_DIR, { withFileTypes: true });
   const files = await Promise.all(
     entries
-      .filter((entry) => entry.isFile() && !entry.name.startsWith("."))
+      .filter((entry) => entry.isFile() && !entry.name.startsWith(".") && entry.name !== "Screenshot 2026-06-10 070725.jpg")
       .sort((a, b) => a.name.localeCompare(b.name))
       .map(async (entry) => {
         const absolutePath = path.join(ASSETS_DIR, entry.name);
