@@ -1,0 +1,23 @@
+{
+  "name": "StudentOS",
+  "short_name": "StudentOS",
+  "description": "StudentOS turns scattered student commitments, deadlines, files, chats, and goals into a realistic plan you can follow.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

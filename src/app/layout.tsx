@@ -10,8 +10,46 @@ const notoSans = Noto_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "StudentOS Demo",
-  description: "A cinematic AI student operating system demo."
+  title: {
+    default: "StudentOS | AI Chief of Staff for Students",
+    template: "%s | StudentOS"
+  },
+  description:
+    "StudentOS turns scattered student commitments, deadlines, files, chats, and goals into a realistic plan you can follow.",
+  applicationName: "StudentOS",
+  keywords: [
+    "StudentOS",
+    "student planner",
+    "AI study planner",
+    "student productivity",
+    "homework scheduler",
+    "academic planning",
+    "AI chief of staff"
+  ],
+  authors: [{ name: "StudentOS" }],
+  creator: "StudentOS",
+  publisher: "StudentOS",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" }
+    ],
+    shortcut: "/favicon.svg",
+    apple: "/apple-touch-icon.svg"
+  },
+  manifest: "/site.webmanifest",
+  openGraph: {
+    title: "StudentOS | AI Chief of Staff for Students",
+    description:
+      "Turn school chaos into a plan you can actually follow. StudentOS reads commitments, catches conflicts, and schedules the next best step.",
+    siteName: "StudentOS",
+    type: "website"
+  },
+  twitter: {
+    card: "summary",
+    title: "StudentOS | AI Chief of Staff for Students",
+    description:
+      "StudentOS turns student chaos into a realistic, deadline-aware plan."
+  }
 };
 
 export const viewport: Viewport = {

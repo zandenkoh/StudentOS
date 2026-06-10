@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="StudentOS">
+  <defs>
+    <linearGradient id="bg" x1="10" x2="54" y1="8" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2563EB"/>
+      <stop offset="0.52" stop-color="#0F766E"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="20" x2="47" y1="17" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DFFCF2"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <path fill="#B8F3DB" d="M18 14h28a4 4 0 0 1 4 4v29a3 3 0 0 1-3 3H21a7 7 0 0 1-7-7V18a4 4 0 0 1 4-4Z" opacity="0.28"/>
+  <path fill="url(#mark)" d="M22 17h22a3 3 0 0 1 3 3v26a2 2 0 0 1-2 2H23a6 6 0 0 1-6-6V22a5 5 0 0 1 5-5Zm1 6v19a2 2 0 0 0 2 2h16V23H23Z"/>
+  <path fill="#111827" d="M29.6 28.1c0-3.2 2.8-5.4 7-5.4 2.4 0 4.6.7 6.2 1.9l-2.1 3.8a7.6 7.6 0 0 0-4.4-1.5c-1.2 0-2 .4-2 1.1 0 2.5 8.9.9 8.9 6.8 0 3.4-2.9 5.7-7.3 5.7-2.9 0-5.7-.9-7.5-2.4l2.2-3.8c1.7 1.3 3.8 2 5.4 2 1.4 0 2.2-.4 2.2-1.2 0-2.6-8.6-.9-8.6-7Z"/>
+  <path fill="#5EEAD4" d="M47 16.5 53 19l-6 2.5-2.5 6-2.5-6-6-2.5 6-2.5 2.5-6 2.5 6Z"/>
+</svg>
