@@ -1716,26 +1716,7 @@ export default function CommitmentsPage() {
       if (focusPlanTaskId) {
         setHighlightedTaskId(focusPlanTaskId);
       }
-      if (trigger === "clarification") {
-        const nextUnresolvedCount = effectiveResult.commitments.filter(
-          (item) => item.state === "needs_clarification" || item.state === "unsure",
-        ).length;
-        if (nextUnresolvedCount === 0) {
-          const nextHasConflict =
-            Boolean(effectiveResult.conflict?.hasConflict) &&
-            validateTimelineConflicts(effectiveResult.timelineEvents).groups.length > 0;
-          if (nextHasConflict) {
-            router.push("/conflicts");
-          } else {
-            setStep("plan");
-            persistFlowState({
-              step: "plan",
-              conflictResolved: true,
-              resolutionMode: "recommended",
-            });
-          }
-        }
-      }
+
       if (trigger === "manual_conflict") {
         const stillHasConflict = validateTimelineConflicts(effectiveResult.resolvedTimelineEvents).groups.length > 0;
         setConflictResolved(!stillHasConflict);

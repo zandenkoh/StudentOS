@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ChevronDown,
+  ChevronRight,
   Loader2,
   Server,
   type LucideIcon
@@ -663,15 +664,6 @@ export default function AgentsThinkingPage() {
     });
   }, [agentLogs]);
 
-  useEffect(() => {
-    if (!readyToRedirect) return;
-    const redirectTimer = window.setTimeout(() => {
-      router.push("/commitments");
-    }, 650);
-
-    return () => window.clearTimeout(redirectTimer);
-  }, [readyToRedirect, router]);
-
   return (
     <AppShell
       stepLabel="Agent Log"
@@ -691,7 +683,7 @@ export default function AgentsThinkingPage() {
             </motion.div>
           </div>
           <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h1 className="text-[19px] font-bold leading-tight tracking-tight text-ink">
                 Agent is building your plan
               </h1>
@@ -704,20 +696,36 @@ export default function AgentsThinkingPage() {
                 </span>
               </p>
             </div>
-            <div className="flex shrink-0 items-center gap-2 rounded-full bg-neutral-100 px-2.5 py-1.5">
-              {!done && !analysisFailed ? (
-                <Loader2 className="size-3.5 animate-spin text-emerald-600" />
-              ) : (
-                <span
-                  className={cn(
-                    "size-1.5 rounded-full",
-                    analysisFailed ? "bg-red-500" : "bg-emerald-500"
-                  )}
-                />
-              )}
-              <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">
-                {statusLabel}
-              </span>
+            <div className="flex shrink-0 items-center gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/commitments")}
+                className={cn(
+                  "flex items-center gap-1 px-4 py-2 text-xs font-bold shadow transition-all rounded-full cursor-pointer",
+                  done
+                    ? "bg-ink text-white hover:scale-[1.02] active:scale-[0.98] ring-4 ring-neutral-100"
+                    : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                )}
+              >
+                <span>Proceed</span>
+                <ChevronRight className="size-3.5" />
+              </button>
+
+              <div className="flex items-center gap-2 rounded-full bg-neutral-100 px-2.5 py-1.5">
+                {!done && !analysisFailed ? (
+                  <Loader2 className="size-3.5 animate-spin text-emerald-600" />
+                ) : (
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      analysisFailed ? "bg-red-500" : "bg-emerald-500"
+                    )}
+                  />
+                )}
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">
+                  {statusLabel}
+                </span>
+              </div>
             </div>
           </div>
           <div className="mt-3 lg:hidden">

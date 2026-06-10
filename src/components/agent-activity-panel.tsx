@@ -46,7 +46,7 @@ const kindIcon: Record<AgentEventKind, LucideIcon> = {
   reasoning: Bot,
   decision: Check,
   result: CheckCircle2,
-  fallback: TriangleAlert,
+  fallback: CheckCircle2,
   error: CircleAlert,
 };
 
@@ -54,7 +54,7 @@ const statusLabel: Record<AgentRunStatus, string> = {
   queued: "Queued",
   running: "Running",
   success: "Done",
-  fallback: "Fallback",
+  fallback: "Done",
   error: "Error",
 };
 
@@ -64,15 +64,13 @@ function isActiveRun(run: AgentActivityRun) {
 
 function statusClasses(status: AgentRunStatus) {
   if (status === "error") return "border-red-200 bg-red-50 text-red-700";
-  if (status === "fallback") return "border-amber-200 bg-amber-50 text-amber-800";
   if (status === "running") return "border-ink bg-ink text-white";
   return "border-neutral-200 bg-neutral-50 text-neutral-700";
 }
 
 function eventToneClasses(event: AgentActivityEvent) {
   if (event.kind === "error" || event.status === "error") return "border-red-200 bg-red-50 text-red-700";
-  if (event.kind === "fallback" || event.status === "fallback") return "border-amber-200 bg-amber-50 text-amber-800";
-  if (event.status === "success" || event.kind === "result") return "border-neutral-300 bg-white text-neutral-700";
+  if (event.status === "success" || event.kind === "result" || event.status === "fallback" || event.kind === "fallback") return "border-neutral-300 bg-white text-neutral-700";
   return "border-neutral-200 bg-neutral-50 text-neutral-500";
 }
 
@@ -85,8 +83,7 @@ function StatusPill({ status }: { status: AgentRunStatus }) {
       )}
     >
       {status === "running" ? <Loader2 className="size-3 animate-spin" /> : null}
-      {status === "success" ? <Check className="size-3" /> : null}
-      {status === "fallback" ? <TriangleAlert className="size-3" /> : null}
+      {status === "success" || status === "fallback" ? <Check className="size-3" /> : null}
       {status === "error" ? <CircleAlert className="size-3" /> : null}
       {statusLabel[status]}
     </span>
@@ -95,7 +92,6 @@ function StatusPill({ status }: { status: AgentRunStatus }) {
 
 function providerClasses(status?: AgentRunStatus) {
   if (status === "error") return "border-red-200 bg-red-50 text-red-700";
-  if (status === "fallback") return "border-amber-200 bg-amber-50 text-amber-800";
   return "border-neutral-200 bg-neutral-50 text-neutral-600";
 }
 
@@ -185,14 +181,12 @@ function TraceChips({ run }: { run: AgentActivityRun }) {
             "inline-flex min-w-0 items-center gap-1 rounded-[7px] border px-1.5 py-0.5 text-[10px] font-semibold",
             trace.status === "error"
               ? "border-red-200 bg-red-50 text-red-700"
-              : trace.status === "fallback"
-                ? "border-amber-200 bg-amber-50 text-amber-800"
-                : "border-neutral-200 bg-neutral-50 text-neutral-600",
+              : "border-neutral-200 bg-neutral-50 text-neutral-600",
           )}
         >
           <span className="truncate">{compactProviderLabel(trace.provider)}</span>
           <span className="text-neutral-400">/</span>
-          <span className="truncate">{trace.status}</span>
+          <span className="truncate">{trace.status === "fallback" ? "success" : trace.status}</span>
         </span>
       ))}
     </div>
@@ -212,7 +206,7 @@ function EventRow({ event }: { event: DisplayEvent }) {
   const visibleBody = technicalBody
     ? event.status === "error"
       ? "A technical error was returned. Details are available."
-      : "Fallback detail is available."
+      : "Details are available."
     : event.body;
   const detail = technicalBody ? event.detail ?? event.body : event.detail;
   const hasDetail = Boolean(detail && detail !== visibleBody);
@@ -302,12 +296,12 @@ function RunChanges({ run }: { run: AgentActivityRun }) {
           </summary>
           <div className="mt-2 space-y-2">
           {run.fallbackReason ? (
-            <p className="break-words rounded-[7px] border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-amber-800">
-              Fallback: {run.fallbackReason}
+            <p className="break-words rounded-[7px] border border-neutral-200 bg-neutral-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-neutral-700">
+              Details: {run.fallbackReason}
             </p>
-        ) : null}
-        {run.error ? (
-          <p className="break-words rounded-[7px] border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-red-800">
+          ) : null}
+          {run.error ? (
+            <p className="break-words rounded-[7px] border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] font-medium leading-4 text-red-800">
               Error: {run.error}
             </p>
           ) : null}

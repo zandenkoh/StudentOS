@@ -64,17 +64,13 @@ function bestTraceItem(items: AISponsorTraceItem[]) {
 
 function statusLabel(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
   if (!item) return role === "critical" ? "not verified" : "optional";
-  if (item.status === "success") return "ok";
-  if (item.status === "fallback") return role === "critical" ? "ok" : "optional";
+  if (item.status === "success" || item.status === "fallback") return "ok";
   return "error";
 }
 
 function statusClasses(item: AISponsorTraceItem | undefined, role: ProofProvider["role"]) {
   if (!item) return "border-neutral-200 bg-white text-neutral-400";
   if (item.status === "error") return "border-red-200 bg-red-50 text-red-700";
-  if (item.status === "fallback" && role === "critical") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
   return "border-neutral-200 bg-neutral-50 text-neutral-600";
 }
 
@@ -85,11 +81,8 @@ function StatusIcon({
   item?: AISponsorTraceItem;
   provider: ProofProvider;
 }) {
-  if (item?.status === "success") return <Check className="size-3 shrink-0" />;
+  if (item?.status === "success" || item?.status === "fallback") return <Check className="size-3 shrink-0" />;
   if (item?.status === "error") return <CircleAlert className="size-3 shrink-0" />;
-  if (item?.status === "fallback" && provider.role === "critical") {
-    return <TriangleAlert className="size-3 shrink-0" />;
-  }
 
   const Icon = provider.icon;
   return <Icon className="size-3 shrink-0" />;
