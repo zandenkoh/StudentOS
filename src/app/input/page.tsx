@@ -973,30 +973,32 @@ export default function InputPage() {
                           <p className="truncate text-[14px] font-bold text-ink leading-tight">
                             {source.title}
                           </p>
-                          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[9px] font-bold text-neutral-400">
-                            {source.fileSize || "10 KB"}
-                          </span>
                         </div>
                         <p className="truncate text-xs font-medium text-muted mt-0.5">
                           {source.snippet}
                         </p>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[9px] font-bold leading-none text-neutral-400">
+                            {source.fileSize || "10 KB"}
+                          </span>
+                          {source.sponsorStatus && (
+                            <span className="inline-flex rounded-full border border-sky-100 bg-sky-50 px-1.5 py-0.5 text-[9px] font-bold leading-none text-sky-700">
+                              {source.sponsorStatus === "cached"
+                                ? "Cached"
+                                : source.sponsorStatus === "extracted"
+                                  ? "Textract"
+                                  : source.sponsorStatus === "uploaded"
+                                    ? "S3"
+                                    : "Fallback"}
+                            </span>
+                          )}
+                          <span className="inline-flex rounded-full border border-neutral-100 bg-[#FAFAFA] px-1.5 py-0.5 text-[9px] font-bold leading-none text-neutral-500">
+                            {source.source}
+                          </span>
+                        </div>
                       </div>
                       
-                      <div className="flex items-center gap-1">
-                        {source.sponsorStatus && (
-                          <span className="hidden sm:inline-flex rounded-full border border-sky-100 bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">
-                            {source.sponsorStatus === "cached"
-                              ? "Cached"
-                              : source.sponsorStatus === "extracted"
-                                ? "Textract"
-                                : source.sponsorStatus === "uploaded"
-                                  ? "S3"
-                                  : "Fallback"}
-                          </span>
-                        )}
-                        <span className="hidden sm:inline-flex rounded-full bg-[#FAFAFA] border border-neutral-100 px-2 py-0.5 text-[9px] font-bold text-neutral-500">
-                          {source.source}
-                        </span>
+                      <div className="flex items-center">
                         <button
                           onClick={(e) => handleRemoveSource(source.id, e)}
                           className="flex size-7 items-center justify-center rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-ink transition-colors"
