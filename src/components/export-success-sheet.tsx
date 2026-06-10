@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CalendarCheck, CalendarDays, CheckCircle2 } from "lucide-react";
 import { BottomSheet } from "@/components/bottom-sheet";
-import { PrimaryButton, SecondaryButton } from "@/components/buttons";
+import { PrimaryButton } from "@/components/buttons";
 
 export function ExportSuccessSheet({
   open,
