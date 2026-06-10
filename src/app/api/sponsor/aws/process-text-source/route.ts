@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { uploadBufferToS3 } from "@/lib/sponsor-tech/aws-s3";
 import { isAwsReady } from "@/lib/sponsor-tech/env";
+import { interpretSourceAttachment } from "@/lib/sponsor-tech/source-interpreter";
 import {
   loadSourceCache,
   saveSourceCache,
@@ -37,6 +38,11 @@ export async function POST(req: Request) {
   const contentHash = sha256(text);
   const sourceId = `${origin}-${contentHash.slice(0, 16)}`;
   const cacheKey = sourceCacheKey(origin, sourceId);
+  const interpretation = await interpretSourceAttachment({
+    title,
+    fileType: "text",
+    rawText: text,
+  });
 
   if (!isAwsReady()) {
     return NextResponse.json({
@@ -45,9 +51,18 @@ export async function POST(req: Request) {
         sourceId,
         origin,
         title,
-        source: "Added task",
+        source: interpretation.sourceKind === "goal" ? "Added goal" : "Added task",
         fileType: "text",
-        snippet: text,
+        snippet: interpretation.summary || text,
+        sourceSummary: interpretation.summary,
+        sourceKind: interpretation.sourceKind,
+        interpretedItems: interpretation.extractedTasks,
+        extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+        extractedEvidence: interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
+        sourceConfidence: interpretation.confidence,
+        languageNotes: interpretation.languageNotes,
+        needsClarification: interpretation.needsClarification,
+        clarificationPrompt: interpretation.clarificationPrompt,
         provider: "mock",
         sponsorStatus: "fallback",
       },
@@ -71,6 +86,17 @@ export async function POST(req: Request) {
         provider: "aws-source-cache",
         source: {
           ...cached,
+          snippet: cached.sourceSummary || interpretation.summary || cached.snippet,
+          sourceSummary: cached.sourceSummary || interpretation.summary,
+          sourceKind: cached.sourceKind || interpretation.sourceKind,
+          interpretedItems: cached.interpretedItems || interpretation.extractedTasks,
+          extractedTasks: cached.extractedTasks || interpretation.extractedTasks.map((task) => task.title),
+          extractedEvidence:
+            cached.extractedEvidence || interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
+          sourceConfidence: cached.sourceConfidence ?? interpretation.confidence,
+          languageNotes: cached.languageNotes || interpretation.languageNotes,
+          needsClarification: cached.needsClarification ?? interpretation.needsClarification,
+          clarificationPrompt: cached.clarificationPrompt || interpretation.clarificationPrompt,
           sponsorStatus: "cached",
         },
         trace: [
@@ -99,10 +125,19 @@ export async function POST(req: Request) {
       title,
       source: "AWS S3",
       fileType: "text",
-      snippet: text,
+      snippet: interpretation.summary || text,
       s3Key,
       contentHash,
       textractText: text,
+      sourceSummary: interpretation.summary,
+      sourceKind: interpretation.sourceKind,
+      interpretedItems: interpretation.extractedTasks,
+      extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+      extractedEvidence: interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
+      sourceConfidence: interpretation.confidence,
+      languageNotes: interpretation.languageNotes,
+      needsClarification: interpretation.needsClarification,
+      clarificationPrompt: interpretation.clarificationPrompt,
       provider: "aws-s3",
       sponsorStatus: "uploaded",
       processedAt: new Date().toISOString(),
@@ -134,7 +169,16 @@ export async function POST(req: Request) {
         title,
         source: "Added task",
         fileType: "text",
-        snippet: text,
+        snippet: interpretation.summary || text,
+        sourceSummary: interpretation.summary,
+        sourceKind: interpretation.sourceKind,
+        interpretedItems: interpretation.extractedTasks,
+        extractedTasks: interpretation.extractedTasks.map((task) => task.title),
+        extractedEvidence: interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
+        sourceConfidence: interpretation.confidence,
+        languageNotes: interpretation.languageNotes,
+        needsClarification: interpretation.needsClarification,
+        clarificationPrompt: interpretation.clarificationPrompt,
         provider: "mock",
         sponsorStatus: "fallback",
       },

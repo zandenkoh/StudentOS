@@ -53,6 +53,12 @@ type InputSource = {
   provider?: string;
   ocrText?: string;
   sourceSummary?: string;
+  sourceKind?: "task" | "event" | "deadline" | "goal" | "mixed" | "unclear";
+  interpretedItems?: Array<{
+    title: string;
+    type: "task" | "event" | "deadline" | "goal" | "reminder" | "unclear";
+    evidence?: string;
+  }>;
   extractedTasks?: string[];
   extractedEvidence?: string[];
   sourceConfidence?: number;
@@ -89,6 +95,8 @@ type AwsExtractResponse = {
   text?: string;
   blockCount?: number;
   summary?: string;
+  sourceKind?: InputSource["sourceKind"];
+  interpretedItems?: InputSource["interpretedItems"];
   extractedTasks?: string[];
   extractedEvidence?: string[];
   confidence?: number;
@@ -110,6 +118,8 @@ type CachedSourceResponse = {
   provider?: string;
   textractText?: string;
   sourceSummary?: string;
+  sourceKind?: InputSource["sourceKind"];
+  interpretedItems?: InputSource["interpretedItems"];
   extractedTasks?: string[];
   extractedEvidence?: string[];
   sourceConfidence?: number;
@@ -499,6 +509,8 @@ export default function InputPage() {
       let ocrText = "";
       let sponsorStatus: InputSource["sponsorStatus"] = "uploaded";
       let sourceSummary: string | undefined;
+      let sourceKind: InputSource["sourceKind"] | undefined;
+      let interpretedItems: InputSource["interpretedItems"] | undefined;
       let extractedTasks: string[] | undefined;
       let extractedEvidence: string[] | undefined;
       let sourceConfidence: number | undefined;
@@ -530,6 +542,8 @@ export default function InputPage() {
         if (extraction.text || extraction.summary) {
           ocrText = extraction.text || "";
           sourceSummary = extraction.summary;
+          sourceKind = extraction.sourceKind;
+          interpretedItems = extraction.interpretedItems;
           extractedTasks = extraction.extractedTasks;
           extractedEvidence = extraction.extractedEvidence;
           sourceConfidence = extraction.confidence;
@@ -568,6 +582,8 @@ export default function InputPage() {
         provider: sourceProvider,
         ocrText,
         sourceSummary,
+        sourceKind,
+        interpretedItems,
         extractedTasks,
         extractedEvidence,
         sourceConfidence,
@@ -733,6 +749,8 @@ export default function InputPage() {
       provider: source.provider,
       ocrText: source.textractText,
       sourceSummary: source.sourceSummary,
+      sourceKind: source.sourceKind,
+      interpretedItems: source.interpretedItems,
       extractedTasks: source.extractedTasks,
       extractedEvidence: source.extractedEvidence,
       sourceConfidence: source.sourceConfidence,
@@ -829,6 +847,8 @@ export default function InputPage() {
       sponsorStatus: source.sponsorStatus,
       ocrText: source.ocrText,
       sourceSummary: source.sourceSummary,
+      sourceKind: source.sourceKind,
+      interpretedItems: source.interpretedItems,
       extractedTasks: source.extractedTasks,
       extractedEvidence: source.extractedEvidence,
       sourceConfidence: source.sourceConfidence,

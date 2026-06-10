@@ -47,8 +47,8 @@ function sourceText(source: CapturedSourceForAI) {
     source.source,
     source.title,
     source.sourceSummary,
-    source.textractText,
-    source.ocrText,
+    source.sourceKind,
+    source.interpretedItems?.map((item) => `${item.type}:${item.title}`).join(" "),
   ]
     .filter(Boolean)
     .join(" ");
@@ -60,16 +60,16 @@ export function bedrockTextractTrace(sources: CapturedSourceForAI[]): AISponsorT
   if (interpretedSources.length > 0) {
     return {
       provider: "AWS Bedrock/Textract",
-      action: "Read source evidence with Bedrock/Textract",
+      action: "Interpreted source evidence with Bedrock/Textract",
       status: "success",
-      detail: `${interpretedSources.length} source${interpretedSources.length === 1 ? "" : "s"} carried Bedrock or Textract evidence into the agent run.`,
+      detail: `${interpretedSources.length} source${interpretedSources.length === 1 ? "" : "s"} carried interpreted Bedrock or Textract summaries into the agent run.`,
     };
   }
 
   return {
     provider: "AWS Bedrock/Textract",
-    action: "Read source evidence with Bedrock/Textract",
+    action: "Interpreted source evidence with Bedrock/Textract",
     status: "fallback",
-    detail: "No Bedrock/Textract source evidence was present for this run; StudentOS kept the demo stable with source fallbacks.",
+    detail: "No Bedrock/Textract interpreted source summary was present for this run; StudentOS kept the demo stable with source fallbacks.",
   };
 }

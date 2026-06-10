@@ -14,6 +14,8 @@ export type SourcePreview = {
   provider?: string;
   sponsorStatus?: string;
   sourceSummary?: string;
+  sourceKind?: CapturedSourceForAI["sourceKind"];
+  interpretedItems?: CapturedSourceForAI["interpretedItems"];
   extractedTasks?: string[];
   extractedEvidence?: string[];
   sourceConfidence?: number;
@@ -77,6 +79,8 @@ function previewFromCapturedSource(source: CapturedSourceForAI): SourcePreview {
     provider: source.provider,
     sponsorStatus: source.sponsorStatus,
     sourceSummary: source.sourceSummary,
+    sourceKind: source.sourceKind,
+    interpretedItems: source.interpretedItems,
     extractedTasks: source.extractedTasks,
     extractedEvidence: source.extractedEvidence,
     sourceConfidence: source.sourceConfidence,

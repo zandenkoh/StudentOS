@@ -21,6 +21,7 @@ const InterpretedTaskSchema = z.object({
 
 const SourceInterpretationSchema = z.object({
   summary: z.string(),
+  sourceKind: z.enum(["task", "event", "deadline", "goal", "mixed", "unclear"]).default("unclear"),
   extractedTasks: z.array(InterpretedTaskSchema).max(6),
   needsClarification: z.boolean(),
   clarificationPrompt: z.string(),
@@ -166,6 +167,7 @@ function consolidateSingleLearningGoal(
     summary: interpretation.summary.includes("single learning goal")
       ? interpretation.summary
       : `${interpretation.summary} Treated as one learning goal; sub-skills belong in the roadmap.`,
+    sourceKind: "goal",
     extractedTasks: [
       {
         title: consolidatedTitle,
@@ -188,6 +190,17 @@ function groundedInterpretation(
   const consolidatedInterpretation = consolidateSingleLearningGoal(input, interpretation);
   const rawText = compactText(input.rawText);
   const hasReliableText = rawText.length >= 20 && !isLowSignalOcr(rawText);
+  const hasMultimodalAttachment = Boolean(input.s3Key && (input.fileType === "image" || input.fileType === "pdf"));
+
+  if (!hasReliableText && hasMultimodalAttachment) {
+    return {
+      ...consolidatedInterpretation,
+      languageNotes: appendLanguageNote(
+        consolidatedInterpretation.languageNotes,
+        "The multimodal model read the attachment directly; OCR was used only as supporting context.",
+      ),
+    };
+  }
 
   if (!hasReliableText && consolidatedInterpretation.extractedTasks.length > 0) {
     const fallback = fallbackInterpretSource(input);
@@ -251,6 +264,7 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
         "Return JSON only.",
         "Use the title only as an attachment label; do not use it as evidence for extracted tasks.",
         "summary: one sentence, under 180 characters if possible.",
+        "sourceKind: the dominant label for this attachment: task, event, deadline, goal, mixed, or unclear.",
         "extractedTasks: student commitments only; use type='unclear' for ambiguous actions.",
         "If the source is one broad learning goal, return exactly one extracted task of type='goal'. Do not extract prerequisites, milestones, sub-skills, or roadmap steps as separate commitments.",
         "For each extracted task, evidence must quote or closely paraphrase text visible in ocrText or the attachment.",
@@ -259,6 +273,7 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
       ],
       outputShape: {
         summary: "string",
+        sourceKind: "task|event|deadline|goal|mixed|unclear",
         extractedTasks: [{ title: "string", type: "task|event|deadline|goal|reminder|unclear", evidence: "string" }],
         needsClarification: "boolean",
         clarificationPrompt: "string",
@@ -389,6 +404,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
     return {
       summary:
         "Exam or worksheet cover page detected. It identifies the packet but does not say which biology questions the student wants done.",
+      sourceKind: "unclear",
       extractedTasks: [
         {
           title: "Clarify which biology worksheet questions to complete",
@@ -408,6 +424,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
     return {
       summary:
         "The attachment appears to need visual or multilingual interpretation, but OCR alone did not provide enough reliable text.",
+      sourceKind: "unclear",
       extractedTasks: [
         {
           title: "Ask the student what action to take from this attachment",
@@ -427,6 +444,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
     summary: rawText
       ? rawText.split("\n").find((line) => line.trim().length > 12)?.slice(0, 180) ?? rawText.slice(0, 180)
       : "Source uploaded for StudentOS review.",
+    sourceKind: "unclear",
     extractedTasks: [],
     needsClarification: false,
     clarificationPrompt: "",

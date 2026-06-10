@@ -17,6 +17,12 @@ export type CachedSourceRecord = {
   textractText?: string;
   textractBlockCount?: number;
   sourceSummary?: string;
+  sourceKind?: "task" | "event" | "deadline" | "goal" | "mixed" | "unclear";
+  interpretedItems?: Array<{
+    title: string;
+    type: "task" | "event" | "deadline" | "goal" | "reminder" | "unclear";
+    evidence?: string;
+  }>;
   extractedTasks?: string[];
   extractedEvidence?: string[];
   sourceConfidence?: number;

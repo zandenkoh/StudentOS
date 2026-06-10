@@ -154,6 +154,8 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
       return {
         ...cached,
         sourceSummary: interpretation.summary,
+        sourceKind: interpretation.sourceKind,
+        interpretedItems: interpretation.extractedTasks,
         extractedTasks: interpretation.extractedTasks.map((task) => task.title),
         extractedEvidence: interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
         sourceConfidence: interpretation.confidence,
@@ -220,6 +222,8 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     textractText,
     textractBlockCount,
     sourceSummary: interpretation.summary,
+    sourceKind: interpretation.sourceKind,
+    interpretedItems: interpretation.extractedTasks,
     extractedTasks: interpretation.extractedTasks.map((task) => task.title),
     extractedEvidence: interpretation.extractedTasks.map((task) => task.evidence).filter(Boolean),
     sourceConfidence: interpretation.confidence,

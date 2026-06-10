@@ -220,14 +220,57 @@ function sourceText(source: CapturedSourceForAI) {
     source.source,
     source.snippet,
     source.sourceSummary,
+    source.sourceKind ? `Source label: ${source.sourceKind}` : undefined,
+    source.interpretedItems?.map((item) => `${item.type}: ${item.title}${item.evidence ? ` (${item.evidence})` : ""}`).join("\n"),
     ...(source.extractedTasks ?? []),
     ...(source.extractedEvidence ?? []),
     source.clarificationPrompt,
-    source.ocrText,
-    source.textractText,
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function summaryOnlySource(source: CapturedSourceForAI): CapturedSourceForAI {
+  const interpretedItems =
+    source.interpretedItems ??
+    source.extractedTasks?.map((title, index) => ({
+      title,
+      type: "unclear" as const,
+      evidence: source.extractedEvidence?.[index],
+    }));
+  const sourceSummary =
+    source.sourceSummary ||
+    source.snippet ||
+    interpretedItems?.map((item) => `${item.type}: ${item.title}`).join("; ") ||
+    "Uploaded source needs interpretation.";
+
+  return {
+    ...source,
+    snippet: sourceSummary,
+    sourceSummary,
+    sourceKind: source.sourceKind ?? (interpretedItems?.length ? "mixed" : "unclear"),
+    interpretedItems,
+    extractedTasks: source.extractedTasks ?? interpretedItems?.map((item) => item.title),
+    extractedEvidence: source.extractedEvidence ?? interpretedItems?.map((item) => item.evidence ?? "").filter(Boolean),
+    ocrText: undefined,
+    textractText: undefined,
+  };
+}
+
+function summaryOnlyAnalysisInput(input: AnalyseStudentChaosRequest): AnalyseStudentChaosRequest {
+  return {
+    ...input,
+    sources: input.sources.map(summaryOnlySource),
+    sourceContext: {
+      ...(typeof input.sourceContext === "object" && input.sourceContext !== null ? input.sourceContext : {}),
+      sourceProcessingMode: "summary-first",
+      planningDirectives: [
+        "Use interpreted source summaries, sourceKind labels, and interpretedItems as the source of truth.",
+        "Do not depend on raw OCR, Textract, transcription, or filename text during analysis.",
+        "Ask clarification questions when interpreted summaries mark a source unclear or low-confidence.",
+      ],
+    },
+  };
 }
 
 function cleanGoalCandidate(value: string) {
@@ -266,11 +309,13 @@ function researchPacketForGoal(sources: CapturedSourceForAI[], goal: string) {
           source.source ? `Source type: ${source.source}` : undefined,
           source.snippet ? `Student note: ${source.snippet}` : undefined,
           source.sourceSummary ? `Interpreted summary: ${source.sourceSummary}` : undefined,
+          source.sourceKind ? `Source label: ${source.sourceKind}` : undefined,
+          source.interpretedItems?.length
+            ? `Interpreted items: ${source.interpretedItems.map((item) => `${item.type}: ${item.title}`).join("; ")}`
+            : undefined,
           source.extractedTasks?.length ? `Extracted tasks: ${source.extractedTasks.join("; ")}` : undefined,
           source.extractedEvidence?.length ? `Evidence: ${source.extractedEvidence.join("; ")}` : undefined,
           source.clarificationPrompt ? `Clarification needed: ${source.clarificationPrompt}` : undefined,
-          source.ocrText ? `OCR text: ${source.ocrText.slice(0, 900)}` : undefined,
-          source.textractText ? `Textract text: ${source.textractText.slice(0, 900)}` : undefined,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -824,6 +869,7 @@ export async function POST(req: Request) {
   const wantsStream =
     new URL(req.url).searchParams.get("stream") === "1" ||
     req.headers.get("accept")?.includes("application/x-ndjson");
+  const analysisInput = summaryOnlyAnalysisInput(parsed.data);
   const awsAgentEndpoint = configuredAwsAgentEndpoint();
   const strict = strictJudgeMode(req, requestBody);
 
@@ -836,13 +882,13 @@ export async function POST(req: Request) {
           return strictJudgeErrorResponse(new Error(gatewayTrace.detail));
         }
 
-        const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+        const goalResearch = await preResearchGoalForPlanning(analysisInput, { elapsed: () => 0 });
         const planningInput = goalResearch
           ? {
-              ...parsed.data,
-              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+              ...analysisInput,
+              sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
             }
-          : parsed.data;
+          : analysisInput;
         const result = applyGoalResearchToFootprint(
           await callAwsAgent(awsAgentEndpoint, planningInput, [gatewayTrace]),
           goalResearch,
@@ -862,13 +908,13 @@ export async function POST(req: Request) {
 
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
         const gatewayTrace = await boundedGatewayHealthTrace();
-        const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+        const goalResearch = await preResearchGoalForPlanning(analysisInput, { elapsed: () => 0 });
         const fallbackInput = goalResearch
           ? {
-              ...parsed.data,
-              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+              ...analysisInput,
+              sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
             }
-          : parsed.data;
+          : analysisInput;
         const result = applyGoalResearchToFootprint(
           await analyseWithLocalFallback(fallbackInput, awsAgentEndpoint, error, [gatewayTrace]),
           goalResearch,
@@ -889,17 +935,17 @@ export async function POST(req: Request) {
     }
 
     const gatewayTrace = await boundedGatewayHealthTrace();
-    const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+    const goalResearch = await preResearchGoalForPlanning(analysisInput, { elapsed: () => 0 });
     const planningInput = goalResearch
       ? {
-          ...parsed.data,
-          sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+          ...analysisInput,
+          sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
         }
-      : parsed.data;
+      : analysisInput;
     const result = applyGoalResearchToFootprint(prependSponsorTraces(await analyseStudentChaos(planningInput), [
       localAwsTrace(),
       gatewayTrace,
-      bedrockTextractTrace(parsed.data.sources),
+      bedrockTextractTrace(analysisInput.sources),
     ]), goalResearch);
 
     return NextResponse.json(result, {
@@ -908,7 +954,7 @@ export async function POST(req: Request) {
   }
 
   if (awsAgentEndpoint) {
-    return streamAwsAgentRequest(parsed.data, awsAgentEndpoint, strict);
+    return streamAwsAgentRequest(analysisInput, awsAgentEndpoint, strict);
   }
 
   if (strict) {
@@ -929,7 +975,7 @@ export async function POST(req: Request) {
 
       try {
         const localTrace = localAwsTrace();
-        const sourceTrace = bedrockTextractTrace(parsed.data.sources);
+        const sourceTrace = bedrockTextractTrace(analysisInput.sources);
         send({
           type: "log",
           log: observableReasoningLog({
@@ -962,16 +1008,16 @@ export async function POST(req: Request) {
           }),
         });
 
-        const goalResearch = await preResearchGoalForPlanning(parsed.data, {
+        const goalResearch = await preResearchGoalForPlanning(analysisInput, {
           elapsed: () => 500,
           send,
         });
         const planningInput = goalResearch
           ? {
-              ...parsed.data,
-              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+              ...analysisInput,
+              sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
             }
-          : parsed.data;
+          : analysisInput;
 
         const result = await analyseStudentChaos(planningInput, {
           onEvent: send,

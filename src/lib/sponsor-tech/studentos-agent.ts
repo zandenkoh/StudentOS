@@ -33,6 +33,12 @@ const SourceSchema = z.object({
   ocrText: z.string().optional(),
   textractText: z.string().optional(),
   sourceSummary: z.string().optional(),
+  sourceKind: z.enum(["task", "event", "deadline", "goal", "mixed", "unclear"]).optional(),
+  interpretedItems: z.array(z.object({
+    title: z.string(),
+    type: z.enum(["task", "event", "deadline", "goal", "reminder", "unclear"]),
+    evidence: z.string().optional(),
+  })).optional(),
   extractedTasks: z.array(z.string()).optional(),
   extractedEvidence: z.array(z.string()).optional(),
   sourceConfidence: z.number().min(0).max(1).optional(),
@@ -772,12 +778,12 @@ function sourceText(source: CapturedSourceForAI) {
     source.source,
     source.snippet,
     source.sourceSummary,
+    source.sourceKind ? `Source label: ${source.sourceKind}` : undefined,
+    source.interpretedItems?.map((item) => `${item.type}: ${item.title}${item.evidence ? ` (${item.evidence})` : ""}`).join("\n"),
     source.extractedTasks?.join("\n"),
     source.extractedEvidence?.join("\n"),
     source.languageNotes,
     source.clarificationPrompt,
-    source.ocrText,
-    source.textractText,
   ]
     .filter(Boolean)
     .join("\n");
@@ -1039,7 +1045,12 @@ function sourceStats(sources: CapturedSourceForAI[]) {
   return {
     totalSources: sources.length,
     realSources: sources.filter((source) => source.provider && source.provider !== "mock").length,
-    ocrReadySources: sources.filter((source) => source.ocrText || source.textractText || source.sourceSummary || source.sponsorStatus === "extracted").length,
+    ocrReadySources: sources.filter((source) =>
+      source.sourceSummary ||
+      source.interpretedItems?.length ||
+      source.extractedTasks?.length ||
+      source.sponsorStatus === "extracted"
+    ).length,
   };
 }
 
@@ -1105,13 +1116,15 @@ function researchEvidencePacket(sources: CapturedSourceForAI[], candidate?: Rese
         source.source ? `Source type: ${source.source}` : undefined,
         source.snippet ? `Student note: ${source.snippet}` : undefined,
         source.sourceSummary ? `Interpreted summary: ${source.sourceSummary}` : undefined,
+        source.sourceKind ? `Source label: ${source.sourceKind}` : undefined,
+        source.interpretedItems?.length
+          ? `Interpreted items: ${source.interpretedItems.map((item) => `${item.type}: ${item.title}`).join("; ")}`
+          : undefined,
         source.extractedTasks?.length ? `Extracted tasks: ${source.extractedTasks.join("; ")}` : undefined,
         source.extractedEvidence?.length ? `Evidence: ${source.extractedEvidence.join("; ")}` : undefined,
         typeof source.sourceConfidence === "number" ? `Source confidence: ${Math.round(source.sourceConfidence * 100)}%` : undefined,
         source.languageNotes ? `Language or OCR notes: ${source.languageNotes}` : undefined,
         source.clarificationPrompt ? `Clarification needed: ${source.clarificationPrompt}` : undefined,
-        source.ocrText ? `OCR text: ${source.ocrText.slice(0, 1200)}` : undefined,
-        source.textractText ? `Textract text: ${source.textractText.slice(0, 1200)}` : undefined,
       ]
         .filter(Boolean)
         .join("\n"),
@@ -1152,7 +1165,7 @@ function defaultObservableLogs(
       body: `Loaded ${stats.totalSources} submitted ${stats.totalSources === 1 ? "source" : "sources"} from the input step.`,
       detail:
         stats.ocrReadySources > 0
-          ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} OCR or interpreted text attached.`
+          ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} interpreted summaries attached.`
           : "No OCR or interpreted text was attached, so StudentOS used titles, snippets, and manual text.",
     },
     {
@@ -1163,7 +1176,7 @@ function defaultObservableLogs(
       body: "StudentOS prepared the source packet for planning.",
       tool: {
         provider: "StudentOS",
-        result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} OCR/text-ready sources.`,
+        result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} summary-ready sources.`,
       },
     },
     {
@@ -1233,13 +1246,17 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
   const seen = new Set<string>();
 
   sources.forEach((source) => {
+    const interpretedItems =
+      source.interpretedItems
+        ?.map((item) => cleanFallbackItemText(item.title))
+        .filter(Boolean) ?? [];
     const extractedTasks = source.extractedTasks?.map(cleanFallbackItemText).filter(Boolean) ?? [];
     const sourceLines = sourceText(source)
       .split(/\n|;|[•*]\s+|(?:^|\s)\d+[.)]\s+/)
       .map(cleanFallbackItemText)
       .filter((line) => line.length >= 4)
       .filter((line) => !/^(typed note|manual goal|manual input|goal command|upload|aws s3|aws textract)$/i.test(line));
-    const candidates = extractedTasks.length ? extractedTasks : sourceLines;
+    const candidates = interpretedItems.length ? interpretedItems : extractedTasks.length ? extractedTasks : sourceLines;
 
     candidates.forEach((candidate) => {
       const key = candidate.toLowerCase();
@@ -1329,7 +1346,7 @@ function sourceDrivenFallbackFootprint(
       title,
       type,
       source: source?.source || source?.title || "Submitted source",
-      confidence: source?.sourceSummary || source?.ocrText || source?.textractText ? 78 : 68,
+      confidence: source?.sourceSummary || source?.interpretedItems?.length || source?.extractedTasks?.length ? 78 : 68,
       estimatedDuration: fallbackEstimatedDuration(type),
       state: fallbackCommitmentState(type, text),
       explanation: "Created from the submitted source text because the live planner could not complete this run.",
@@ -1669,6 +1686,8 @@ function sourceTruthPackets(sources: CapturedSourceForAI[]) {
     title: source.title,
     sourceLabel: source.source,
     interpretedSummary: source.sourceSummary || "",
+    sourceKind: source.sourceKind || "unclear",
+    interpretedItems: source.interpretedItems ?? [],
     interpretedTasks: source.extractedTasks ?? [],
     extractedEvidence: source.extractedEvidence ?? [],
     needsClarification: source.needsClarification || false,
@@ -1906,14 +1925,14 @@ export async function analyseStudentChaos(
     body: `Loaded ${stats.totalSources} submitted ${stats.totalSources === 1 ? "source" : "sources"} from the input step.`,
     detail:
       stats.ocrReadySources > 0
-        ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} OCR or interpreted text attached.`
+        ? `${stats.ocrReadySources} source ${stats.ocrReadySources === 1 ? "has" : "have"} interpreted summaries attached.`
         : "No OCR or interpreted text was attached, so StudentOS will use titles, snippets, and manual text.",
   });
   await emitTrace({
     provider: "StudentOS",
     action: "Loaded source evidence",
     status: "success",
-    detail: `${stats.totalSources} sources available, ${stats.ocrReadySources} OCR/text-ready.`,
+    detail: `${stats.totalSources} sources available, ${stats.ocrReadySources} summary-ready.`,
   });
   await emitLog({
     id: "source-evidence-loaded",
@@ -1922,7 +1941,7 @@ export async function analyseStudentChaos(
     body: "Prepared the source packet that will be sent to the planner.",
     tool: {
       provider: "StudentOS",
-      result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} OCR/text-ready sources.`,
+      result: `${stats.realSources} provider-backed sources, ${stats.ocrReadySources} summary-ready sources.`,
     },
   });
 
