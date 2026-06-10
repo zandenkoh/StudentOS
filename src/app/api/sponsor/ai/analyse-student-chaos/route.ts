@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { normalizeDurationLabel } from "@/lib/duration-label";
 import {
   AnalyseStudentChaosRequestSchema,
   analyseStudentChaos,
@@ -529,6 +530,90 @@ function applyGoalResearchToFootprint(
   };
 }
 
+function normalizeAgentFootprint(footprint: StudentOSAgentFootprint): StudentOSAgentFootprint {
+  const questions = footprint.clarificationQuestions.map((question) => ({
+    ...question,
+    options: question.options.slice(0, 4),
+    resolvedCommitment: {
+      ...question.resolvedCommitment,
+      estimatedDuration: normalizeDurationLabel(question.resolvedCommitment.estimatedDuration),
+    },
+  }));
+  const questionedCommitmentIds = new Set(questions.map((question) => question.commitmentId));
+  const commitments = footprint.commitments.map((commitment) => ({
+    ...commitment,
+    estimatedDuration: normalizeDurationLabel(commitment.estimatedDuration),
+    state:
+      questionedCommitmentIds.has(commitment.id) &&
+      commitment.state !== "resolved"
+        ? "needs_clarification" as const
+        : commitment.state,
+  }));
+  const missingQuestions = commitments
+    .filter(
+      (commitment) =>
+        (commitment.state === "needs_clarification" || commitment.state === "unsure") &&
+        !questionedCommitmentIds.has(commitment.id),
+    )
+    .map((commitment) => ({
+      id: `${commitment.id}-clarification`,
+      commitmentId: commitment.id,
+      kind: commitment.type === "goal" ? "goal" as const : "general" as const,
+      title: `Clarify ${commitment.title}`,
+      subtitle: "Choose the closest answer so StudentOS can schedule it.",
+      question:
+        commitment.type === "goal"
+          ? "What should the first scheduled session achieve?"
+          : commitment.type === "event"
+            ? "What is the current status of this event?"
+            : commitment.type === "deadline"
+              ? "When is this due?"
+              : "How much of this task needs to be completed?",
+      options:
+        commitment.type === "goal"
+          ? [
+              { label: "Build a project", recommended: true },
+              { label: "Improve grades" },
+              { label: "Learn a skill" },
+              { label: "Prepare for event" },
+            ]
+          : commitment.type === "event"
+            ? [
+                { label: "Confirmed event", recommended: true },
+                { label: "Possible event" },
+                { label: "Need to confirm" },
+                { label: "Cancel it" },
+              ]
+            : commitment.type === "deadline"
+              ? [
+                  { label: "Due today" },
+                  { label: "Due tomorrow", recommended: true },
+                  { label: "Due this week" },
+                  { label: "No clear deadline" },
+                ]
+              : [
+                  { label: "Complete all", recommended: true },
+                  { label: "Selected parts" },
+                  { label: "Need to check" },
+                  { label: "Ask teacher first" },
+                ],
+      customPlaceholder: "Add the exact details...",
+      resolvedCommitment: {
+        title: commitment.title,
+        state: "confirmed" as const,
+        confidence: Math.max(82, commitment.confidence),
+        estimatedDuration: normalizeDurationLabel(commitment.estimatedDuration),
+        explanation: "Clarified from the selected answer.",
+      },
+    }));
+
+  return {
+    ...footprint,
+    commitments,
+    clarificationQuestions: [...questions, ...missingQuestions].slice(0, 8),
+  };
+}
+
 async function preResearchGoalForPlanning(
   input: AnalyseStudentChaosRequest,
   options: {
@@ -762,10 +847,10 @@ function streamAwsAgentRequest(
           : input;
 
         startHeartbeat();
-        const result = applyGoalResearchToFootprint(
+        const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await callAwsAgent(endpoint, planningInput, [gatewayTrace]),
           goalResearch,
-        );
+        ));
         stopHeartbeat();
         send({
           type: "log",
@@ -824,10 +909,10 @@ function streamAwsAgentRequest(
 
         send({
           type: "footprint",
-          footprint: applyGoalResearchToFootprint(
+          footprint: normalizeAgentFootprint(applyGoalResearchToFootprint(
             prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
             goalResearch,
-          ),
+          )),
         });
       } finally {
         controller.close();
@@ -889,10 +974,10 @@ export async function POST(req: Request) {
               sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
             }
           : analysisInput;
-        const result = applyGoalResearchToFootprint(
+        const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await callAwsAgent(awsAgentEndpoint, planningInput, [gatewayTrace]),
           goalResearch,
-        );
+        ));
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
@@ -915,10 +1000,10 @@ export async function POST(req: Request) {
               sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
             }
           : analysisInput;
-        const result = applyGoalResearchToFootprint(
+        const result = normalizeAgentFootprint(applyGoalResearchToFootprint(
           await analyseWithLocalFallback(fallbackInput, awsAgentEndpoint, error, [gatewayTrace]),
           goalResearch,
-        );
+        ));
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "local-fallback" },
@@ -942,11 +1027,11 @@ export async function POST(req: Request) {
           sourceContext: mergeSourceContextWithGoalResearch(analysisInput.sourceContext, goalResearch),
         }
       : analysisInput;
-    const result = applyGoalResearchToFootprint(prependSponsorTraces(await analyseStudentChaos(planningInput), [
+    const result = normalizeAgentFootprint(applyGoalResearchToFootprint(prependSponsorTraces(await analyseStudentChaos(planningInput), [
       localAwsTrace(),
       gatewayTrace,
       bedrockTextractTrace(analysisInput.sources),
-    ]), goalResearch);
+    ]), goalResearch));
 
     return NextResponse.json(result, {
       headers: { "X-StudentOS-Agent-Compute": "local" },
@@ -1025,10 +1110,10 @@ export async function POST(req: Request) {
 
         send({
           type: "footprint",
-          footprint: applyGoalResearchToFootprint(
+          footprint: normalizeAgentFootprint(applyGoalResearchToFootprint(
             prependSponsorTraces(result, [localTrace, gatewayTrace, sourceTrace]),
             goalResearch,
-          ),
+          )),
         });
       } catch (error) {
         send({

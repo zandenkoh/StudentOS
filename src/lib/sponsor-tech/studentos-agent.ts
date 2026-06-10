@@ -3,6 +3,7 @@ import "server-only";
 import { streamText } from "ai";
 import { z } from "zod";
 import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
+import { normalizeDurationLabel } from "@/lib/duration-label";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isExaReady, isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { isFixedTimeConflictCandidate, validateTimelineConflicts, type ConfirmedConflictGroup } from "@/lib/schedule-conflicts";
@@ -49,7 +50,7 @@ const SourceSchema = z.object({
 });
 
 const DurationLabelSchema = z.union([z.string(), z.number()]).transform((value) =>
-  typeof value === "number" ? `${value}min` : value,
+  normalizeDurationLabel(value),
 );
 
 const CommitmentSchema = z.object({
@@ -247,7 +248,7 @@ const GeneratedRoadmapStepSchema = z.object({
 
 const GeneratedCoreSchema = z.object({
   commitments: z.array(CommitmentSchema).min(1).max(8),
-  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(6),
+  clarificationQuestions: z.array(GeneratedClarificationQuestionSchema).min(1).max(8),
   timelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   resolvedTimelineEvents: z.array(GeneratedTimelineEventSchema).min(3).max(8),
   conflict: ConflictSchema,
@@ -689,11 +690,69 @@ function coerceGeneratedCore(raw: unknown) {
     const guidedQuestions = broadGoals.flatMap((commitment) =>
       guidedGoalQuestionsForCommitment(commitment, existingQuestions as unknown[]),
     );
-    const existingLimit = Math.max(0, 6 - guidedQuestions.length);
+    const existingLimit = Math.max(0, 8 - guidedQuestions.length);
     core.clarificationQuestions = [
       ...existingQuestions.slice(0, existingLimit),
       ...guidedQuestions,
-    ].slice(0, 6);
+    ].slice(0, 8);
+  }
+
+  if (Array.isArray(core.commitments) && Array.isArray(core.clarificationQuestions)) {
+    const questions = core.clarificationQuestions.filter(isRecord);
+    const unclearCommitments = core.commitments.filter((commitment): commitment is Record<string, unknown> => {
+      if (!isRecord(commitment)) return false;
+      const state = textValue(commitment.state);
+      return state === "needs_clarification" || state === "unsure";
+    });
+
+    unclearCommitments.forEach((commitment, index) => {
+      const commitmentId = textValue(commitment.id, `unclear-${index + 1}`);
+      if (questions.some((question) => textValue(question.commitmentId) === commitmentId)) return;
+
+      const title = textValue(commitment.title, "this commitment");
+      const type = textValue(commitment.type, "task");
+      const question =
+        type === "goal"
+          ? "What outcome should the first scheduled session target?"
+          : type === "event"
+            ? "What is the current status of this event?"
+            : type === "deadline"
+              ? "When is this due?"
+              : "How much of this task needs to be completed?";
+      const options =
+        type === "goal"
+          ? guidedGoalClarificationOptions("outcome")
+          : type === "event"
+            ? guidedGeneralClarificationOptions("event confirmed")
+            : type === "deadline"
+              ? guidedGeneralClarificationOptions("deadline due")
+              : [
+                  { label: "Complete all", recommended: true },
+                  { label: "Selected parts", recommended: false },
+                  { label: "Need to check", recommended: false },
+                  { label: "Ask teacher first", recommended: false },
+                ];
+
+      questions.push({
+        id: `${slugFrom(commitmentId, "commitment")}-clarification`,
+        commitmentId,
+        kind: type === "goal" ? "goal" : "general",
+        title: `Clarify ${title}`,
+        subtitle: "Choose the closest answer so StudentOS can schedule it.",
+        question,
+        options,
+        customPlaceholder: "Add the exact details...",
+        resolvedCommitment: {
+          title,
+          state: "confirmed",
+          confidence: 82,
+          estimatedDuration: "30 min",
+          explanation: "Clarified from the selected answer.",
+        },
+      });
+    });
+
+    core.clarificationQuestions = questions.slice(0, 8);
   }
 
   if (isRecord(core.conflict)) {
@@ -1291,10 +1350,10 @@ function fallbackCommitmentType(text: string) {
 }
 
 function fallbackEstimatedDuration(type: ReturnType<typeof fallbackCommitmentType>) {
-  if (type === "goal") return "2 sessions/week";
-  if (type === "event") return "Confirm duration";
-  if (type === "deadline") return "45min";
-  return "30min";
+  if (type === "goal") return "30 min/session";
+  if (type === "event") return "1 hr";
+  if (type === "deadline") return "45 min";
+  return "30 min";
 }
 
 function fallbackCommitmentState(type: ReturnType<typeof fallbackCommitmentType>, text: string) {
@@ -1796,8 +1855,8 @@ async function generateFootprintCore(
         sourceTruthPackets: sourceTruthPackets(sources),
         exaGoalResearch: goalResearch,
         outputContract: {
-          commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
-          clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
+          commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration using min/hr units, state confirmed|needs_clarification|unsure|resolved, explanation.",
+          clarificationQuestions: "1-8 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every unclear or unsure commitment must have at least one question. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
           timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
           resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
           conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
@@ -1808,6 +1867,7 @@ async function generateFootprintCore(
         },
         requirements: [
           "Extract commitments from evidence, not generic todo items.",
+          "Every estimatedDuration must be a concrete duration written as 30 min, 1 hr, or 1 hr 30 min. Never use vague values such as confirm duration, sessions per week, soon, or unknown.",
           "Treat sourceTruthPackets as the source of truth. Keep each sourceNumber/id/title separate; never borrow a subject, event type, person, timing, or option from one source packet for another commitment.",
           "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
           "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",

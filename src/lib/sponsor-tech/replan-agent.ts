@@ -1,7 +1,8 @@
 import "server-only";
 
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
 import { z } from "zod";
+import { normalizeDurationLabel } from "@/lib/duration-label";
 import { isFixedTimeConflictCandidate, validateTimelineConflicts } from "@/lib/schedule-conflicts";
 import { ensureTaskTimeRanges, type BusyTimeBlock } from "@/lib/time-scheduling";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
@@ -13,9 +14,7 @@ const CommitmentSchema = z.object({
   type: z.enum(["task", "event", "deadline", "goal", "conflict"]),
   source: z.string(),
   confidence: z.number().int().min(0).max(100),
-  estimatedDuration: z.union([z.string(), z.number()]).transform((value) =>
-    typeof value === "number" ? `${value}min` : value,
-  ),
+  estimatedDuration: z.union([z.string(), z.number()]).transform((value) => normalizeDurationLabel(value)),
   state: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
   explanation: z.string(),
 });
@@ -152,19 +151,6 @@ function stringArrayValue(value: unknown, fallback: string[]) {
     : [];
 
   return values.length >= 3 ? values.slice(0, 6) : fallback;
-}
-
-function parseJsonObject(text: string) {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced?.[1] ?? text;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Replanning response did not contain a JSON object.");
-  }
-
-  return JSON.parse(candidate.slice(start, end + 1));
 }
 
 function sourceContextRecord(input: ReplanAgentInput) {
@@ -481,10 +467,11 @@ function coerceReplanOutput(value: unknown, input: ReplanAgentInput) {
 }
 
 async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
-  const { text } = await generateText({
+  const { output } = await generateText({
     model: gatewayLanguageModel(model),
+    output: Output.object({ schema: ReplanAgentOutputSchema }),
     system:
-      "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Return only valid JSON. Do not wrap it in Markdown. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
+      "You are the StudentOS Replanning Agent. You update a student's live plan after new information arrives. Do not invent unrelated demo tasks. Preserve exact user-provided commitments, apply added-task text, clarification answers, or manual conflict instructions as source-of-truth, and update the schedule immediately.",
     prompt: JSON.stringify(
       {
         trigger: input.trigger,
@@ -499,7 +486,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
         sourceContext: input.sourceContext,
         outputContract: {
           commitments:
-            "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions.",
+            "Return the updated commitments. Resolve only commitments addressed by clarification answers or manual conflict instructions. estimatedDuration must use min/hr units, for example 30 min, 1 hr, or 1 hr 30 min.",
           planTasks:
             "Return the updated visible plan tasks. Every task must include id, title, section, estimatedMinutes, and exact timeLabel clock ranges. Optional UI fields may be omitted when unknown. Keep reason under 8 words; put detailed explanation in scheduleRationale only.",
           timelineEvents:
@@ -521,7 +508,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Never schedule an added, clarified, or moved task into a clock range that overlaps an existing task or event on the same day.",
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
           "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
-          "Return only a JSON object with commitments, planTasks, timelineEvents, resolvedTimelineEvents, conflict, rationale, and dailyPlan.",
+          "Every commitment estimatedDuration must be a concrete duration using min/hr units. Never return vague labels such as confirm duration or sessions per week.",
         ],
       },
       null,
@@ -529,7 +516,7 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
     ),
   });
 
-  return ReplanAgentOutputSchema.parse(coerceReplanOutput(parseJsonObject(text), input));
+  return ReplanAgentOutputSchema.parse(coerceReplanOutput(output, input));
 }
 
 export async function replanWithAgent(input: ReplanAgentInput): Promise<ReplanAgentResponse> {

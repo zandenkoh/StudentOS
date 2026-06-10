@@ -2,6 +2,7 @@ import "server-only";
 
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import { normalizeDurationLabel } from "@/lib/duration-label";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
 import { isVercelAiReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import { validateTimelineConflicts } from "@/lib/schedule-conflicts";
@@ -32,7 +33,7 @@ const ClarificationReviewSchema = z.object({
     commitmentId: z.string(),
     revisedTitle: z.string(),
     resolvedState: z.enum(["confirmed", "needs_clarification", "unsure", "resolved"]),
-    estimatedDuration: z.string(),
+    estimatedDuration: z.union([z.string(), z.number()]).transform((value) => normalizeDurationLabel(value)),
     schedulingDirective: z.string(),
   })).max(8),
   planningDirectives: z.array(z.string()).min(1).max(6),
@@ -359,6 +360,7 @@ async function reviewClarificationsWithModel(model: string, input: PlanDayInput)
         },
         rules: [
             "Treat clarification answers as source-of-truth evidence, but check whether the answer actually resolves the question.",
+            "estimatedDuration must be a concrete duration using min/hr units, for example 30 min, 1 hr, or 1 hr 30 min.",
             "If an answer names a deadline, duration, scope, event status, or target outcome, convert it into a schedulingDirective.",
             "If the answer is vague or contradictory, list the remaining uncertainty instead of pretending it is resolved.",
             "Do not add demo tasks or unrelated defaults.",
