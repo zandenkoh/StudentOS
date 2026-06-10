@@ -2032,7 +2032,8 @@ async function generateFootprintCore(
           emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
         },
         requirements: [
-          "Extract commitments from evidence, not generic todo items.",
+          "Extract commitments from evidence, not generic todo items. Write highly accurate and descriptive titles for tasks, goals, and events that incorporate the specific subject, action, and key details rather than generic labels.",
+          "Correctly identify the date, due date, time, venue, and other constraints from the evidence. If a task or event is missing crucial details like a date, due date, time, or venue needed for scheduling, mark its state as needs_clarification and generate specific MCQ clarification questions to gather those missing details.",
           "Every estimatedDuration must be a concrete duration written as 30 min, 1 hr, or 1 hr 30 min. Never use vague values such as confirm duration, sessions per week, soon, or unknown.",
           "Treat sourceTruthPackets as the source of truth. Keep each sourceNumber/id/title separate; never borrow a subject, event type, person, timing, or option from one source packet for another commitment.",
           "Before creating each commitment or timeline event, check that source packet's verifiedFacts for date, start_time, end_time, duration, and venue.",
