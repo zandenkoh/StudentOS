@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpenCheck, CheckCircle2, Clock3, ExternalLink, HelpCircle, Route, SearchCheck } from "lucide-react";
+import { ArrowLeft, BookOpenCheck, CheckCircle2, Clock3, ExternalLink, HelpCircle, Route } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
@@ -32,11 +32,6 @@ function researchTakeaways(goalResearch: GoalResearch) {
     .slice(0, 2);
 
   return takeaways.length ? takeaways : ["Exa returned live research context for this roadmap."];
-}
-
-function searchCountLabel(goalResearch: GoalResearch) {
-  const count = goalResearch.searchQueries?.length ?? 1;
-  return `${count} ${count === 1 ? "search" : "searches"}`;
 }
 
 function stepsWithClockRanges(steps: DemoGoalRoadmapStep[]) {
@@ -165,12 +160,9 @@ export default function RoadmapPage() {
           </div>
 
           {goalResearch ? (
-            <div className="mt-4 rounded-[24px] border border-emerald-100 bg-emerald-50/45 p-4">
+            <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/45 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
-                  <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow-[0_8px_22px_rgba(16,185,129,0.12)]">
-                    <SearchCheck className="size-5" />
-                  </span>
                   <div className="min-w-0">
                     <p className="text-[18px] font-bold leading-tight text-ink">
                       Why this roadmap?
@@ -181,7 +173,7 @@ export default function RoadmapPage() {
                   </div>
                 </div>
                 <SourceChip tone="success">
-                  {searchCountLabel(goalResearch)} checked
+                  {goalResearch.searchQueries?.length ?? 5} {(goalResearch.searchQueries?.length ?? 5) === 1 ? "source" : "sources"}
                 </SourceChip>
               </div>
 
