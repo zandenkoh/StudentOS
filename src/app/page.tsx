@@ -224,34 +224,59 @@ export default function Home() {
               ))}
             </div>
             <div className="mt-5 overflow-hidden rounded-[26px] bg-[#F7F7F8] p-4 shadow-[inset_0_0_0_1px_rgba(0,0,0,0.03)]">
-              <div className="relative h-28">
-                <div className="absolute left-0 right-0 top-3 h-2 rounded-full bg-neutral-200" />
+              <div className="relative h-[176px]">
+                {/* Timeline background track */}
+                <div className="absolute left-0 right-0 top-[85px] h-1 rounded-full bg-neutral-200/80" />
+                
+                {/* Timeline active progress */}
                 <motion.div
                   initial={{ width: "14%" }}
                   whileInView={{ width: "76%" }}
                   viewport={{ once: true }}
                   transition={{ duration: 1.1, ease: "easeInOut" }}
-                  className="absolute left-0 top-3 h-2 rounded-full bg-ink"
+                  className="absolute left-0 top-[85px] h-1 rounded-full bg-ink"
+                />
+
+                {/* Timeline indicator dots */}
+                <motion.div
+                  initial={{ left: "4%" }}
+                  whileInView={{ left: "8%" }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 1.25, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute top-[87px] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 border-neutral-400 z-20"
                 />
                 <motion.div
                   initial={{ left: "18%" }}
                   whileInView={{ left: "58%" }}
                   viewport={{ once: true }}
                   transition={{ duration: 1.35, ease: [0.22, 1, 0.36, 1] }}
-                  className="absolute top-0 h-20 w-[104px] rounded-[18px] border border-red-200 bg-white p-3 shadow-[0_18px_50px_rgba(127,29,29,0.13)]"
+                  className="absolute top-[87px] size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white border-2 border-red-500 z-20"
+                />
+
+                {/* Conflict card (CCA/tuition overlap) */}
+                <motion.div
+                  initial={{ left: "18%" }}
+                  whileInView={{ left: "58%" }}
+                  viewport={{ once: true }}
+                  transition={{ duration: 1.35, ease: [0.22, 1, 0.36, 1] }}
+                  className="absolute bottom-[102px] z-10 w-[130px] rounded-xl border border-red-200 bg-white p-2.5 shadow-[0_8px_30px_rgba(239,68,68,0.08)] -translate-x-4"
                 >
                   <p className="text-[11px] font-bold text-red-600">Conflict</p>
-                  <p className="mt-1 text-[12px] font-semibold leading-4 text-ink">CCA and tuition overlap.</p>
+                  <p className="mt-1 text-[12px] font-semibold leading-tight text-ink">CCA and tuition overlap.</p>
+                  <div className="absolute bottom-[-11px] left-4 w-[1px] h-[11px] bg-red-200" />
                 </motion.div>
+
+                {/* Deadline card (Physics corrections due) */}
                 <motion.div
                   initial={{ left: "4%" }}
                   whileInView={{ left: "8%" }}
                   viewport={{ once: true }}
                   transition={{ duration: 1.25, ease: [0.22, 1, 0.36, 1] }}
-                  className="absolute bottom-0 h-16 w-[116px] rounded-[18px] border border-neutral-200 bg-white p-3 shadow-[0_18px_50px_rgba(0,0,0,0.08)]"
+                  className="absolute top-[102px] z-10 w-[130px] rounded-xl border border-neutral-200 bg-white p-2.5 shadow-[0_8px_30px_rgba(0,0,0,0.04)] -translate-x-4"
                 >
                   <p className="text-[11px] font-bold text-neutral-400">Deadline</p>
-                  <p className="mt-1 text-[12px] font-semibold leading-4 text-ink">Physics due tomorrow.</p>
+                  <p className="mt-1 text-[12px] font-semibold leading-tight text-ink">Physics due tomorrow.</p>
+                  <div className="absolute top-[-13px] left-4 w-[1px] h-[13px] bg-neutral-300" />
                 </motion.div>
               </div>
             </div>
