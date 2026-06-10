@@ -106,7 +106,7 @@ export function SponsorProofStrip({
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="size-4 shrink-0 text-ink" />
           <p className="truncate text-[11px] font-semibold uppercase tracking-[0.1em] text-neutral-500">
-            Tool proof
+            Tools
           </p>
         </div>
         <p className="shrink-0 text-[11px] font-medium text-neutral-400">

@@ -115,10 +115,10 @@ export default function ChaosPage() {
   useEffect(() => {
     if (stage !== "reveal") return;
 
-    // 4. Stay on the narrative for 3.6s, then start transitioning out
+    // 4. Stay on the narrative for 5.2s, then start transitioning out
     const redirectTimer = setTimeout(() => {
       setStage("leaving");
-    }, 3600);
+    }, 5200);
 
     return () => clearTimeout(redirectTimer);
   }, [stage]);
