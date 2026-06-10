@@ -509,6 +509,8 @@ async function generateReplanWithModel(model: string, input: ReplanAgentInput) {
           "Keep the UI mobile-friendly: short titles, exact time ranges, concise rationales.",
           "Never copy full clarification answers, option labels, or semicolon-separated transcripts into planTasks.reason.",
           "Every commitment estimatedDuration must be a concrete duration using min/hr units. Never return vague labels such as confirm duration or sessions per week.",
+          "Re-check sourceContext verifiedFacts before changing any date, time, duration, or venue. Only status=confirmed values are source truth.",
+          "Do not infer missing venues, end times, or durations. If a required fact is missing or ambiguous, preserve it as unresolved and request clarification rather than guessing.",
         ],
       },
       null,

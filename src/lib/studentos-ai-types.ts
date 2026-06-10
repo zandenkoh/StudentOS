@@ -38,6 +38,12 @@ export type CapturedSourceForAI = {
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
+  verifiedFacts?: Array<{
+    field: "date" | "start_time" | "end_time" | "duration" | "venue";
+    value: string;
+    evidence: string;
+    status: "confirmed" | "ambiguous" | "missing";
+  }>;
   durationSeconds?: number;
 };
 

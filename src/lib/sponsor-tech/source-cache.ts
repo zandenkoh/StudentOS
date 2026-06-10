@@ -29,6 +29,13 @@ export type CachedSourceRecord = {
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
+  verifiedFacts?: Array<{
+    field: "date" | "start_time" | "end_time" | "duration" | "venue";
+    value: string;
+    evidence: string;
+    status: "confirmed" | "ambiguous" | "missing";
+  }>;
+  interpretationProvider?: "aws-bedrock" | "vercel-ai-gateway" | "fallback";
   provider: "aws-s3" | "aws-textract" | "mock";
   sponsorStatus: "cached" | "uploaded" | "extracted" | "fallback" | "error";
   processedAt: string;

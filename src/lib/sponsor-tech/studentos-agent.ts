@@ -17,7 +17,6 @@ import type {
   StudentOSAgentFootprint,
 } from "@/lib/studentos-ai-types";
 
-const GATEWAY_REASONING_BUDGET_TOKENS = 2000;
 const GATEWAY_REASONING_LOG_MIN_INTERVAL_MS = 250;
 
 const SourceSchema = z.object({
@@ -46,6 +45,12 @@ const SourceSchema = z.object({
   languageNotes: z.string().optional(),
   needsClarification: z.boolean().optional(),
   clarificationPrompt: z.string().optional(),
+  verifiedFacts: z.array(z.object({
+    field: z.enum(["date", "start_time", "end_time", "duration", "venue"]),
+    value: z.string(),
+    evidence: z.string(),
+    status: z.enum(["confirmed", "ambiguous", "missing"]),
+  })).optional(),
   durationSeconds: z.number().optional(),
 });
 
@@ -317,36 +322,6 @@ function parseJsonObject(text: string) {
   }
 
   return JSON.parse(candidate.slice(start, end + 1));
-}
-
-function gatewayReasoningProviderOptions(model: string) {
-  const isClaude46 = /claude-(?:opus|sonnet)-4\.6/i.test(model);
-
-  if (isClaude46) {
-    return {
-      anthropic: {
-        thinking: { type: "adaptive" },
-      },
-      bedrock: {
-        reasoningConfig: { type: "adaptive" },
-      },
-    };
-  }
-
-  return {
-    anthropic: {
-      thinking: {
-        type: "enabled",
-        budgetTokens: GATEWAY_REASONING_BUDGET_TOKENS,
-      },
-    },
-    bedrock: {
-      reasoningConfig: {
-        type: "enabled",
-        budgetTokens: GATEWAY_REASONING_BUDGET_TOKENS,
-      },
-    },
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1310,15 +1285,19 @@ function sourceFallbackItems(sources: CapturedSourceForAI[]) {
         ?.map((item) => cleanFallbackItemText(item.title))
         .filter(Boolean) ?? [];
     const extractedTasks = source.extractedTasks?.map(cleanFallbackItemText).filter(Boolean) ?? [];
-    const sourceLines = sourceText(source)
-      .split(/\n|;|[•*]\s+|(?:^|\s)\d+[.)]\s+/)
-      .map(cleanFallbackItemText)
-      .filter((line) => line.length >= 4)
-      .filter((line) => !/^(typed note|manual goal|manual input|goal command|upload|aws s3|aws textract)$/i.test(line));
-    const candidates = interpretedItems.length ? interpretedItems : extractedTasks.length ? extractedTasks : sourceLines;
+    const fallbackSummary = cleanFallbackItemText(
+      source.sourceSummary || source.snippet || source.clarificationPrompt || "",
+    );
+    const candidates = interpretedItems.length
+      ? interpretedItems
+      : extractedTasks.length
+        ? extractedTasks
+        : fallbackSummary
+          ? [fallbackSummary]
+          : [];
 
     candidates.forEach((candidate) => {
-      const key = candidate.toLowerCase();
+      const key = `${source.id}:${candidate}`.toLowerCase();
       if (seen.has(key) || items.length >= 6) return;
       seen.add(key);
       items.push({ source, text: candidate, index: items.length });
@@ -1397,18 +1376,26 @@ function sourceDrivenFallbackFootprint(
   const sources = input.sources;
   const evidenceItems = sourceFallbackItems(sources);
   const commitments = evidenceItems.map(({ source, text, index }) => {
-    const type = fallbackCommitmentType(text);
-    const title = compactFallbackCopy(text, 72);
+    const isUnclearSource =
+      source?.sourceKind === "unclear" ||
+      source?.needsClarification ||
+      (!source?.interpretedItems?.length && !source?.extractedTasks?.length);
+    const type = isUnclearSource ? "task" as const : fallbackCommitmentType(text);
+    const title = isUnclearSource
+      ? `Clarify action for ${compactFallbackCopy(source?.title || "uploaded source", 48)}`
+      : compactFallbackCopy(text, 72);
 
     return {
       id: `${slugFrom(title, "commitment")}-${index + 1}`,
       title,
       type,
-      source: source?.source || source?.title || "Submitted source",
+      source: source?.title || source?.source || "Submitted source",
       confidence: source?.sourceSummary || source?.interpretedItems?.length || source?.extractedTasks?.length ? 78 : 68,
       estimatedDuration: fallbackEstimatedDuration(type),
-      state: fallbackCommitmentState(type, text),
-      explanation: "Created from the submitted source text because the live planner could not complete this run.",
+      state: isUnclearSource ? "needs_clarification" as const : fallbackCommitmentState(type, text),
+      explanation: isUnclearSource
+        ? source?.clarificationPrompt || "The source was understood, but it does not specify what action StudentOS should schedule."
+        : "Created from the interpreted source item because the live planner could not complete this run.",
     };
   });
   const firstCommitment = commitments[0];
@@ -1751,6 +1738,7 @@ function sourceTruthPackets(sources: CapturedSourceForAI[]) {
     extractedEvidence: source.extractedEvidence ?? [],
     needsClarification: source.needsClarification || false,
     clarificationPrompt: source.clarificationPrompt || "",
+    verifiedFacts: source.verifiedFacts ?? [],
     evidenceText: sourceText(source).slice(0, 1400),
   }));
 }
@@ -1845,7 +1833,6 @@ async function generateFootprintCore(
 
   const result = streamText({
     model: gatewayLanguageModel(model),
-    providerOptions: gatewayReasoningProviderOptions(model),
     system:
       "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
     prompt: JSON.stringify(
@@ -1869,6 +1856,10 @@ async function generateFootprintCore(
           "Extract commitments from evidence, not generic todo items.",
           "Every estimatedDuration must be a concrete duration written as 30 min, 1 hr, or 1 hr 30 min. Never use vague values such as confirm duration, sessions per week, soon, or unknown.",
           "Treat sourceTruthPackets as the source of truth. Keep each sourceNumber/id/title separate; never borrow a subject, event type, person, timing, or option from one source packet for another commitment.",
+          "Before creating each commitment or timeline event, check that source packet's verifiedFacts for date, start_time, end_time, duration, and venue.",
+          "Use a date, time, duration, or venue as source truth only when its verifiedFacts status is confirmed. Ambiguous or missing facts must remain unknown and trigger a targeted clarification question when needed for scheduling.",
+          "Never infer a venue. Never turn a visible start time into an invented end time. Never calculate duration unless confirmed start and end times refer to the same event.",
+          "If a summary conflicts with verifiedFacts, verifiedFacts wins. If two confirmed facts conflict, mark the commitment needs_clarification instead of choosing one.",
           "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
           "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",
           "Treat the submitted source text as the source of truth. For short manual inputs, preserve the exact named event, subject, or roadmap target in commitments, roadmap steps, and plan tasks.",

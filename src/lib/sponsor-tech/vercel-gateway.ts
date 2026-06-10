@@ -363,6 +363,8 @@ async function reviewClarificationsWithModel(model: string, input: PlanDayInput)
             "estimatedDuration must be a concrete duration using min/hr units, for example 30 min, 1 hr, or 1 hr 30 min.",
             "If an answer names a deadline, duration, scope, event status, or target outcome, convert it into a schedulingDirective.",
             "If the answer is vague or contradictory, list the remaining uncertainty instead of pretending it is resolved.",
+            "When sourceContext includes verifiedFacts, only status=confirmed date, start_time, end_time, duration, and venue values are source truth.",
+            "Never infer a venue, year, end time, or duration from surrounding context. Keep missing or ambiguous facts in remainingUncertainties.",
             "Do not add demo tasks or unrelated defaults.",
           ],
         outputShape: {
@@ -435,6 +437,8 @@ async function generatePlanWithModel(model: string, input: PlanDayInput) {
             "Return every field in the schema.",
             "Treat clarificationAnswers as user-provided source of truth. If a previously unclear commitment now has answers, schedule it instead of excluding it for lack of clarity.",
             "When sourceContext.clarificationReview is present, follow its planningDirectives and remainingUncertainties before making schedule decisions.",
+            "When sourceContext or commitments include verifiedFacts, use only status=confirmed values. If a date, time, duration, or venue is ambiguous or missing, do not silently fill it in.",
+            "Never invent a venue. Never derive an end time or duration unless the matching start/end facts are confirmed for the same event.",
             "If clarificationReview says an answer is still unresolved, keep the relevant task short, tentative, or ask for a follow-up instead of overcommitting.",
             "Every dailyPlan item must use an exact clock range in timeLabel, for example '4:30-5:15 PM'. Do this for task-only, goal-only, and mixed inputs.",
             "For goal-only inputs, do not stop at day, week, or month intervals. Put each next goal session into a concrete work window.",

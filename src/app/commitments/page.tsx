@@ -1186,6 +1186,7 @@ export default function CommitmentsPage() {
       if (!response.body) throw new Error("Replanning stream was not available.");
 
       const reader = response.body.getReader();
+      reader.closed.catch(() => {});
       const decoder = new TextDecoder();
       let buffer = "";
       let finalResult: ReplanAgentResponse | null = null;

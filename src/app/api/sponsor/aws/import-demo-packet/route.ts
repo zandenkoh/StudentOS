@@ -114,7 +114,11 @@ function usesCurrentTemplateKey(source: DemoPacketFile, cached?: CachedSourceRec
   return cached?.s3Key === templateS3Key(source);
 }
 
-async function processFileBackedSource(source: DemoPacketFile, manifestRecords: Record<string, CachedSourceRecord>) {
+async function processFileBackedSource(
+  source: DemoPacketFile,
+  manifestRecords: Record<string, CachedSourceRecord>,
+  forceMultimodalRefresh = false,
+) {
   if (!source.absolutePath || !source.publicPath || !source.mimeType) {
     return {
       sourceId: source.sourceId,
@@ -137,6 +141,7 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
   const cached = manifestRecords[cacheKey];
 
   if (
+    !forceMultimodalRefresh &&
     cached?.contentHash === contentHash &&
     cached.s3Key &&
     cached.title === source.title &&
@@ -162,6 +167,8 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
         languageNotes: interpretation.languageNotes,
         needsClarification: interpretation.needsClarification,
         clarificationPrompt: interpretation.clarificationPrompt,
+        verifiedFacts: interpretation.verifiedFacts,
+        interpretationProvider: interpretation.provider,
         sponsorStatus: "cached" as const,
         snippet: interpretation.summary || cached.textractText?.split("\n").find(Boolean)?.slice(0, 110) || cached.snippet,
       };
@@ -175,18 +182,20 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
   }
 
   const s3Key = templateS3Key(source);
-  await uploadBufferToS3({
-    key: s3Key,
-    body: buffer,
-    contentType: source.mimeType,
-  });
+  if (!cached?.s3Key || cached.contentHash !== contentHash || !usesCurrentTemplateKey(source, cached)) {
+    await uploadBufferToS3({
+      key: s3Key,
+      body: buffer,
+      contentType: source.mimeType,
+    });
+  }
 
   let textractText = "";
   let textractBlockCount = 0;
   let provider: CachedSourceRecord["provider"] = "aws-s3";
   let sponsorStatus: CachedSourceRecord["sponsorStatus"] = "uploaded";
 
-  if (source.fileType === "image" || source.fileType === "pdf") {
+  if (!forceMultimodalRefresh && (source.fileType === "image" || source.fileType === "pdf")) {
     try {
       const result = await detectTextFromS3(s3Key);
       textractText = result.text;
@@ -205,7 +214,10 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     fileType: source.fileType,
     mimeType: source.mimeType,
     s3Key,
-    rawText: textractText,
+    rawText: forceMultimodalRefresh && (source.fileType === "image" || source.fileType === "pdf")
+      ? ""
+      : textractText,
+    model: forceMultimodalRefresh ? process.env.AI_GATEWAY_MULTIMODAL_MODEL : undefined,
   });
 
   return {
@@ -230,14 +242,18 @@ async function processFileBackedSource(source: DemoPacketFile, manifestRecords: 
     languageNotes: interpretation.languageNotes,
     needsClarification: interpretation.needsClarification,
     clarificationPrompt: interpretation.clarificationPrompt,
+    verifiedFacts: interpretation.verifiedFacts,
+    interpretationProvider: interpretation.provider,
     provider,
     sponsorStatus,
     processedAt: new Date().toISOString(),
   };
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const demoPacketFiles = await discoverDemoPacketFiles();
+  const forceMultimodalRefresh =
+    new URL(request.url).searchParams.get("refresh") === "multimodal";
 
   if (!isAwsReady()) {
     return NextResponse.json({
@@ -268,7 +284,9 @@ export async function POST() {
   try {
     const manifest = await loadSourceCache();
     const sources = await Promise.all(
-      demoPacketFiles.map((source) => processFileBackedSource(source, manifest.records)),
+      demoPacketFiles.map((source) =>
+        processFileBackedSource(source, manifest.records, forceMultimodalRefresh),
+      ),
     );
     const currentCacheKeys = new Set(sources.map((source) => sourceCacheKey("initial_packet", source.sourceId)));
 
@@ -296,7 +314,11 @@ export async function POST() {
       trace: [
         {
           provider: "AWS",
-          action: cachedCount > 0 ? "Reused cached demo packet sources" : "Cached demo packet sources",
+          action: forceMultimodalRefresh
+            ? "Refreshed cached summaries with multimodal source reads"
+            : cachedCount > 0
+              ? "Reused cached demo packet sources"
+              : "Cached demo packet sources",
           status: "success",
           detail: `${cachedCount} cached, ${newlyProcessedCount} newly processed, ${ocrReadyCount} OCR/text-ready.`,
         },

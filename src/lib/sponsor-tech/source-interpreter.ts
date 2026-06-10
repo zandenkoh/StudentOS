@@ -19,6 +19,13 @@ const InterpretedTaskSchema = z.object({
   evidence: z.string(),
 });
 
+const VerifiedFactSchema = z.object({
+  field: z.enum(["date", "start_time", "end_time", "duration", "venue"]),
+  value: z.string(),
+  evidence: z.string(),
+  status: z.enum(["confirmed", "ambiguous", "missing"]),
+});
+
 const SourceInterpretationSchema = z.object({
   summary: z.string(),
   sourceKind: z.enum(["task", "event", "deadline", "goal", "mixed", "unclear"]).default("unclear"),
@@ -27,6 +34,7 @@ const SourceInterpretationSchema = z.object({
   clarificationPrompt: z.string(),
   confidence: z.number().min(0).max(1),
   languageNotes: z.string(),
+  verifiedFacts: z.array(VerifiedFactSchema).max(10).default([]),
 });
 
 export type SourceInterpretation = z.infer<typeof SourceInterpretationSchema>;
@@ -37,6 +45,7 @@ export type SourceInterpretationInput = {
   mimeType?: string;
   s3Key?: string;
   rawText?: string;
+  model?: string;
 };
 
 const sourceInterpreterSystemPrompt = [
@@ -45,6 +54,10 @@ const sourceInterpreterSystemPrompt = [
   "Read the actual image or PDF when provided; use OCR as supporting evidence, not as the only truth.",
   "Do not infer tasks, events, subjects, deadlines, or summaries from filenames, S3 keys, or generated storage names.",
   "Every extracted task must be grounded by quoted or near-quoted source evidence. If evidence is missing, return no task and ask for clarification.",
+  "Check every attachment for date, start time, end time, duration, and venue.",
+  "Record those details in verifiedFacts. Mark a value confirmed only when it is directly visible in the attachment; otherwise mark it ambiguous or missing.",
+  "Never calculate a duration unless both start and end times are confirmed and unambiguous. Never infer a venue from context, filenames, or common knowledge.",
+  "When multiple dates, times, or venues appear, preserve each relevant fact and mark ambiguous unless the attachment clearly links it to the extracted commitment.",
   "Preserve and interpret non-English text, including Chinese, instead of ignoring it.",
   "A single attachment may contain multiple worksheets, messages, events, or tasks; extract each distinct actionable item.",
   "Do not split one broad learning goal into multiple extracted goals, prerequisites, milestones, or sub-skills. Return one goal and leave milestones for the roadmap planner.",
@@ -270,6 +283,8 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
         "For each extracted task, evidence must quote or closely paraphrase text visible in ocrText or the attachment.",
         "clarificationPrompt: direct question for the review page when needed.",
         "languageNotes: mention if OCR likely dropped Chinese/non-English text or visual context.",
+        "verifiedFacts: inspect date, start_time, end_time, duration, and venue. Include direct visible evidence for confirmed or ambiguous values; use an empty value/evidence for missing fields.",
+        "Do not silently normalize an ambiguous date or time. Preserve the visible wording in value and explain ambiguity through status.",
       ],
       outputShape: {
         summary: "string",
@@ -279,6 +294,12 @@ function sourceInterpreterPrompt(input: SourceInterpretationInput) {
         clarificationPrompt: "string",
         confidence: "number 0..1",
         languageNotes: "string",
+        verifiedFacts: [{
+          field: "date|start_time|end_time|duration|venue",
+          value: "string",
+          evidence: "direct visible evidence",
+          status: "confirmed|ambiguous|missing",
+        }],
       },
     },
     null,
@@ -417,6 +438,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
         "This looks like a biology exam or worksheet packet cover page. Which worksheet, page, or question numbers should StudentOS work on?",
       confidence: 0.62,
       languageNotes: "Fallback interpretation used OCR text only.",
+      verifiedFacts: [],
     };
   }
 
@@ -437,6 +459,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
         "I could not confidently read the attachment from OCR alone. What should StudentOS extract or schedule from it?",
       confidence: 0.35,
       languageNotes: "OCR may have missed non-English text or visual layout.",
+      verifiedFacts: [],
     };
   }
 
@@ -450,6 +473,7 @@ export function fallbackInterpretSource(input: SourceInterpretationInput): Sourc
     clarificationPrompt: "",
     confidence: rawText ? 0.5 : 0.25,
     languageNotes: "Fallback interpretation used available text only.",
+    verifiedFacts: [],
   };
 }
 
@@ -495,7 +519,7 @@ export async function interpretSourceAttachment(
     const rawText = compactText(input.rawText);
 
     const { output } = await generateText({
-      model: gatewayLanguageModel(sponsorEnv.aiGatewayFallbackModel || sponsorEnv.aiGatewayModel),
+      model: gatewayLanguageModel(input.model || sponsorEnv.aiGatewayFallbackModel || sponsorEnv.aiGatewayModel),
       output: Output.object({ schema: SourceInterpretationSchema }),
       system: sourceInterpreterSystemPrompt,
       messages: [

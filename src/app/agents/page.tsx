@@ -133,6 +133,11 @@ function mergeSponsorTraces(...groups: AISponsorTraceItem[][]) {
 }
 
 function isAbortError(error: unknown) {
+  if (typeof error === "object" && error !== null) {
+    if ("name" in error && error.name === "AbortError") {
+      return true;
+    }
+  }
   return (
     (error instanceof DOMException && error.name === "AbortError") ||
     (error instanceof Error && error.name === "AbortError")
@@ -361,6 +366,7 @@ export default function AgentsThinkingPage() {
         if (!response.body) throw new Error("StudentOS analysis stream was not available.");
 
         const reader = response.body.getReader();
+        reader.closed.catch(() => {});
         const decoder = new TextDecoder();
         let buffer = "";
         let finalFootprint: StudentOSAgentFootprint | null = null;

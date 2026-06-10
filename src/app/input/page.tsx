@@ -65,6 +65,7 @@ type InputSource = {
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
+  verifiedFacts?: CapturedSourceForAI["verifiedFacts"];
   sponsorStatus?: "cached" | "uploaded" | "extracting" | "extracted" | "fallback" | "error";
   durationSeconds?: number;
 };
@@ -103,6 +104,7 @@ type AwsExtractResponse = {
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
+  verifiedFacts?: CapturedSourceForAI["verifiedFacts"];
   interpretationProvider?: string;
 };
 
@@ -123,6 +125,7 @@ type CachedSourceResponse = {
   extractedTasks?: string[];
   extractedEvidence?: string[];
   sourceConfidence?: number;
+  verifiedFacts?: CapturedSourceForAI["verifiedFacts"];
   languageNotes?: string;
   needsClarification?: boolean;
   clarificationPrompt?: string;
@@ -517,6 +520,7 @@ export default function InputPage() {
       let languageNotes: string | undefined;
       let needsClarification: boolean | undefined;
       let clarificationPrompt: string | undefined;
+      let verifiedFacts: CapturedSourceForAI["verifiedFacts"];
       let sourceProvider = upload.provider;
 
       if (fileType === "image" || fileType === "pdf" || fileType === "text") {
@@ -550,6 +554,7 @@ export default function InputPage() {
           languageNotes = extraction.languageNotes;
           needsClarification = extraction.needsClarification;
           clarificationPrompt = extraction.clarificationPrompt;
+          verifiedFacts = extraction.verifiedFacts;
           sourceProvider = extraction.interpretationProvider || upload.provider;
           snippet = extraction.summary || (extraction.text ?? "").split("\n").find(Boolean)?.slice(0, 110) || snippet;
           sponsorStatus = "extracted";
@@ -590,6 +595,7 @@ export default function InputPage() {
         languageNotes,
         needsClarification,
         clarificationPrompt,
+        verifiedFacts,
         sponsorStatus,
       });
     } catch (error) {
@@ -757,6 +763,7 @@ export default function InputPage() {
       languageNotes: source.languageNotes,
       needsClarification: source.needsClarification,
       clarificationPrompt: source.clarificationPrompt,
+      verifiedFacts: source.verifiedFacts,
       sponsorStatus: source.sponsorStatus,
     };
   };
@@ -855,6 +862,7 @@ export default function InputPage() {
       languageNotes: source.languageNotes,
       needsClarification: source.needsClarification,
       clarificationPrompt: source.clarificationPrompt,
+      verifiedFacts: source.verifiedFacts,
       durationSeconds: source.durationSeconds,
     }));
 
