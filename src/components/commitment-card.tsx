@@ -40,9 +40,9 @@ export function CommitmentCard({
         </div>
         <ChevronRight className="mt-1 size-5 shrink-0 text-neutral-300" />
       </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span className="text-[12px] font-semibold leading-5 text-neutral-500">{typeLabel}</span>
-        <span className="text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
+      <div className="flex items-center gap-x-2 w-full min-w-0 flex-nowrap overflow-hidden">
+        <span className="shrink-0 text-[12px] font-semibold leading-5 text-neutral-500">{typeLabel}</span>
+        <span className="shrink-0 text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
           {"\u00b7"}
         </span>
         <button
@@ -51,22 +51,21 @@ export function CommitmentCard({
             event.stopPropagation();
             onSourceClick?.();
           }}
-          className="text-[12px] font-semibold leading-5 text-neutral-500 transition hover:text-ink focus:outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ink/20"
+          className="truncate text-left text-[12px] font-semibold leading-5 text-neutral-500 transition hover:text-ink focus:outline-none focus-visible:rounded-sm focus-visible:ring-2 focus-visible:ring-ink/20"
           aria-label={`Open source for ${commitment.title}`}
         >
           {commitment.source}
         </button>
-        <span className="text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
+        <span className="shrink-0 text-[12px] font-semibold leading-5 text-neutral-300" aria-hidden="true">
           {"\u00b7"}
         </span>
-        <span className="text-[12px] font-semibold leading-5 text-neutral-500">
+        <span className="shrink-0 text-[12px] font-semibold leading-5 text-neutral-500">
           {commitment.estimatedDuration}
         </span>
-        <UncertaintyBadge state={commitment.state} />
+        <div className="shrink-0">
+          <UncertaintyBadge state={commitment.state} />
+        </div>
       </div>
-      <p className={cn("mt-3 text-xs font-semibold", uncertain ? "text-red-700" : "text-neutral-400")}>
-        {uncertain ? "Tap to clarify" : "Tap to edit"}
-      </p>
     </motion.div>
   );
 }
