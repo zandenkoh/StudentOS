@@ -1927,6 +1927,11 @@ export default function CommitmentsPage() {
     router.push("/roadmap");
   }
 
+  function deepResearchRoadmap() {
+    window.localStorage.setItem("studentos_deep_research_auto_start", "true");
+    viewRoadmap();
+  }
+
   function openEditor(commitment: Commitment) {
     setEditing(commitment);
     setEditDraft({
@@ -2179,9 +2184,11 @@ export default function CommitmentsPage() {
               />
               <GoalRoadmapCard
                 onView={viewRoadmap}
+                onDeepResearch={deepResearchRoadmap}
                 roadmapAdded={roadmapAdded}
                 goalTitle={roadmapGoal?.title}
                 summaryLines={roadmapSummaryLines}
+                hasDeepResearch={Boolean(aiFootprint?.goalResearch)}
               />
               <div className="space-y-6">
                 {displayedPlanSections.map((section) => (

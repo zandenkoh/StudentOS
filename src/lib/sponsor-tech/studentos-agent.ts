@@ -1666,12 +1666,12 @@ async function generateFootprintCore(
 
       for await (const part of result.fullStream) {
         if (part.type === "reasoning-delta") {
-          await onReasoningDelta?.(part.text);
+          await onReasoningDelta?.((part as any).delta || (part as any).text || "");
           continue;
         }
 
         if (part.type === "text-delta") {
-          streamedText += part.text;
+          streamedText += (part as any).textDelta || (part as any).text || "";
         }
       }
 

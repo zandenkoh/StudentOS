@@ -1,18 +1,24 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, Route } from "lucide-react";
+import { CheckCircle2, ChevronRight, Loader2, Route, Search } from "lucide-react";
 import { SourceChip } from "@/components/source-chip";
 
 export function GoalRoadmapCard({
   onView,
+  onDeepResearch,
   roadmapAdded,
   goalTitle = "Learn coding by December",
-  summaryLines
+  summaryLines,
+  deepResearchLoading = false,
+  hasDeepResearch = false
 }: {
   onView: () => void;
+  onDeepResearch?: () => void;
   roadmapAdded: boolean;
   goalTitle?: string;
   summaryLines?: string[];
+  deepResearchLoading?: boolean;
+  hasDeepResearch?: boolean;
 }) {
   const lines = summaryLines?.length
     ? summaryLines
@@ -52,14 +58,35 @@ export function GoalRoadmapCard({
         ))}
       </div>
 
-      <button
-        type="button"
-        onClick={onView}
-        className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-ink px-4 text-[14px] font-semibold text-white shadow-soft"
-      >
-        View goal roadmap
-        <ChevronRight className="size-4" />
-      </button>
+      <div className="mt-4 grid gap-2">
+        {onDeepResearch ? (
+          <button
+            type="button"
+            onClick={onDeepResearch}
+            disabled={deepResearchLoading}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 text-[14px] font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {deepResearchLoading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Search className="size-4" />
+            )}
+            {deepResearchLoading
+              ? "Researching goal..."
+              : hasDeepResearch
+                ? "Open deep research"
+                : "Deep research"}
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={onView}
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-ink px-4 text-[14px] font-semibold text-white shadow-soft"
+        >
+          View goal roadmap
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
     </section>
   );
 }

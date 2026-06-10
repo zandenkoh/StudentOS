@@ -223,7 +223,12 @@ function AgentLogItem({
               transition={{ duration: 0.22, ease: "easeOut" }}
               className="overflow-hidden"
             >
-              <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600">{log.body}</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-600 whitespace-pre-wrap">
+                {log.body}
+                {!complete && log.kind === "thought" && (
+                  <span className="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-neutral-400 animate-pulse" />
+                )}
+              </p>
               {log.detail ? (
                 <p className="mt-2 border-l-2 border-neutral-200 pl-3 text-[12px] leading-snug text-neutral-500">
                   {log.detail}
@@ -501,6 +506,12 @@ export default function AgentsThinkingPage() {
         const toolResultLength = log.tool?.result.length ?? 0;
         const totalLength = titleLength + bodyLength + detailLength + toolResultLength;
 
+        // Bypass character typing for streaming thought logs
+        if (log.kind === "thought") {
+          setDisplayedLogs((current) => mergeLog(current, log));
+          continue;
+        }
+
         for (let position = 1; position <= totalLength; position += 1) {
           if (presentationRunRef.current !== runId) return;
 
@@ -606,9 +617,37 @@ export default function AgentsThinkingPage() {
   useEffect(() => {
     if (!presentationOverBudget || displayedLogs.length >= agentLogs.length) return;
 
-    displayedLogIdsRef.current = new Set(agentLogs.map((log) => log.id));
-    setDisplayedLogs(agentLogs);
+    const remainingLogs = agentLogs.filter((log) => !displayedLogIdsRef.current.has(log.id));
+    if (remainingLogs.length > 0) {
+      displayedLogIdsRef.current = new Set(agentLogs.map((log) => log.id));
+      setDisplayedLogs((current) => {
+        let next = [...current];
+        for (const log of remainingLogs) {
+          next = mergeLog(next, log);
+        }
+        return next;
+      });
+    }
   }, [agentLogs, displayedLogs.length, presentationOverBudget]);
+
+  useEffect(() => {
+    // Keep fully revealed logs in sync with any live updates from agentLogs
+    setDisplayedLogs((currentDisplayed) => {
+      let updated = false;
+      const nextDisplayed = currentDisplayed.map((dispLog) => {
+        // Only update if it's a thought log or if the log is already fully revealed
+        if (dispLog.kind === "thought") {
+          const liveLog = agentLogs.find((l) => l.id === dispLog.id);
+          if (liveLog && liveLog.body.length !== dispLog.body.length) {
+            updated = true;
+            return liveLog;
+          }
+        }
+        return dispLog;
+      });
+      return updated ? nextDisplayed : currentDisplayed;
+    });
+  }, [agentLogs]);
 
   useEffect(() => {
     if (!readyToRedirect) return;
