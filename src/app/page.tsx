@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Calendar,
   ChevronRight,
@@ -9,13 +9,18 @@ import {
   MessageSquare,
   School,
   Target,
-  Zap
+  Zap,
+  X,
+  Copy,
+  Check,
+  Share2
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { PrimaryButton } from "@/components/buttons";
+import { PrimaryButton, SecondaryButton } from "@/components/buttons";
 import { clearStudentOSDemoState } from "@/lib/demo-state";
+import { QRCodeSVG } from "qrcode.react";
 
 const sourceChaos = [
   {
@@ -107,10 +112,39 @@ function WhatStudentOSDoesShowcase() {
 export default function Home() {
   const router = useRouter();
   const [isFadingOut, setIsFadingOut] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const shareUrl = "https://student-os-superai.vercel.app";
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     clearStudentOSDemoState();
   }, []);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2050);
+    } catch (err) {
+      console.error("Failed to copy", err);
+    }
+  };
+
+  const handleNativeShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "StudentOS",
+          text: "Check out StudentOS - an AI chief of staff for students!",
+          url: shareUrl,
+        });
+      } catch (err) {
+        console.log("Shared cancelled or failed", err);
+      }
+    } else {
+      handleCopy();
+    }
+  };
 
   return (
     <AppShell hideHeader={true}>
@@ -147,8 +181,8 @@ export default function Home() {
           </p>
         </div>
 
-        {/* CTA Button */}
-        <div className="mb-8">
+        {/* CTA Buttons */}
+        <div className="mb-8 flex flex-col gap-3">
           <PrimaryButton
             onClick={() => {
               clearStudentOSDemoState();
@@ -334,9 +368,100 @@ export default function Home() {
               <span>Start Demo</span>
               <ChevronRight className="absolute right-5 size-4" />
             </button>
+            
           </motion.div>
         </section>
+
+          <SecondaryButton
+            onClick={() => setShowShareModal(true)}
+            className="h-[60px] w-full justify-center text-[15px] font-semibold my-5"
+          >
+            <Share2 className="size-4 mr-1 text-ink" />
+            <span>Share Demo</span>
+          </SecondaryButton>
       </motion.div>
+      
+
+      {/* Share Modal */}
+      <AnimatePresence>
+        {showShareModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white/98 px-6 backdrop-blur-md"
+          >
+            <button
+              onClick={() => setShowShareModal(false)}
+              className="absolute right-6 top-6 flex size-10 items-center justify-center rounded-full bg-neutral-100 text-neutral-500 transition hover:bg-neutral-200 active:scale-95"
+              aria-label="Close"
+            >
+              <X className="size-5" />
+            </button>
+
+            <motion.div
+              initial={{ scale: 0.95, y: 15 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 15 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              className="flex w-full max-w-[360px] flex-col items-center text-center"
+            >
+              <div className="mb-6">
+                <div className="mx-auto mb-3 flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+                  <Share2 className="size-5" />
+                </div>
+                <h2 className="text-[24px] font-black text-ink">Share StudentOS</h2>
+                <p className="mt-1.5 text-sm font-semibold text-neutral-500">
+                  Let others experience the AI chief of staff.
+                </p>
+              </div>
+
+              {/* QR Code */}
+              <div className="mb-6 rounded-[28px] border border-neutral-200 bg-white p-5 shadow-[0_24px_60px_rgba(0,0,0,0.06)]">
+                <QRCodeSVG
+                  value={shareUrl}
+                  size={200}
+                  level="H"
+                  includeMargin={false}
+                  className="rounded-xl"
+                />
+              </div>
+
+              {/* Copy Link input-like display */}
+              <div className="mb-4 flex w-full items-center justify-between rounded-[20px] border border-neutral-200 bg-neutral-50 p-1.5 shadow-inner">
+                <span className="flex-1 truncate px-3 text-left text-[13px] font-bold text-neutral-500 select-all">
+                  {shareUrl}
+                </span>
+                <button
+                  onClick={handleCopy}
+                  className="flex h-10 items-center gap-1.5 rounded-full bg-ink px-4 text-xs font-bold text-white transition hover:bg-ink/90 active:scale-95 shrink-0"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="size-3.5" />
+                      <span>Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-3.5" />
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Native Share Button */}
+              <PrimaryButton
+                onClick={handleNativeShare}
+                className="h-[56px] w-full"
+              >
+                <Share2 className="size-4 mr-1 text-white" />
+                <span>Share Link</span>
+              </PrimaryButton>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </AppShell>
   );
 }
