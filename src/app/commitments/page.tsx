@@ -734,7 +734,7 @@ export default function CommitmentsPage() {
         ? `Next action: clarify ${roadmapGoal.title}.`
         : "Next action: no roadmap task yet.",
     aiFootprint?.goalResearch
-      ? "Grounded with Exa goal research."
+      ? "Plan grounded in checked source context."
       : "Risk: consistency, not deadline proximity.",
   ];
 
@@ -1972,11 +1972,6 @@ export default function CommitmentsPage() {
     router.push("/roadmap");
   }
 
-  function deepResearchRoadmap() {
-    window.localStorage.setItem("studentos_deep_research_auto_start", "true");
-    viewRoadmap();
-  }
-
   function openEditor(commitment: Commitment) {
     setEditing(commitment);
     setEditDraft({
@@ -2229,7 +2224,6 @@ export default function CommitmentsPage() {
               />
               <GoalRoadmapCard
                 onView={viewRoadmap}
-                onDeepResearch={deepResearchRoadmap}
                 roadmapAdded={roadmapAdded}
                 goalTitle={roadmapGoal?.title}
                 summaryLines={roadmapSummaryLines}

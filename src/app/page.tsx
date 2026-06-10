@@ -116,10 +116,10 @@ export default function Home() {
               clearStudentOSDemoState();
               setIsFadingOut(true);
             }}
-            className="justify-between px-6"
+            className="relative justify-center px-6"
           >
             <span className="text-[15px] font-semibold">Start Demo</span>
-            <ChevronRight className="size-4" />
+            <ChevronRight className="absolute right-6 size-4" />
           </PrimaryButton>
         </div>
 
@@ -344,10 +344,10 @@ export default function Home() {
                 clearStudentOSDemoState();
                 setIsFadingOut(true);
               }}
-              className="mt-5 inline-flex h-[56px] w-full items-center justify-between rounded-full bg-white px-5 text-[15px] font-bold text-ink shadow-soft transition hover:scale-[1.01] active:scale-[0.99]"
+              className="mt-5 relative inline-flex h-[56px] w-full items-center justify-center rounded-full bg-white px-5 text-[15px] font-bold text-ink shadow-soft transition hover:scale-[1.01] active:scale-[0.99]"
             >
-              Start Demo
-              <ChevronRight className="size-4" />
+              <span>Start Demo</span>
+              <ChevronRight className="absolute right-5 size-4" />
             </button>
           </motion.div>
         </section>

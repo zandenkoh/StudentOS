@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BookOpenCheck, CheckCircle2, Clock3, ExternalLink, HelpCircle, Loader2, RefreshCw, Route, Search } from "lucide-react";
+import { ArrowLeft, BookOpenCheck, CheckCircle2, Clock3, ExternalLink, HelpCircle, Route, SearchCheck } from "lucide-react";
 
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
@@ -10,11 +10,10 @@ import { GoalRoadmapTimeline } from "@/components/goal-roadmap-timeline";
 import { SourceChip } from "@/components/source-chip";
 import { goalRoadmapSteps, type DemoGoalRoadmapStep } from "@/lib/demo-data";
 import { cleanResearchCopy, compactResearchCopy } from "@/lib/sponsor-tech/research-format";
-import type { AIGoalResearch, StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
+import type { StudentOSAgentFootprint } from "@/lib/studentos-ai-types";
 import { ensureTaskTimeRanges } from "@/lib/time-scheduling";
 
 type GoalResearch = NonNullable<StudentOSAgentFootprint["goalResearch"]>;
-type DeepResearchStatus = "idle" | "loading" | "success" | "error";
 
 function researchTakeaways(goalResearch: GoalResearch) {
   const summary = cleanResearchCopy(goalResearch.summary);
@@ -53,10 +52,6 @@ export default function RoadmapPage() {
   const [steps, setSteps] = useState<DemoGoalRoadmapStep[]>(() => stepsWithClockRanges(goalRoadmapSteps));
   const [goalTitle, setGoalTitle] = useState("Learn coding by December");
   const [goalResearch, setGoalResearch] = useState<StudentOSAgentFootprint["goalResearch"]>();
-  const [deepResearchStatus, setDeepResearchStatus] = useState<DeepResearchStatus>("idle");
-  const [deepResearchError, setDeepResearchError] = useState<string | null>(null);
-  const [hydrated, setHydrated] = useState(false);
-  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -75,99 +70,11 @@ export default function RoadmapPage() {
       }
     } catch {
       setSteps(stepsWithClockRanges(goalRoadmapSteps));
-    } finally {
-      setHydrated(true);
     }
 
     window.localStorage.setItem("studentos_roadmap_added", "true");
     setRoadmapAdded(true);
   }, []);
-
-  const persistGoalResearch = useCallback((research: AIGoalResearch) => {
-    const footprintKeys = ["studentos_ai_footprint", "studentos_commitment_footprint"];
-
-    for (const key of footprintKeys) {
-      const rawFootprint = window.localStorage.getItem(key);
-      if (!rawFootprint) continue;
-
-      try {
-        const footprint = JSON.parse(rawFootprint) as StudentOSAgentFootprint;
-        window.localStorage.setItem(
-          key,
-          JSON.stringify({
-            ...footprint,
-            goalResearch: research,
-            sponsorTrace: [
-              ...footprint.sponsorTrace.filter(
-                (item) => item.provider !== "Exa" || item.action !== "Deep researched goal context",
-              ),
-              {
-                provider: "Exa",
-                action: "Deep researched goal context",
-                status: "success",
-                detail: `${research.searchQueries?.length ?? 1} focused Exa search${(research.searchQueries?.length ?? 1) === 1 ? "" : "es"} for ${goalTitle}.`,
-              },
-            ],
-          }),
-        );
-      } catch {
-        // Ignore stale local demo state and keep the visible research result.
-      }
-    }
-  }, [goalTitle]);
-
-  const runDeepResearch = useCallback(async () => {
-    if (!goalTitle.trim() || deepResearchStatus === "loading") return;
-
-    setDeepResearchStatus("loading");
-    setDeepResearchError(null);
-
-    try {
-      let clarificationAnswers: Array<{ question: string; answer: string }> = [];
-      const savedClarifications = window.localStorage.getItem("studentos_clarification_answers");
-      if (savedClarifications) {
-        const parsed = JSON.parse(savedClarifications) as Array<{ question?: string; answer?: string }>;
-        clarificationAnswers = parsed
-          .filter((item) => item.question && item.answer)
-          .map((item) => ({
-            question: item.question as string,
-            answer: item.answer as string,
-          }));
-      }
-
-      const response = await fetch("/api/sponsor/exa/research-goal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          goal: goalTitle,
-          clarificationAnswers,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Deep research did not complete.");
-      }
-
-      const research = await response.json() as AIGoalResearch;
-      setGoalResearch(research);
-      persistGoalResearch(research);
-      setDeepResearchStatus("success");
-    } catch (error) {
-      setDeepResearchStatus("error");
-      setDeepResearchError(error instanceof Error ? error.message : "Deep research did not complete.");
-    }
-  }, [deepResearchStatus, goalTitle, persistGoalResearch]);
-
-  useEffect(() => {
-    if (!hydrated || autoStartedRef.current) return;
-
-    const shouldAutoStart = window.localStorage.getItem("studentos_deep_research_auto_start") === "true";
-    if (!shouldAutoStart) return;
-
-    autoStartedRef.current = true;
-    window.localStorage.removeItem("studentos_deep_research_auto_start");
-    void runDeepResearch();
-  }, [hydrated, runDeepResearch]);
 
   function backToPlan() {
     window.localStorage.setItem("studentos_resume_step", "plan");
@@ -257,50 +164,24 @@ export default function RoadmapPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => void runDeepResearch()}
-            disabled={deepResearchStatus === "loading"}
-            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 text-[14px] font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {deepResearchStatus === "loading" ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : goalResearch ? (
-              <RefreshCw className="size-4" />
-            ) : (
-              <Search className="size-4" />
-            )}
-            {deepResearchStatus === "loading"
-              ? "Researching goal..."
-              : goalResearch
-                ? "Refresh deep research"
-                : "Deep research"}
-          </button>
-
-          {deepResearchError ? (
-            <p className="mt-2 rounded-2xl bg-red-50 px-3 py-2 text-[13px] font-semibold text-red-700">
-              {deepResearchError}
-            </p>
-          ) : null}
-
           {goalResearch ? (
             <div className="mt-4 rounded-[24px] border border-emerald-100 bg-emerald-50/45 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
                   <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-white text-emerald-700 shadow-[0_8px_22px_rgba(16,185,129,0.12)]">
-                    <Search className="size-5" />
+                    <SearchCheck className="size-5" />
                   </span>
                   <div className="min-w-0">
                     <p className="text-[18px] font-bold leading-tight text-ink">
-                      Full personalized plan
+                      Why this roadmap?
                     </p>
                     <p className="mt-1 text-[13px] font-semibold leading-5 text-emerald-800">
-                      Built from live goal research, your saved answers, and the current roadmap.
+                      StudentOS checked source context before choosing milestones, cadence, and next questions.
                     </p>
                   </div>
                 </div>
                 <SourceChip tone="success">
-                  {searchCountLabel(goalResearch)}
+                  {searchCountLabel(goalResearch)} checked
                 </SourceChip>
               </div>
 

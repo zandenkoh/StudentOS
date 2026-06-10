@@ -1,23 +1,19 @@
 "use client";
 
-import { CheckCircle2, ChevronRight, Loader2, Route, Search } from "lucide-react";
+import { CheckCircle2, ChevronRight, Route, SearchCheck } from "lucide-react";
 import { SourceChip } from "@/components/source-chip";
 
 export function GoalRoadmapCard({
   onView,
-  onDeepResearch,
   roadmapAdded,
   goalTitle = "Learn coding by December",
   summaryLines,
-  deepResearchLoading = false,
   hasDeepResearch = false
 }: {
   onView: () => void;
-  onDeepResearch?: () => void;
   roadmapAdded: boolean;
   goalTitle?: string;
   summaryLines?: string[];
-  deepResearchLoading?: boolean;
   hasDeepResearch?: boolean;
 }) {
   const lines = summaryLines?.length
@@ -58,26 +54,14 @@ export function GoalRoadmapCard({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-2">
-        {onDeepResearch ? (
-          <button
-            type="button"
-            onClick={onDeepResearch}
-            disabled={deepResearchLoading}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 text-[14px] font-semibold text-emerald-800 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {deepResearchLoading ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Search className="size-4" />
-            )}
-            {deepResearchLoading
-              ? "Researching goal..."
-              : hasDeepResearch
-                ? "Open deep research"
-                : "Deep research"}
-          </button>
-        ) : null}
+      {hasDeepResearch ? (
+        <div className="mt-3 flex items-center gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] font-bold text-emerald-800">
+          <SearchCheck className="size-4" />
+          Plan grounded in checked sources
+        </div>
+      ) : null}
+
+      <div className="mt-4">
         <button
           type="button"
           onClick={onView}
