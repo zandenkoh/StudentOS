@@ -1,6 +1,6 @@
 import "server-only";
 
-import { generateText } from "ai";
+import { streamText } from "ai";
 import { z } from "zod";
 import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
 import { gatewayLanguageModel } from "@/lib/sponsor-tech/ai-gateway-model";
@@ -18,6 +18,8 @@ import type {
 
 const FAST_CONTEXT_RESEARCH_TIMEOUT_MS = 4500;
 const GATEWAY_FOOTPRINT_TIMEOUT_MS = 12000;
+const GATEWAY_REASONING_BUDGET_TOKENS = 2000;
+const GATEWAY_REASONING_LOG_MIN_INTERVAL_MS = 250;
 
 const SourceSchema = z.object({
   id: z.string(),
@@ -296,6 +298,7 @@ type GeneratedRoadmapStep = z.infer<typeof GeneratedRoadmapStepSchema>;
 type AnalyseStudentChaosOptions = {
   onEvent?: (event: AnalyseStudentChaosStreamEvent) => void | Promise<void>;
 };
+type GatewayReasoningDeltaHandler = (text: string) => void | Promise<void>;
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -326,6 +329,36 @@ function parseJsonObject(text: string) {
   }
 
   return JSON.parse(candidate.slice(start, end + 1));
+}
+
+function gatewayReasoningProviderOptions(model: string) {
+  const isClaude46 = /claude-(?:opus|sonnet)-4\.6/i.test(model);
+
+  if (isClaude46) {
+    return {
+      anthropic: {
+        thinking: { type: "adaptive" },
+      },
+      bedrock: {
+        reasoningConfig: { type: "adaptive" },
+      },
+    };
+  }
+
+  return {
+    anthropic: {
+      thinking: {
+        type: "enabled",
+        budgetTokens: GATEWAY_REASONING_BUDGET_TOKENS,
+      },
+    },
+    bedrock: {
+      reasoningConfig: {
+        type: "enabled",
+        budgetTokens: GATEWAY_REASONING_BUDGET_TOKENS,
+      },
+    },
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1548,42 +1581,49 @@ function buildFootprintFromCore({
   return FootprintSchema.parse(footprint);
 }
 
-async function generateFootprintCore(model: string, input: AnalyseStudentChaosRequest, goalResearch?: StudentOSAgentFootprint["goalResearch"]) {
+async function generateFootprintCore(
+  model: string,
+  input: AnalyseStudentChaosRequest,
+  goalResearch?: StudentOSAgentFootprint["goalResearch"],
+  onReasoningDelta?: GatewayReasoningDeltaHandler,
+) {
   const sources = input.sources;
 
-  const { text } = await withTimeout(
-    generateText({
-      model: gatewayLanguageModel(model),
-      timeout: GATEWAY_FOOTPRINT_TIMEOUT_MS,
-      maxRetries: 0,
-      system:
-        "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
-      prompt: JSON.stringify(
-        {
-          currentDate: input.currentDate,
-          sourceContext: input.sourceContext,
-          sources: sources.map((source) => ({
-            ...source,
-            interpretedSummary: source.sourceSummary,
-            interpretedTasks: source.extractedTasks,
-            sourceNeedsClarification: source.needsClarification,
-            sourceClarificationPrompt: source.clarificationPrompt,
-            evidenceText: sourceText(source).slice(0, 1400),
-          })),
-          exaGoalResearch: goalResearch,
-          outputContract: {
-            commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
-            clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
-            timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
-            resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
-            conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
-            planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
-            roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
-            rationale: "summary plus 3-6 bullets.",
-            emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
-          },
-          requirements: [
-          "Extract commitments from evidence, not generic todo items.",
+  const text = await withTimeout(
+    (async () => {
+      const result = streamText({
+        model: gatewayLanguageModel(model),
+        timeout: GATEWAY_FOOTPRINT_TIMEOUT_MS,
+        maxRetries: 0,
+        providerOptions: gatewayReasoningProviderOptions(model),
+        system:
+          "You are StudentOS, an AI chief-of-staff for ambitious students. Return only valid JSON. Do not wrap it in Markdown. Do not expose hidden chain-of-thought; provide concise user-facing rationale only. Preserve the StudentOS narrative: messy sources plus goals plus constraints become commitments, clarification questions, conflict handling, roadmap, realistic daily plan, and replanning data.",
+        prompt: JSON.stringify(
+          {
+            currentDate: input.currentDate,
+            sourceContext: input.sourceContext,
+            sources: sources.map((source) => ({
+              ...source,
+              interpretedSummary: source.sourceSummary,
+              interpretedTasks: source.extractedTasks,
+              sourceNeedsClarification: source.needsClarification,
+              sourceClarificationPrompt: source.clarificationPrompt,
+              evidenceText: sourceText(source).slice(0, 1400),
+            })),
+            exaGoalResearch: goalResearch,
+            outputContract: {
+              commitments: "1-8 items with id, title, type task|event|deadline|goal|conflict, source, confidence 0-100, estimatedDuration, state confirmed|needs_clarification|unsure|resolved, explanation.",
+              clarificationQuestions: "1-6 items with id, commitmentId, kind goal|team|general, title, subtitle, question, 2-4 options, customPlaceholder, resolvedCommitment. Every option must include label and recommended boolean. resolvedCommitment must always be an object with title, state, confidence, estimatedDuration, explanation; never a string, array, or null.",
+              timelineEvents: "3-8 items with id, time, title, duration, chip, tone none|conflict|success|priority, conflictGroupId, scheduleRationale.",
+              resolvedTimelineEvents: "3-8 items with same shape as timelineEvents.",
+              conflict: "title, unresolvedSummary, resolvedTitle, resolvedSummary, fixedEventTitle, fixedEventTime, conflictingEventTitle, conflictingEventTime, overlapLabel, impactLabel, resolvedImpactLabel, recommendationSummary, recommendedActions, manualActions. recommendedActions and manualActions must each be arrays of 3-6 short strings.",
+              planTasks: "1-10 items with id, title, section do_now|do_next|subsequent_days, estimatedMinutes number, timeLabel, scheduledDate, scheduledDateId, scheduledDateRange, deadline, deadlineDateId, reason, scheduleRationale, source, goalId, isRoadmapTask boolean, updated boolean. timeLabel must be an exact clock range like '4:30-5:15 PM', not 'After homework', 'Evening', or only a date.",
+              roadmapSteps: "1-6 items with id, goalId, title, description, scheduledDate, scheduledDateRange, tasks, status scheduled|in_progress|upcoming. tasks must be an array of full plan task objects using the planTasks shape; never strings, arrays, or null.",
+              rationale: "summary plus 3-6 bullets.",
+              emptyFields: "For unknown optional text, use an empty string. For no tone, use tone='none'. For no estimated minutes, use 0. Do not omit keys from objects.",
+            },
+            requirements: [
+              "Extract commitments from evidence, not generic todo items.",
           "The source field on each commitment and plan task must match a submitted source title, submitted source label, or a clear source-derived label.",
           "Every submitted interpretedTasks item must appear in commitments, planTasks, or roadmap step tasks. Do not drop a task just because another source has higher priority.",
           "Treat the submitted source text as the source of truth. For short manual inputs, preserve the exact named event, subject, or roadmap target in commitments, roadmap steps, and plan tasks.",
@@ -1621,7 +1661,22 @@ async function generateFootprintCore(model: string, input: AnalyseStudentChaosRe
         null,
         2,
       ),
-    }),
+      });
+      let streamedText = "";
+
+      for await (const part of result.fullStream) {
+        if (part.type === "reasoning-delta") {
+          await onReasoningDelta?.(part.text);
+          continue;
+        }
+
+        if (part.type === "text-delta") {
+          streamedText += part.text;
+        }
+      }
+
+      return streamedText;
+    })(),
     GATEWAY_FOOTPRINT_TIMEOUT_MS,
     `Gateway footprint model ${model}`,
   );
@@ -1663,7 +1718,12 @@ export async function analyseStudentChaos(
       tool: log.tool,
     };
 
-    streamedLogs.push(fullLog);
+    const existingIndex = streamedLogs.findIndex((item) => item.id === fullLog.id);
+    if (existingIndex >= 0) {
+      streamedLogs[existingIndex] = fullLog;
+    } else {
+      streamedLogs.push(fullLog);
+    }
     await options.onEvent?.({ type: "log", log: fullLog });
     return fullLog;
   };
@@ -1797,6 +1857,31 @@ export async function analyseStudentChaos(
 
   const primaryModel = sponsorEnv.aiGatewayModel;
   const fallbackModel = sponsorEnv.aiGatewayFallbackModel;
+  let reasoningText = "";
+  let lastReasoningLogAt = 0;
+  const emitReasoningDelta: GatewayReasoningDeltaHandler = async (delta) => {
+    reasoningText += delta;
+    const now = Date.now();
+    const shouldEmit =
+      now - lastReasoningLogAt >= GATEWAY_REASONING_LOG_MIN_INTERVAL_MS ||
+      reasoningText.length <= delta.length;
+
+    if (!shouldEmit) return;
+    lastReasoningLogAt = now;
+
+    await emitLog({
+      id: "gateway-reasoning-stream",
+      kind: "thought",
+      title: "Claude reasoning stream",
+      body: reasoningText.trim() || "Claude has started provider-visible reasoning.",
+      detail:
+        "Provider-returned extended/adaptive thinking from Vercel AI Gateway. Claude 4.x may return summarized thinking rather than raw full hidden reasoning.",
+      tool: {
+        provider: "Vercel AI Gateway",
+        result: primaryModel,
+      },
+    });
+  };
 
   await emitLog({
     id: "gateway-call-started",
@@ -1810,7 +1895,7 @@ export async function analyseStudentChaos(
   });
 
   try {
-    const result = await generateFootprintCore(primaryModel, normalizedInput, goalResearch);
+    const result = await generateFootprintCore(primaryModel, normalizedInput, goalResearch, emitReasoningDelta);
     await emitTrace({
       provider: "Vercel AI Gateway",
       action: "Generated live StudentOS analysis",
@@ -1877,7 +1962,7 @@ export async function analyseStudentChaos(
       });
 
       try {
-        const result = await generateFootprintCore(fallbackModel, normalizedInput, goalResearch);
+        const result = await generateFootprintCore(fallbackModel, normalizedInput, goalResearch, emitReasoningDelta);
 
         await emitTrace({
           provider: "Vercel AI Gateway",
