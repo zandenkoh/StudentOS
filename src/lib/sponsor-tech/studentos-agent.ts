@@ -874,6 +874,12 @@ function generatedCoreEvidenceText(core: GeneratedCore) {
   ].join("\n");
 }
 
+function generatedCommitmentEvidenceText(core: GeneratedCore) {
+  return core.commitments
+    .map((commitment) => `${commitment.title}\n${commitment.source}\n${commitment.explanation}`)
+    .join("\n");
+}
+
 function assertGeneratedCoreGrounded(core: GeneratedCore, input: AnalyseStudentChaosRequest) {
   const sourceCorpus = input.sources.map(sourceText).join("\n");
   const sourceCorpusTokens = groundingTokens(sourceCorpus);
@@ -899,18 +905,30 @@ function assertGeneratedCoreGrounded(core: GeneratedCore, input: AnalyseStudentC
   }
 
   const coreText = generatedCoreEvidenceText(core);
+  const commitmentText = generatedCommitmentEvidenceText(core);
   const missingSourceItems = sourceFallbackItems(input.sources).filter(({ text }) => {
     const tokens = groundingTokens(text);
     if (tokens.length === 0) return false;
-    return !hasGroundingSupport(text, coreText);
+    return !hasGroundingSupport(text, commitmentText);
   });
 
   if (missingSourceItems.length > 0) {
     throw new Error(
-      `Planner missed submitted source items: ${missingSourceItems
+      `Planner missed submitted source commitments: ${missingSourceItems
         .map((item) => item.text)
         .slice(0, 3)
         .join("; ")}`,
+    );
+  }
+
+  const unsupportedGeneratedDetails = coreText
+    .split("\n")
+    .filter((line) => hasUngroundedProtectedDemoDetail(line, sourceCorpus))
+    .slice(0, 3);
+
+  if (unsupportedGeneratedDetails.length > 0) {
+    throw new Error(
+      `Planner returned unsupported demo details: ${unsupportedGeneratedDetails.join("; ")}`,
     );
   }
 }
@@ -1451,6 +1469,15 @@ function mergeSponsorTrace(
   ];
 }
 
+function goalResearchFromSourceContext(sourceContext: unknown): StudentOSAgentFootprint["goalResearch"] | undefined {
+  if (!sourceContext || typeof sourceContext !== "object" || !("exaGoalResearch" in sourceContext)) {
+    return undefined;
+  }
+
+  const parsed = GoalResearchSchema.safeParse(sourceContext.exaGoalResearch);
+  return parsed.success ? parsed.data : undefined;
+}
+
 async function researchGoalContext(sources: CapturedSourceForAI[]): Promise<StudentOSAgentFootprint["goalResearch"] | undefined> {
   const candidate = researchCandidate(sources);
 
@@ -1723,7 +1750,7 @@ export async function analyseStudentChaos(
   const stats = sourceStats(sources);
   let logSequence = 0;
 
-  let goalResearch: StudentOSAgentFootprint["goalResearch"];
+  let goalResearch: StudentOSAgentFootprint["goalResearch"] = goalResearchFromSourceContext(normalizedInput.sourceContext);
   const sponsorTrace: StudentOSAgentFootprint["sponsorTrace"] = [];
 
   const observableLogs = () => streamedLogs.slice().sort((a, b) => a.at - b.at);
@@ -1813,7 +1840,7 @@ export async function analyseStudentChaos(
   }
 
   try {
-    goalResearch = await researchGoalContext(sources);
+    goalResearch = goalResearch ?? await researchGoalContext(sources);
     const searchQueryPreview = goalResearch?.searchQueries?.slice(0, 3).join(" | ");
     const trace: AISponsorTraceItem = {
       provider: goalResearch?.model ? "Vercel AI Gateway + Exa" : "Exa",

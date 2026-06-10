@@ -610,7 +610,7 @@ function insertMissingPreservedPlanTasks(
 export default function CommitmentsPage() {
   const router = useRouter();
   const [step, setStep] = useState<CommitmentsStep>("commitments");
-  const [commitments, setCommitments] = useState<Commitment[]>(baseCommitments);
+  const [commitments, setCommitments] = useState<Commitment[]>([]);
   const [clarifying, setClarifying] = useState<ClarifyingState>(null);
   const [editing, setEditing] = useState<Commitment | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>({
@@ -641,9 +641,7 @@ export default function CommitmentsPage() {
   const [roadmapAdded, setRoadmapAdded] = useState(true);
   const [highlightedTaskId, setHighlightedTaskId] = useState<string | null>(null);
   const [planHydrated, setPlanHydrated] = useState(false);
-  const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>(() =>
-    enrichPlanTasksWithRationales(initialPlanTasks)
-  );
+  const [planTasks, setPlanTasks] = useState<DemoPlanTask[]>([]);
   const [selectedTaskForEdit, setSelectedTaskForEdit] = useState<DemoPlanTask | null>(null);
   const [clarificationAnswerRecords, setClarificationAnswerRecords] = useState<ClarificationAnswerRecord[]>([]);
   const [aiPlan, setAiPlan] = useState<PlanDayResponse | null>(null);
@@ -652,9 +650,9 @@ export default function CommitmentsPage() {
   const [replanLoading, setReplanLoading] = useState(false);
   const { agentRuns, beginAgentRun, updateAgentRun } = useAgentRuns();
   const [aiFootprint, setAiFootprint] = useState<StudentOSAgentFootprint | null>(null);
-  const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>(timelineEvents);
-  const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>(resolvedTimelineEvents);
-  const [conflictAnalysis, setConflictAnalysis] = useState<AIConflictAnalysis | undefined>(defaultConflictAnalysis);
+  const [baseTimeline, setBaseTimeline] = useState<TimelineEvent[]>([]);
+  const [aiResolvedTimeline, setAiResolvedTimeline] = useState<TimelineEvent[]>([]);
+  const [conflictAnalysis, setConflictAnalysis] = useState<AIConflictAnalysis | undefined>();
   const aiPlanRequestStarted = useRef(false);
 
   const unresolvedCount = commitments.filter(
@@ -678,6 +676,7 @@ export default function CommitmentsPage() {
     () => commitments.filter((item) => item.type === "goal"),
     [commitments],
   );
+  const hasExtractedItems = commitmentItems.length > 0 || goalItems.length > 0;
   const visibleTimelineEvents = useMemo(() => {
     if (!conflictResolved) return baseTimeline;
     if (aiResolvedTimeline.length > 0) return aiResolvedTimeline;
@@ -766,12 +765,22 @@ export default function CommitmentsPage() {
   useEffect(() => {
     try {
       let persistedTrace: SponsorTraceItem[] = [];
+      let hasSubmittedSources = false;
       const rawTrace = window.localStorage.getItem("studentos_sponsor_trace");
       if (rawTrace) {
         const parsedTrace = JSON.parse(rawTrace) as SponsorTraceItem[];
         if (Array.isArray(parsedTrace)) {
           persistedTrace = parsedTrace.slice(0, 8);
           setSponsorTrace(persistedTrace);
+        }
+      }
+      const rawCapturedSources = window.localStorage.getItem("studentos_captured_sources");
+      if (rawCapturedSources) {
+        try {
+          const parsedSources = JSON.parse(rawCapturedSources) as unknown[];
+          hasSubmittedSources = Array.isArray(parsedSources) && parsedSources.length > 0;
+        } catch {
+          hasSubmittedSources = true;
         }
       }
 
@@ -816,6 +825,13 @@ export default function CommitmentsPage() {
 
       if (!hydratedFootprintSignature) {
         window.localStorage.removeItem(ACTIVE_FOOTPRINT_SIGNATURE_KEY);
+        if (!hasSubmittedSources) {
+          setCommitments(baseCommitments);
+          setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(initialPlanTasks)));
+          setBaseTimeline(timelineEvents);
+          setAiResolvedTimeline(resolvedTimelineEvents);
+          setConflictAnalysis(defaultConflictAnalysis);
+        }
       }
 
       const savedCommitments = window.localStorage.getItem(SAVED_COMMITMENTS_KEY);
@@ -910,7 +926,11 @@ export default function CommitmentsPage() {
         });
       }
     } catch {
-      setPlanTasks(enrichPlanTasksWithRationales(withoutCompletedTasks(initialPlanTasks)));
+      setCommitments([]);
+      setPlanTasks([]);
+      setBaseTimeline([]);
+      setAiResolvedTimeline([]);
+      setConflictAnalysis(undefined);
     } finally {
       setPlanHydrated(true);
     }
@@ -1241,7 +1261,14 @@ export default function CommitmentsPage() {
   }, [hasConfirmedConflict, planHydrated, step]);
 
   useEffect(() => {
-    if (!planHydrated || step !== "plan" || aiPlan || aiPlanRequestStarted.current || replanLoading) return;
+    if (
+      !planHydrated ||
+      !hasExtractedItems ||
+      step !== "plan" ||
+      aiPlan ||
+      aiPlanRequestStarted.current ||
+      replanLoading
+    ) return;
 
     aiPlanRequestStarted.current = true;
 
@@ -1361,6 +1388,7 @@ export default function CommitmentsPage() {
     commitments,
     focusTask?.title,
     goalItems,
+    hasExtractedItems,
     planHydrated,
     planTasks,
     resolutionMode,
@@ -2091,6 +2119,16 @@ export default function CommitmentsPage() {
                       Tasks, fixed events, and deadlines StudentOS must schedule around.
                     </p>
                   </div>
+                  {planHydrated && !hasExtractedItems ? (
+                    <div className="rounded-[18px] border border-amber-100 bg-amber-50 p-4 text-sm font-semibold leading-6 text-amber-900">
+                      No source-backed commitments were found for this run. Go back to Inbox Capture and add a readable source before building the day.
+                    </div>
+                  ) : null}
+                  {!planHydrated ? (
+                    <div className="rounded-[18px] border border-neutral-100 bg-white p-4 text-sm font-semibold text-muted shadow-[0_12px_30px_rgba(15,23,42,0.05)]">
+                      Loading extracted items...
+                    </div>
+                  ) : null}
                   {commitmentItems.map((commitment) => (
                     <CommitmentCard
                       key={commitment.id}
@@ -2122,24 +2160,28 @@ export default function CommitmentsPage() {
               {/* Fixed Bottom Action Button */}
               <div className="fixed-bottom-action">
                 <button
-                  disabled={unresolvedCount > 0 || replanLoading}
+                  disabled={!planHydrated || !hasExtractedItems || unresolvedCount > 0 || replanLoading}
                   onClick={() => {
                     const nextStep = hasConfirmedConflict ? "conflict" : "plan";
                     setStep(nextStep);
                     persistFlowState({ step: nextStep });
                   }}
                   className={`flex h-[60px] w-full items-center justify-center gap-2 rounded-full text-[15px] font-bold shadow-[0_4px_16px_rgba(0,0,0,0.06)] transition-all ${
-                    unresolvedCount === 0 && !replanLoading
+                    planHydrated && hasExtractedItems && unresolvedCount === 0 && !replanLoading
                       ? "bg-ink text-white hover:scale-[1.01] active:scale-[0.99] cursor-pointer" 
                       : "bg-neutral-100 text-neutral-400 cursor-not-allowed shadow-none"
                   }`}
                 >
                   <span>
-                    {unresolvedCount > 0
-                      ? `Clarify ${unresolvedCount} items to continue`
-                      : hasConfirmedConflict
-                        ? "Continue to conflicts"
-                        : "Continue to plan"}
+                    {!planHydrated
+                      ? "Loading extracted items"
+                      : !hasExtractedItems
+                        ? "Add a source-backed item to continue"
+                        : unresolvedCount > 0
+                          ? `Clarify ${unresolvedCount} items to continue`
+                          : hasConfirmedConflict
+                            ? "Continue to conflicts"
+                            : "Continue to plan"}
                   </span>
                   <ChevronRight className="size-4.5" />
                 </button>

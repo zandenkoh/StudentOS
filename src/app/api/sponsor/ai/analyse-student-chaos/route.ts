@@ -4,7 +4,8 @@ import {
   analyseStudentChaos,
   type AnalyseStudentChaosRequest,
 } from "@/lib/sponsor-tech/studentos-agent";
-import { sponsorEnv } from "@/lib/sponsor-tech/env";
+import { deepResearchGoal, generateResearchQueryPlan } from "@/lib/sponsor-tech/exa";
+import { isExaReady, sponsorEnv } from "@/lib/sponsor-tech/env";
 import {
   awsLambdaFallbackTrace,
   awsLambdaSuccessTrace,
@@ -13,6 +14,8 @@ import {
 } from "@/lib/sponsor-tech/sponsor-proof";
 import { gatewayHealthTrace } from "@/lib/sponsor-tech/vercel-gateway";
 import type {
+  AIGoalResearch,
+  CapturedSourceForAI,
   AIAgentLog,
   AISponsorTraceItem,
   AnalyseStudentChaosStreamEvent,
@@ -153,6 +156,354 @@ function observableReasoningLog({
         }
       : undefined,
   };
+}
+
+function sourceText(source: CapturedSourceForAI) {
+  return [
+    source.title,
+    source.source,
+    source.snippet,
+    source.sourceSummary,
+    ...(source.extractedTasks ?? []),
+    ...(source.extractedEvidence ?? []),
+    source.clarificationPrompt,
+    source.ocrText,
+    source.textractText,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function cleanGoalCandidate(value: string) {
+  return value
+    .replace(/^(source|source type|student note|manual input|goal command|interpreted summary|ocr text|textract text|extracted tasks?):\s*/i, "")
+    .replace(/^[\-•*]\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function goalCandidateFromSources(sources: CapturedSourceForAI[]) {
+  const candidates = sources.flatMap((source) => {
+    const extracted = source.extractedTasks?.map(cleanGoalCandidate).filter(Boolean) ?? [];
+    const lines = sourceText(source)
+      .split(/\n|;|[•*]\s+|(?:^|\s)\d+[.)]\s+/)
+      .map(cleanGoalCandidate)
+      .filter((line) => line.length >= 4);
+
+    return [...extracted, ...lines].map((text) => ({ source, text }));
+  });
+
+  return candidates.find(({ text }) =>
+    /\b(roadmap|learn|zero\s+to\s+hero|prepare|preparation|course|skill|goal|proficient|master|build|portfolio|become|improve|get better at)\b/i.test(text),
+  );
+}
+
+function researchPacketForGoal(sources: CapturedSourceForAI[], goal: string) {
+  return [
+    "Identified student goal to research before planning:",
+    goal,
+    "Submitted source context:",
+    sources
+      .map((source, index) =>
+        [
+          `Source ${index + 1}: ${source.title}`,
+          source.source ? `Source type: ${source.source}` : undefined,
+          source.snippet ? `Student note: ${source.snippet}` : undefined,
+          source.sourceSummary ? `Interpreted summary: ${source.sourceSummary}` : undefined,
+          source.extractedTasks?.length ? `Extracted tasks: ${source.extractedTasks.join("; ")}` : undefined,
+          source.extractedEvidence?.length ? `Evidence: ${source.extractedEvidence.join("; ")}` : undefined,
+          source.clarificationPrompt ? `Clarification needed: ${source.clarificationPrompt}` : undefined,
+          source.ocrText ? `OCR text: ${source.ocrText.slice(0, 900)}` : undefined,
+          source.textractText ? `Textract text: ${source.textractText.slice(0, 900)}` : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      )
+      .join("\n\n"),
+  ]
+    .join("\n\n")
+    .slice(0, 5000);
+}
+
+function mergeSourceContextWithGoalResearch(
+  sourceContext: AnalyseStudentChaosRequest["sourceContext"],
+  goalResearch: AIGoalResearch,
+) {
+  return {
+    ...(typeof sourceContext === "object" && sourceContext !== null ? sourceContext : {}),
+    exaGoalResearch: goalResearch,
+    planningDirectives: [
+      "Use exaGoalResearch before generating clarification questions, roadmap milestones, and today's first action.",
+      "Goal questions should ask about concrete prerequisites, deliverables, deadlines, workload, or source ambiguity found by research.",
+      "Do not use generic goal questions when research has more specific questions.",
+    ],
+  };
+}
+
+type ResearchQuestionSeed = {
+  question: string;
+  why: string;
+  options: string[];
+  customPlaceholder: string;
+};
+
+function researchQuestionSeeds(goalTitle: string, goalResearch: AIGoalResearch): ResearchQuestionSeed[] {
+  const text = [
+    goalTitle,
+    goalResearch.query,
+    goalResearch.summary,
+    ...(goalResearch.searchQueries ?? []),
+    ...(goalResearch.sections ?? []).flatMap((section) => [section.title, ...section.bullets]),
+  ].join(" ");
+
+  if (/\b(python|pandas|numpy|data[-\s]?handling|data cleaning|data manipulation|data analysis|dataframe)\b/i.test(text)) {
+    return [
+      {
+        question: "Which Python data skill should the first milestone focus on?",
+        why: "Python data roadmaps split quickly between NumPy basics, pandas data cleaning, and visualization work.",
+        options: ["Pandas cleaning", "NumPy basics", "Data visualization"],
+        customPlaceholder: "Type the exact library or project focus...",
+      },
+      {
+        question: "What should prove you are proficient by the deadline?",
+        why: "A concrete output makes the roadmap schedule projects instead of vague practice blocks.",
+        options: ["Analysis notebook", "Portfolio project", "Competition prep"],
+        customPlaceholder: "Describe the final proof you want...",
+      },
+      {
+        question: "How much Python can you already use without help?",
+        why: "Prerequisite gaps change whether the next action should be Python basics or data-library practice.",
+        options: ["New to Python", "Basic syntax", "Used pandas before"],
+        customPlaceholder: "Type your current level...",
+      },
+    ];
+  }
+
+  if (/\b(hackathon|competition|contest|challenge|submission|judg(?:e|ing)|rubric|team)\b/i.test(text)) {
+    return [
+      {
+        question: "Which deliverable should StudentOS schedule first?",
+        why: "Competition plans depend on whether the risk is the repo, demo, write-up, or submission packaging.",
+        options: ["Repo build", "Demo video", "Write-up"],
+        customPlaceholder: "Type the exact deliverable...",
+      },
+      {
+        question: "Are you submitting alone or with a team?",
+        why: "Team status changes coordination tasks, review time, and ownership of the next milestone.",
+        options: ["Solo", "Team confirmed", "Team unclear"],
+        customPlaceholder: "Add teammate or role details...",
+      },
+      {
+        question: "What is the riskiest requirement right now?",
+        why: "The roadmap should schedule the requirement most likely to block submission first.",
+        options: ["Rules unclear", "Build unfinished", "Submission assets"],
+        customPlaceholder: "Type the risky requirement...",
+      },
+    ];
+  }
+
+  if (/\b(read|book|novel|chapter|article|text|audiobook|literature)\b/i.test(text)) {
+    return [
+      {
+        question: "What output do you need from this reading?",
+        why: "Reading plans differ depending on whether the deliverable is recall, notes, discussion, or an essay.",
+        options: ["Understand only", "Make notes", "Write response"],
+        customPlaceholder: "Type the reading output...",
+      },
+      {
+        question: "Which part should the first session cover?",
+        why: "A clear section prevents the roadmap from scheduling an unrealistic whole-book block.",
+        options: ["First chapter", "Assigned pages", "Need to check"],
+        customPlaceholder: "Type page or chapter range...",
+      },
+      {
+        question: "How deeply should StudentOS schedule review time?",
+        why: "A quiz or essay needs more review than casual completion.",
+        options: ["Light skim", "Quiz-ready", "Essay-ready"],
+        customPlaceholder: "Type the expected depth...",
+      },
+    ];
+  }
+
+  const researchedQuestions = (goalResearch.clarificationQuestions ?? []).slice(0, 3);
+  if (researchedQuestions.length) {
+    return researchedQuestions.map((question, index) => ({
+      question: question.question,
+      why: question.why,
+      options: index === 0
+        ? ["Use checked source", "Need to confirm", "I have details"]
+        : index === 1
+          ? ["Basic completion", "Strong quality", "Deadline-ready"]
+          : ["1 hour/week", "2 sessions/week", "3 sessions/week"],
+      customPlaceholder: "Add exact details from your source...",
+    }));
+  }
+
+  return [
+    {
+      question: "Which researched requirement should the first milestone target?",
+      why: "StudentOS should schedule the concrete requirement before adding generic practice.",
+      options: ["Prerequisites", "Deliverable", "Deadline risk"],
+      customPlaceholder: "Type the requirement...",
+    },
+  ];
+}
+
+function goalQuestionFromResearchSeed({
+  seed,
+  index,
+  commitmentId,
+  goalTitle,
+}: {
+  seed: ResearchQuestionSeed;
+  index: number;
+  commitmentId: string;
+  goalTitle: string;
+}) {
+  return {
+    id: `research-${commitmentId}-${index + 1}`,
+    commitmentId,
+    kind: "goal" as const,
+    title: "Clarify researched goal",
+    subtitle: "StudentOS checked context before asking.",
+    question: seed.question,
+    options: seed.options.map((label, optionIndex) => ({
+      label,
+      recommended: optionIndex === 1,
+    })),
+    customPlaceholder: seed.customPlaceholder,
+    resolvedCommitment: {
+      title: goalTitle,
+      state: "resolved" as const,
+      confidence: 86,
+      estimatedDuration: "2 sessions/week",
+      explanation: `Clarified using checked source context: ${seed.why}`,
+    },
+  };
+}
+
+function applyGoalResearchToFootprint(
+  footprint: StudentOSAgentFootprint,
+  goalResearch: AIGoalResearch | undefined,
+) {
+  if (!goalResearch) return footprint;
+
+  const goal = footprint.commitments.find((commitment) => commitment.type === "goal");
+  if (!goal) {
+    return {
+      ...footprint,
+      goalResearch,
+    };
+  }
+
+  const researchedQuestions = researchQuestionSeeds(goal.title, goalResearch)
+    .slice(0, 3)
+    .map((seed, index) =>
+      goalQuestionFromResearchSeed({
+        seed,
+        index,
+        commitmentId: goal.id,
+        goalTitle: goal.title,
+      }),
+    );
+  const nonGoalQuestions = footprint.clarificationQuestions.filter(
+    (question) => question.commitmentId !== goal.id || question.kind !== "goal",
+  );
+
+  return {
+    ...footprint,
+    goalResearch,
+    clarificationQuestions: researchedQuestions.length
+      ? [...researchedQuestions, ...nonGoalQuestions].slice(0, 6)
+      : footprint.clarificationQuestions,
+    sponsorTrace: [
+      {
+        provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
+        action: "Researched goal before planning",
+        status: "success" as const,
+        detail: `${goalResearch.searchQueries?.length ?? 1} focused Exa searches shaped the goal questions and roadmap context.`,
+      },
+      ...footprint.sponsorTrace.filter((item) => item.action !== "Researched goal before planning"),
+    ],
+  };
+}
+
+async function preResearchGoalForPlanning(
+  input: AnalyseStudentChaosRequest,
+  options: {
+    elapsed: () => number;
+    send?: (event: AnalyseStudentChaosStreamEvent) => void;
+  },
+) {
+  const goalCandidate = goalCandidateFromSources(input.sources);
+
+  if (!goalCandidate) return undefined;
+
+  options.send?.({
+    type: "log",
+    log: observableReasoningLog({
+      id: "exa-goal-detected",
+      at: options.elapsed(),
+      title: "Goal needs source context",
+      body: `Detected a goal before planning: ${goalCandidate.text}`,
+      provider: "Exa",
+      result: "Preparing focused searches.",
+    }),
+  });
+
+  if (!isExaReady()) {
+    options.send?.({
+      type: "trace",
+      trace: {
+        provider: "Exa",
+        action: "Researched goal before planning",
+        status: "fallback",
+        detail: "Exa is not configured, so StudentOS could not check goal context before planning.",
+      },
+    });
+    return undefined;
+  }
+
+  const queryPlan = await generateResearchQueryPlan(researchPacketForGoal(input.sources, goalCandidate.text));
+  options.send?.({
+    type: "log",
+    log: observableReasoningLog({
+      id: "exa-goal-searching",
+      at: options.elapsed(),
+      title: "Checking goal context",
+      body: "StudentOS is checking source context before generating questions or the roadmap.",
+      provider: queryPlan.model ? "Vercel AI Gateway" : "Exa",
+      result: queryPlan.queries.slice(0, 3).join(" | "),
+    }),
+  });
+
+  const goalResearch = await deepResearchGoal(queryPlan.subject, {
+    searchQueries: queryPlan.queries,
+    model: queryPlan.model,
+  });
+
+  options.send?.({
+    type: "trace",
+    trace: {
+      provider: goalResearch.model ? "Vercel AI Gateway + Exa" : "Exa",
+      action: "Researched goal before planning",
+      status: "success",
+      detail: `${goalResearch.searchQueries.length} focused searches, ${goalResearch.citations.length} citations, ${goalResearch.filteredResultCount ?? 0} unrelated results filtered.`,
+    },
+  });
+  options.send?.({
+    type: "log",
+    log: observableReasoningLog({
+      id: "exa-goal-research-complete",
+      at: options.elapsed(),
+      title: "Goal context checked",
+      body: "Research context will shape the goal questions and roadmap before the planner finalizes them.",
+      provider: "Exa",
+      result: `${goalResearch.citations.length} source${goalResearch.citations.length === 1 ? "" : "s"} checked.`,
+    }),
+  });
+
+  return goalResearch;
 }
 
 async function analyseWithLocalFallback(
@@ -296,8 +647,19 @@ function streamAwsAgentRequest(
           return;
         }
 
+        const goalResearch = await preResearchGoalForPlanning(input, { elapsed, send });
+        const planningInput = goalResearch
+          ? {
+              ...input,
+              sourceContext: mergeSourceContextWithGoalResearch(input.sourceContext, goalResearch),
+            }
+          : input;
+
         startHeartbeat();
-        const result = await callAwsAgent(endpoint, input, [gatewayTrace]);
+        const result = applyGoalResearchToFootprint(
+          await callAwsAgent(endpoint, planningInput, [gatewayTrace]),
+          goalResearch,
+        );
         stopHeartbeat();
         send({
           type: "log",
@@ -340,13 +702,23 @@ function streamAwsAgentRequest(
           },
         });
 
-        const fallback = await analyseStudentChaos(input, {
+        const goalResearch = await preResearchGoalForPlanning(input, { elapsed, send });
+        const fallbackInput = goalResearch
+          ? {
+              ...input,
+              sourceContext: mergeSourceContextWithGoalResearch(input.sourceContext, goalResearch),
+            }
+          : input;
+        const fallback = await analyseStudentChaos(fallbackInput, {
           onEvent: send,
         });
 
         send({
           type: "footprint",
-          footprint: prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
+          footprint: applyGoalResearchToFootprint(
+            prependSponsorTraces(fallback, [trace, gatewayTrace, sourceTrace]),
+            goalResearch,
+          ),
         });
       } finally {
         controller.close();
@@ -400,7 +772,17 @@ export async function POST(req: Request) {
           return strictJudgeErrorResponse(new Error(gatewayTrace.detail));
         }
 
-        const result = await callAwsAgent(awsAgentEndpoint, parsed.data, [gatewayTrace]);
+        const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+        const planningInput = goalResearch
+          ? {
+              ...parsed.data,
+              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+            }
+          : parsed.data;
+        const result = applyGoalResearchToFootprint(
+          await callAwsAgent(awsAgentEndpoint, planningInput, [gatewayTrace]),
+          goalResearch,
+        );
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "aws-lambda" },
@@ -416,7 +798,17 @@ export async function POST(req: Request) {
 
         console.error("StudentOS AWS agent endpoint failed; using local fallback.", error);
         const gatewayTrace = await gatewayHealthTrace();
-        const result = await analyseWithLocalFallback(parsed.data, awsAgentEndpoint, error, [gatewayTrace]);
+        const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+        const fallbackInput = goalResearch
+          ? {
+              ...parsed.data,
+              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+            }
+          : parsed.data;
+        const result = applyGoalResearchToFootprint(
+          await analyseWithLocalFallback(fallbackInput, awsAgentEndpoint, error, [gatewayTrace]),
+          goalResearch,
+        );
 
         return NextResponse.json(result, {
           headers: { "X-StudentOS-Agent-Compute": "local-fallback" },
@@ -433,11 +825,18 @@ export async function POST(req: Request) {
     }
 
     const gatewayTrace = await gatewayHealthTrace();
-    const result = prependSponsorTraces(await analyseStudentChaos(parsed.data), [
+    const goalResearch = await preResearchGoalForPlanning(parsed.data, { elapsed: () => 0 });
+    const planningInput = goalResearch
+      ? {
+          ...parsed.data,
+          sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+        }
+      : parsed.data;
+    const result = applyGoalResearchToFootprint(prependSponsorTraces(await analyseStudentChaos(planningInput), [
       localAwsTrace(),
       gatewayTrace,
       bedrockTextractTrace(parsed.data.sources),
-    ]);
+    ]), goalResearch);
 
     return NextResponse.json(result, {
       headers: { "X-StudentOS-Agent-Compute": "local" },
@@ -499,13 +898,27 @@ export async function POST(req: Request) {
           }),
         });
 
-        const result = await analyseStudentChaos(parsed.data, {
+        const goalResearch = await preResearchGoalForPlanning(parsed.data, {
+          elapsed: () => 500,
+          send,
+        });
+        const planningInput = goalResearch
+          ? {
+              ...parsed.data,
+              sourceContext: mergeSourceContextWithGoalResearch(parsed.data.sourceContext, goalResearch),
+            }
+          : parsed.data;
+
+        const result = await analyseStudentChaos(planningInput, {
           onEvent: send,
         });
 
         send({
           type: "footprint",
-          footprint: prependSponsorTraces(result, [localTrace, gatewayTrace, sourceTrace]),
+          footprint: applyGoalResearchToFootprint(
+            prependSponsorTraces(result, [localTrace, gatewayTrace, sourceTrace]),
+            goalResearch,
+          ),
         });
       } catch (error) {
         send({
