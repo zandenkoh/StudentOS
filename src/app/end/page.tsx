@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { ArrowRight, CalendarCheck, CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
+import { ArrowRight, CalendarCheck, CheckCircle2, Copy, RotateCcw, Share2, Sparkles } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { PrimaryButton } from "@/components/buttons";
 import { clearStudentOSDemoState } from "@/lib/demo-state";
@@ -36,9 +36,13 @@ const afterRows = [
   "Roadmap scheduled",
 ];
 
+const shareUrl = "https://student-os-tawny.vercel.app";
+const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=12&data=${encodeURIComponent(shareUrl)}`;
+
 export default function EndPage() {
   const router = useRouter();
   const [summary, setSummary] = useState<Required<EndSummary>>(fallbackSummary);
+  const [copyLabel, setCopyLabel] = useState("Copy link");
 
   useEffect(() => {
     try {
@@ -71,9 +75,60 @@ export default function EndPage() {
     router.replace("/");
   }
 
+  async function writeShareUrlToClipboard() {
+    if (navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        return true;
+      } catch {
+        // Fall back to the legacy selection path below.
+      }
+    }
+
+    const input = document.createElement("textarea");
+    input.value = shareUrl;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.left = "-9999px";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(input);
+    return copied;
+  }
+
+  async function copyShareLink() {
+    const copied = await writeShareUrlToClipboard();
+    if (copied) {
+      setCopyLabel("Copied");
+      window.setTimeout(() => setCopyLabel("Copy link"), 1800);
+      return;
+    }
+
+    setCopyLabel("Copy failed");
+    window.setTimeout(() => setCopyLabel("Copy link"), 1800);
+  }
+
+  async function shareSite() {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "StudentOS",
+          text: "Try StudentOS, a demo that turns school chaos into a realistic plan.",
+          url: shareUrl,
+        });
+        return;
+      } catch {
+        return;
+      }
+    }
+
+    await copyShareLink();
+  }
+
   return (
     <AppShell hideHeader>
-      <main className="relative min-h-dvh overflow-hidden bg-[#FAF9F6] px-5 py-7">
+      <main className="relative min-h-dvh overflow-x-hidden bg-[#FAF9F6] px-5 py-7">
         <motion.div
           initial={{ y: "-15%", opacity: 0 }}
           animate={{ y: ["-15%", "115%"], opacity: [0, 1, 1, 0] }}
@@ -141,6 +196,47 @@ export default function EndPage() {
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.65, ease: "easeOut", delay: 0.34 }}
+            className="mt-4 rounded-[28px] border border-neutral-200 bg-white p-4 shadow-[0_24px_70px_rgba(0,0,0,0.07)]"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-neutral-400">Share StudentOS</p>
+                <h2 className="mt-1 text-[19px] font-bold leading-tight text-ink">Let someone scan or send them the link.</h2>
+                <p className="mt-2 break-all text-[12px] font-semibold leading-5 text-muted">{shareUrl}</p>
+              </div>
+              <div className="shrink-0 rounded-[22px] border border-neutral-200 bg-[#FAFAFA] p-2 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.8)]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={qrCodeUrl}
+                  alt="QR code for student-os-tawny.vercel.app"
+                  className="size-[108px] rounded-[14px]"
+                />
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => void shareSite()}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-ink px-4 text-[13px] font-bold text-white shadow-[0_16px_36px_rgba(0,0,0,0.16)] transition hover:scale-[1.01] active:scale-[0.99]"
+              >
+                <Share2 className="size-4" />
+                Share
+              </button>
+              <button
+                type="button"
+                onClick={() => void copyShareLink()}
+                className="inline-flex h-12 items-center justify-center gap-2 rounded-full border border-neutral-200 bg-white px-4 text-[13px] font-bold text-ink shadow-[0_12px_30px_rgba(0,0,0,0.055)] transition hover:bg-neutral-50 active:scale-[0.99]"
+              >
+                <Copy className="size-4" />
+                {copyLabel}
+              </button>
+            </div>
+          </motion.section>
+
+          <motion.section
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.65, ease: "easeOut", delay: 0.44 }}
             className="mt-3 rounded-[22px] border border-neutral-200 bg-white p-3"
           >
             <div className="grid grid-cols-[1fr_30px_1fr] items-center gap-2 px-1 text-[10px] font-bold uppercase tracking-[0.12em]">
@@ -170,8 +266,8 @@ export default function EndPage() {
           <motion.section
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.65, ease: "easeOut", delay: 0.44 }}
-            className="mt-4 rounded-[22px] border border-neutral-200 bg-white p-4"
+            transition={{ duration: 0.65, ease: "easeOut", delay: 0.54 }}
+            className="mt-4 rounded-[22px] border border-neutral-200 bg-white p-4 shadow-[0_16px_45px_rgba(0,0,0,0.045)]"
           >
             <div className="flex items-start gap-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-neutral-100 text-ink">
